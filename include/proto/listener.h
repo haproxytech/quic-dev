@@ -111,6 +111,7 @@ void delete_listener(struct listener *listener);
  * calls the listener's accept handler (generally the frontend's accept handler).
  */
 void listener_accept(int fd);
+void quic_listener_accept(int fd);
 
 /* Returns a suitable value for a listener's backlog. It uses the listener's,
  * otherwise the frontend's backlog, otherwise the listener's maxconn,

@@ -1107,6 +1107,15 @@ void listener_accept(int fd)
 	goto end;
 }
 
+/* This is not really a ->accept() callback for a QUIC listener as the one for TCP. */
+void quic_listener_accept(int fd)
+{
+	struct listener *l;
+
+	l = fdtab[fd].owner;
+	l->accept(l, fd, NULL);
+}
+
 /* Notify the listener that a connection initiated from it was released. This
  * is used to keep the connection count consistent and to possibly re-open
  * listening when it was limited.
