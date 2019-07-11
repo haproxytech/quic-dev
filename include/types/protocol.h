@@ -39,7 +39,9 @@ struct connection;
  */
 
 #define AF_CUST_SOCKPAIR     (AF_MAX + 1)
-#define AF_CUST_MAX          (AF_MAX + 2)
+#define AF_CUST_QUIC         (AF_MAX + 2)
+#define AF_CUST_QUIC6        (AF_MAX + 3)
+#define AF_CUST_MAX          (AF_MAX + 4)
 
 /*
  * Test in case AF_CUST_MAX overflows the sa_family_t (unsigned int)
