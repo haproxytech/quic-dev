@@ -673,6 +673,9 @@ struct sockaddr_storage *str2ip2(const char *str, struct sockaddr_storage *sa, i
 	/* max IPv6 length, including brackets and terminating NULL */
 	char tmpip[48];
 	int port = get_host_port(sa);
+	int is_quic_family;
+
+	is_quic_family = is_sa_family_quic(sa);
 
 	/* check IPv6 with square brackets */
 	if (str[0] == '[') {
@@ -701,34 +704,44 @@ struct sockaddr_storage *str2ip2(const char *str, struct sockaddr_storage *sa, i
 
 	/* Any IPv6 address */
 	if (str[0] == ':' && str[1] == ':' && !str[2]) {
-		if (!sa->ss_family || sa->ss_family == AF_UNSPEC)
-			sa->ss_family = AF_INET6;
-		else if (sa->ss_family != AF_INET6)
-			goto fail;
+		/* Do not change the family for QUIC addresses. */
+		if (!is_quic_family) {
+			if (!sa->ss_family || sa->ss_family == AF_UNSPEC)
+				sa->ss_family = AF_INET6;
+			else if (sa->ss_family != AF_INET6)
+				goto fail;
+		}
 		set_host_port(sa, port);
 		return sa;
 	}
 
 	/* Any address for the family, defaults to IPv4 */
 	if (!str[0] || (str[0] == '*' && !str[1])) {
-		if (!sa->ss_family || sa->ss_family == AF_UNSPEC)
-			sa->ss_family = AF_INET;
+		/* Do not change the family for QUIC addresses. */
+		if (!is_quic_family) {
+			if (!sa->ss_family || sa->ss_family == AF_UNSPEC)
+				sa->ss_family = AF_INET;
+		}
 		set_host_port(sa, port);
 		return sa;
 	}
 
 	/* check for IPv6 first */
-	if ((!sa->ss_family || sa->ss_family == AF_UNSPEC || sa->ss_family == AF_INET6) &&
+	if ((!sa->ss_family || sa->ss_family == AF_UNSPEC || is_sa_family_ipv6(sa)) &&
 	    inet_pton(AF_INET6, str, &((struct sockaddr_in6 *)sa)->sin6_addr)) {
-		sa->ss_family = AF_INET6;
+		/* Do not change the family for QUIC addresses. */
+		if (!is_quic_family)
+			sa->ss_family = AF_INET6;
 		set_host_port(sa, port);
 		return sa;
 	}
 
 	/* then check for IPv4 */
-	if ((!sa->ss_family || sa->ss_family == AF_UNSPEC || sa->ss_family == AF_INET) &&
+	if ((!sa->ss_family || sa->ss_family == AF_UNSPEC || is_sa_family_ipv4(sa)) &&
 	    inet_pton(AF_INET, str, &((struct sockaddr_in *)sa)->sin_addr)) {
-		sa->ss_family = AF_INET;
+		/* Do not change the family for QUIC addresses. */
+		if (!is_quic_family)
+			sa->ss_family = AF_INET;
 		set_host_port(sa, port);
 		return sa;
 	}
@@ -783,17 +796,22 @@ struct sockaddr_storage *str2ip2(const char *str, struct sockaddr_storage *sa, i
 	/* try to resolve an IPv4/IPv6 hostname */
 	he = gethostbyname(str);
 	if (he) {
-		if (!sa->ss_family || sa->ss_family == AF_UNSPEC)
-			sa->ss_family = he->h_addrtype;
-		else if (sa->ss_family != he->h_addrtype)
-			goto fail;
+		/* Do not change the family for QUIC addresses. */
+		if (!is_quic_family) {
+			if (!sa->ss_family || sa->ss_family == AF_UNSPEC)
+				sa->ss_family = he->h_addrtype;
+			else if (sa->ss_family != he->h_addrtype)
+				goto fail;
+		}
 
 		switch (sa->ss_family) {
 		case AF_INET:
+		case AF_CUST_QUIC:
 			((struct sockaddr_in *)sa)->sin_addr = *(struct in_addr *) *(he->h_addr_list);
 			set_host_port(sa, port);
 			return sa;
 		case AF_INET6:
+		case AF_CUST_QUIC6:
 			((struct sockaddr_in6 *)sa)->sin6_addr = *(struct in6_addr *) *(he->h_addr_list);
 			set_host_port(sa, port);
 			return sa;
@@ -907,6 +925,14 @@ struct sockaddr_storage *str2sa_range(const char *str, int *port, int *low, int 
 	else if (strncmp(str2, "ipv6@", 5) == 0) {
 		str2 += 5;
 		ss.ss_family = AF_INET6;
+	}
+	else if (strncmp(str2, "quic4@", 6) == 0) {
+		str2 += 6;
+		ss.ss_family = AF_CUST_QUIC;
+	}
+	else if (strncmp(str2, "quic6@", 6) == 0) {
+		str2 += 6;
+		ss.ss_family = AF_CUST_QUIC6;
 	}
 	else if (*str2 == '/') {
 		ss.ss_family = AF_UNIX;
@@ -1452,6 +1478,7 @@ int addr_to_str(const struct sockaddr_storage *addr, char *str, int size)
 {
 
 	const void *ptr;
+	sa_family_t sa_family;
 
 	if (size < 5)
 		return 0;
@@ -1459,9 +1486,19 @@ int addr_to_str(const struct sockaddr_storage *addr, char *str, int size)
 
 	switch (addr->ss_family) {
 	case AF_INET:
+		sa_family = addr->ss_family;
 		ptr = &((struct sockaddr_in *)addr)->sin_addr;
 		break;
 	case AF_INET6:
+		sa_family = addr->ss_family;
+		ptr = &((struct sockaddr_in6 *)addr)->sin6_addr;
+		break;
+	case AF_CUST_QUIC:
+		sa_family = AF_INET;
+		ptr = &((struct sockaddr_in *)addr)->sin_addr;
+		break;
+	case AF_CUST_QUIC6:
+		sa_family = AF_INET6;
 		ptr = &((struct sockaddr_in6 *)addr)->sin6_addr;
 		break;
 	case AF_UNIX:
@@ -1471,7 +1508,7 @@ int addr_to_str(const struct sockaddr_storage *addr, char *str, int size)
 		return 0;
 	}
 
-	if (inet_ntop(addr->ss_family, ptr, str, size))
+	if (inet_ntop(sa_family, ptr, str, size))
 		return addr->ss_family;
 
 	/* failed */
@@ -1496,9 +1533,11 @@ int port_to_str(const struct sockaddr_storage *addr, char *str, int size)
 
 	switch (addr->ss_family) {
 	case AF_INET:
+	case AF_CUST_QUIC:
 		port = ((struct sockaddr_in *)addr)->sin_port;
 		break;
 	case AF_INET6:
+	case AF_CUST_QUIC6:
 		port = ((struct sockaddr_in6 *)addr)->sin6_port;
 		break;
 	case AF_UNIX:
@@ -2863,14 +2902,16 @@ int v6tov4(struct in_addr *sin_addr, struct in6_addr *sin6_addr)
 /* compare two struct sockaddr_storage and return:
  *  0 (true)  if the addr is the same in both
  *  1 (false) if the addr is not the same in both
- *  -1 (unable) if one of the addr is not AF_INET*
+ *  -1 (unable) if one of the addr is neither AF_INET* nor AF_CUST_QUIC*
  */
 int ipcmp(struct sockaddr_storage *ss1, struct sockaddr_storage *ss2)
 {
-	if ((ss1->ss_family != AF_INET) && (ss1->ss_family != AF_INET6))
+	if ((ss1->ss_family != AF_INET) && (ss1->ss_family != AF_INET6) &&
+	    (ss1->ss_family != AF_CUST_QUIC) && (ss1->ss_family != AF_CUST_QUIC6))
 		return -1;
 
-	if ((ss2->ss_family != AF_INET) && (ss2->ss_family != AF_INET6))
+	if ((ss2->ss_family != AF_INET) && (ss2->ss_family != AF_INET6) &&
+	    (ss2->ss_family != AF_CUST_QUIC) && (ss2->ss_family != AF_CUST_QUIC6))
 		return -1;
 
 	if (ss1->ss_family != ss2->ss_family)
@@ -2878,10 +2919,12 @@ int ipcmp(struct sockaddr_storage *ss1, struct sockaddr_storage *ss2)
 
 	switch (ss1->ss_family) {
 		case AF_INET:
+		case AF_CUST_QUIC:
 			return memcmp(&((struct sockaddr_in *)ss1)->sin_addr,
 				      &((struct sockaddr_in *)ss2)->sin_addr,
 				      sizeof(struct in_addr)) != 0;
 		case AF_INET6:
+		case AF_CUST_QUIC6:
 			return memcmp(&((struct sockaddr_in6 *)ss1)->sin6_addr,
 				      &((struct sockaddr_in6 *)ss2)->sin6_addr,
 				      sizeof(struct in6_addr)) != 0;
@@ -2892,7 +2935,7 @@ int ipcmp(struct sockaddr_storage *ss1, struct sockaddr_storage *ss2)
 
 /* copy IP address from <source> into <dest>
  * The caller must allocate and clear <dest> before calling.
- * The source must be in either AF_INET or AF_INET6 family, or the destination
+ * The source must be in either AF_INET* or AF_CUST_QUIC* family, or the destination
  * address will be undefined. If the destination address used to hold a port,
  * it is preserved, so that this function can be used to switch to another
  * address family with no risk. Returns a pointer to the destination.
@@ -2908,10 +2951,12 @@ struct sockaddr_storage *ipcpy(struct sockaddr_storage *source, struct sockaddr_
 	/* copy new addr and apply it */
 	switch (source->ss_family) {
 		case AF_INET:
+		case AF_CUST_QUIC:
 			((struct sockaddr_in *)dest)->sin_addr.s_addr = ((struct sockaddr_in *)source)->sin_addr.s_addr;
 			((struct sockaddr_in *)dest)->sin_port = prev_port;
 			break;
 		case AF_INET6:
+		case AF_CUST_QUIC6:
 			memcpy(((struct sockaddr_in6 *)dest)->sin6_addr.s6_addr, ((struct sockaddr_in6 *)source)->sin6_addr.s6_addr, sizeof(struct in6_addr));
 			((struct sockaddr_in6 *)dest)->sin6_port = prev_port;
 			break;

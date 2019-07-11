@@ -498,16 +498,16 @@ int url2sa(const char *url, int ulen, struct sockaddr_storage *addr, struct spli
 /* Tries to convert a sockaddr_storage address to text form. Upon success, the
  * address family is returned so that it's easy for the caller to adapt to the
  * output format. Zero is returned if the address family is not supported. -1
- * is returned upon error, with errno set. AF_INET, AF_INET6 and AF_UNIX are
- * supported.
+ * is returned upon error, with errno set. AF_INET, AF_INET6, AF_CUST_QUIC, AF_CUST_QUIC6
+ * and AF_UNIX are supported.
  */
 int addr_to_str(const struct sockaddr_storage *addr, char *str, int size);
 
 /* Tries to convert a sockaddr_storage port to text form. Upon success, the
  * address family is returned so that it's easy for the caller to adapt to the
  * output format. Zero is returned if the address family is not supported. -1
- * is returned upon error, with errno set. AF_INET, AF_INET6 and AF_UNIX are
- * supported.
+ * is returned upon error, with errno set. AF_INET, AF_INET6, AF_CUST_QUIC, AF_CUST_QUIC6
+ * and AF_UNIX are supported.
  */
 int port_to_str(const struct sockaddr_storage *addr, char *str, int size);
 
@@ -1106,8 +1106,10 @@ static inline int is_inet_addr(const struct sockaddr_storage *addr)
 
 	switch (addr->ss_family) {
 	case AF_INET:
+	case AF_CUST_QUIC:
 		return *(int *)&((struct sockaddr_in *)addr)->sin_addr;
 	case AF_INET6:
+	case AF_CUST_QUIC6:
 		for (i = 0; i < sizeof(struct in6_addr) / sizeof(int); i++)
 			if (((int *)&((struct sockaddr_in6 *)addr)->sin6_addr)[i] != 0)
 				return ((int *)&((struct sockaddr_in6 *)addr)->sin6_addr)[i];
@@ -1126,13 +1128,33 @@ static inline int is_addr(const struct sockaddr_storage *addr)
 		return is_inet_addr(addr);
 }
 
+/* returns non-zeo if addr socket address familly is for IPv4, otherwise returns 0. */
+static inline int is_sa_family_ipv4(const struct sockaddr_storage *addr)
+{
+	return addr->ss_family == AF_INET || addr->ss_family == AF_CUST_QUIC;
+}
+
+/* returns non-zeo if addr socket address familly is for IPv6, otherwise returns 0. */
+static inline int is_sa_family_ipv6(const struct sockaddr_storage *addr)
+{
+	return addr->ss_family == AF_INET6 || addr->ss_family == AF_CUST_QUIC6;
+}
+
+/* returns non-zeo if addr socket address familly is for QUIC, otherwise returns 0. */
+static inline int is_sa_family_quic(const struct sockaddr_storage *addr)
+{
+	return addr->ss_family == AF_CUST_QUIC || addr->ss_family == AF_CUST_QUIC6;
+}
+
 /* returns port in network byte order */
 static inline int get_net_port(struct sockaddr_storage *addr)
 {
 	switch (addr->ss_family) {
 	case AF_INET:
+	case AF_CUST_QUIC:
 		return ((struct sockaddr_in *)addr)->sin_port;
 	case AF_INET6:
+	case AF_CUST_QUIC6:
 		return ((struct sockaddr_in6 *)addr)->sin6_port;
 	}
 	return 0;
@@ -1143,8 +1165,10 @@ static inline int get_host_port(struct sockaddr_storage *addr)
 {
 	switch (addr->ss_family) {
 	case AF_INET:
+	case AF_CUST_QUIC:
 		return ntohs(((struct sockaddr_in *)addr)->sin_port);
 	case AF_INET6:
+	case AF_CUST_QUIC6:
 		return ntohs(((struct sockaddr_in6 *)addr)->sin6_port);
 	}
 	return 0;
@@ -1155,8 +1179,10 @@ static inline int get_addr_len(const struct sockaddr_storage *addr)
 {
 	switch (addr->ss_family) {
 	case AF_INET:
+	case AF_CUST_QUIC:
 		return sizeof(struct sockaddr_in);
 	case AF_INET6:
+	case AF_CUST_QUIC6:
 		return sizeof(struct sockaddr_in6);
 	case AF_UNIX:
 		return sizeof(struct sockaddr_un);
@@ -1169,9 +1195,11 @@ static inline int set_net_port(struct sockaddr_storage *addr, int port)
 {
 	switch (addr->ss_family) {
 	case AF_INET:
+	case AF_CUST_QUIC:
 		((struct sockaddr_in *)addr)->sin_port = port;
 		break;
 	case AF_INET6:
+	case AF_CUST_QUIC6:
 		((struct sockaddr_in6 *)addr)->sin6_port = port;
 		break;
 	}
@@ -1183,9 +1211,11 @@ static inline int set_host_port(struct sockaddr_storage *addr, int port)
 {
 	switch (addr->ss_family) {
 	case AF_INET:
+	case AF_CUST_QUIC:
 		((struct sockaddr_in *)addr)->sin_port = htons(port);
 		break;
 	case AF_INET6:
+	case AF_CUST_QUIC6:
 		((struct sockaddr_in6 *)addr)->sin6_port = htons(port);
 		break;
 	}
