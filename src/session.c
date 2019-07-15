@@ -156,7 +156,8 @@ int session_accept_fd(struct listener *l, int cfd, struct sockaddr_storage *addr
 		goto out_free_conn;
 
 	cli_conn->handle.fd = cfd;
-	*cli_conn->src = *addr;
+	if (addr)
+		*cli_conn->src = *addr;
 	cli_conn->flags |= CO_FL_ADDR_FROM_SET;
 	cli_conn->target = &l->obj_type;
 	cli_conn->proxy_netns = l->netns;
