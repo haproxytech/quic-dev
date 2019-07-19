@@ -2089,6 +2089,9 @@ int parse_server(const char *file, int linenum, char **args, struct proxy *curpr
 				}
 			}
 
+			if (is_sa_family_quic(sk))
+				newsrv->xprt = xprt_get(XPRT_QUIC);
+
 			newsrv->addr = *sk;
 			newsrv->svc_port = port;
 
