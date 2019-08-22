@@ -231,6 +231,7 @@ struct listener {
 	struct bind_conf *bind_conf;	/* "bind" line settings, include SSL settings among other things */
 	struct list proto_list;         /* list in the protocol header */
 
+	struct eb_root quic_clients;
 	/* warning: this struct is huge, keep it at the bottom */
 	struct sockaddr_storage addr;	/* the address we listen to */
 	struct {

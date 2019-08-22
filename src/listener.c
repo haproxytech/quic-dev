@@ -592,6 +592,7 @@ int create_listeners(struct bind_conf *bc, const struct sockaddr_storage *ss,
 		memcpy(&l->addr, ss, sizeof(*ss));
 		MT_LIST_INIT(&l->wait_queue);
 		l->state = LI_INIT;
+		l->quic_clients = EB_ROOT_UNIQUE;
 
 		proto->add(l, port);
 
@@ -1108,15 +1109,6 @@ void listener_accept(int fd)
 	if (p->task && tick_isset(expire))
 		task_schedule(p->task, expire);
 	goto end;
-}
-
-/* This is not really a ->accept() callback for a QUIC listener as the one for TCP. */
-void quic_listener_accept(int fd)
-{
-	struct listener *l;
-
-	l = fdtab[fd].owner;
-	l->accept(l, fd, NULL);
 }
 
 /* Notify the listener that a connection initiated from it was released. This

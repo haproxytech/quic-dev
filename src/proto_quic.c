@@ -66,7 +66,7 @@ static struct protocol proto_quic4 = {
 	.sock_family = AF_CUST_QUIC,
 	.sock_addrlen = sizeof(struct sockaddr_in),
 	.l3_addrlen = 32/8,
-	.accept = quic_listener_accept,
+	.accept = NULL,
 	.connect = quic_connect_server,
 	.bind = quic_bind_listener,
 	.bind_all = quic_bind_listeners,
@@ -91,7 +91,7 @@ static struct protocol proto_quic6 = {
 	.sock_family = AF_CUST_QUIC6,
 	.sock_addrlen = sizeof(struct sockaddr_in6),
 	.l3_addrlen = 128/8,
-	.accept = quic_listener_accept,
+	.accept = NULL,
 	.connect = quic_connect_server,
 	.bind = quic_bind_listener,
 	.bind_all = quic_bind_listeners,
@@ -925,11 +925,8 @@ int quic_bind_listener(struct listener *listener, char *errmsg, int errlen)
 	listener->fd = fd;
 	listener->state = LI_LISTEN;
 
-	/* XXX TO BE CHECKED: in fact ->accept() should perhaps be called
-	 * after "accepting" a new QUIC connection so that to initialize
-	 * the streams & connections structs.
-	 */
-	listener->accept(listener, fd, NULL);
+	fd_insert(fd, listener, quic_fd_handler,
+	          1 << (my_flsl(thread_mask(listener->bind_conf->bind_thread)) - 1));
 
  quic_return:
 	if (msg && errlen) {

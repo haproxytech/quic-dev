@@ -31,6 +31,9 @@ int quic_connect_probe(struct connection *conn);
 int quic_get_src(int fd, struct sockaddr *sa, socklen_t salen, int dir);
 int quic_get_dst(int fd, struct sockaddr *sa, socklen_t salen, int dir);
 
+/* XXX TO BE MOVED??? XXX */
+void quic_fd_handler(int fd);
+
 #endif /* _PROTO_PROTO_QUIC_H */
 
 /*

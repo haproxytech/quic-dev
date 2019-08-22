@@ -35,6 +35,7 @@
 #include <proto/freq_ctr.h>
 #include <proto/log.h>
 #include <proto/pipe.h>
+#include <proto/quic_conn.h>
 #include <proto/stream_interface.h>
 #include <proto/task.h>
 
@@ -257,6 +258,14 @@ static int quic_sock_remove_xprt(struct connection *conn, void *xprt_ctx, void *
 	 */
 	BUG_ON(1);
 	return -1;
+}
+
+void quic_fd_handler(int fd)
+{
+	struct listener *l = fdtab[fd].owner;
+
+	if (fdtab[fd].ev & FD_POLL_IN)
+		quic_conn_to_buf(fd, l);
 }
 
 static int quic_sock_init(struct connection *conn, void **xprt_ctx)
