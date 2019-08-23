@@ -15,10 +15,48 @@
 #include <common/chunk.h>
 
 #include <proto/fd.h>
+#include <proto/quic_tls.h>
 
 #include <types/global.h>
 #include <types/quic.h>
+#include <types/quic_tls.h>
 
+__attribute__((format (printf, 3, 4)))
+void hexdump(const void *buf, size_t buflen, const char *title_fmt, ...)
+{
+	int i;
+	va_list ap;
+	const unsigned char *p;
+	char str_buf[2 + 1 + 16 + 1 + 1];
+
+	va_start(ap, title_fmt);
+	vfprintf(stderr, title_fmt, ap);
+	va_end(ap);
+
+	p = buf;
+	str_buf[0] = str_buf[1] = ' ';
+	str_buf[2] = '|';
+
+	for (i = 0; i < buflen; i++) {
+		if (!(i & 0xf))
+			fprintf(stderr, "%08X: ", i);
+		fprintf(stderr, " %02x", *p);
+		if (isalnum(*p))
+			str_buf[(i & 0xf) + 3] = *p;
+		else
+			str_buf[(i & 0xf) + 3] = '.';
+		if ((i & 0xf) == 0xf || i == buflen -1) {
+			int k;
+
+			for (k = 0; k < (0x10 - (i & 0xf) - 1); k++)
+				fprintf(stderr, "   ");
+			str_buf[(i & 0xf) + 4] = '|';
+			str_buf[(i & 0xf) + 5 ] = '\0';
+			fprintf(stderr, "%s\n", str_buf);
+		}
+		p++;
+	}
+}
 struct quic_cid {
 	unsigned char len;
 	unsigned char data[QUIC_CID_MAXLEN];
@@ -31,18 +69,39 @@ struct quic_packet {
 	uint32_t version;
 	struct quic_cid dcid;
 	struct quic_cid scid;
+	/* Packet number */
+	uint64_t pn;
 	/* Packet number length */
 	uint32_t pnl;
-	/* Packet number */
-	uint32_t pn;
 	uint64_t token_len;
+	/* Packet length */
 	uint64_t len;
 };
 
 
 struct quic_conn {
 	size_t cid_len;
-	/* Do not insert anything after <key> which contains a flexible array member!!! */
+	int aead_algo;
+	struct ctx {
+		unsigned char initial_secret[32];
+		unsigned char client_initial_secret[32];
+		unsigned char key[16];
+		unsigned char iv[12];
+		unsigned char aead_iv[16];
+		/* Header protection key.
+		 * Note: the header protection is applied after packet protection.
+		 * As the header belong to the data, its protection must be removed before removing
+		 * the packet protection.
+		 */
+		unsigned char hp[16];
+		const EVP_CIPHER *aead;
+	} ctx;
+	/* One largest packet number by client/server by number space */
+	uint64_t client_max_pn[3];
+	uint64_t server_max_pn[3];
+
+
+	/* XXX Do not insert anything after <cid> which contains a flexible array member!!! XXX */
 	struct ebmb_node cid;
 };
 
@@ -54,14 +113,13 @@ struct quic_conn {
 /*
  * Decode a QUIC variable length integer.
  * Note that the result is a 64-bits integer but with the less significant
- * 62 bits as relevant information. The most significant bits encode the length
- * of the integer to be decoded. So, this function can return (uint64_t)-1
+ * 62 bits as relevant information. The most significant 2 remaining bits encode
+ * the length of the integer to be decoded. So, this function can return (uint64_t)-1
  * in case of any error.
  * Return the 64-bits decoded value when succeeded, -1 if not: <buf> provided buffer
  * was not big enough.
  */
-uint64_t quic_dec_int(const unsigned char **buf,
-                      const unsigned char *end)
+uint64_t quic_dec_int(const unsigned char **buf, const unsigned char *end)
 {
 	uint64_t ret;
 	size_t len;
@@ -69,9 +127,11 @@ uint64_t quic_dec_int(const unsigned char **buf,
 	if (*buf == end)
 		return -1;
 
-	ret = **buf & QUIC_VARINT_BYTE_0_BITMASK;
-	len = 1 << (*(*buf)++ >> QUIC_VARINT_BYTE_0_SHIFT);
+	len = 1 << (**buf >> QUIC_VARINT_BYTE_0_SHIFT);
+	if (*buf + len > end)
+		return -1;
 
+	ret = *(*buf)++ & QUIC_VARINT_BYTE_0_BITMASK;
 	while (--len)
 		ret = (ret << 8) | *(*buf)++;
 
@@ -137,17 +197,330 @@ static int quic_read_uint32(uint32_t *val, const unsigned char **buf, const unsi
 	return 1;
 }
 
-__attribute__((format (printf, 3, 4)))
-void hexdump(const void *buf, size_t buflen, const char *title_fmt, ...);
+/*
+ * Derive the initial secret from the CID and QUIC version dependent salt.
+ * Returns the size of the derived secret if succeeded, 0 if not.
+ */
+static int quic_derive_initial_secret(struct quic_conn *conn)
+{
+	size_t outlen;
+
+	outlen = sizeof conn->ctx.initial_secret;
+	if (!quic_hdkf_extract(conn->ctx.initial_secret, &outlen,
+	                       conn->cid.key, conn->cid_len,
+	                       initial_salt, sizeof initial_salt))
+		return 0;
+
+	return outlen;
+}
+
+/*
+ * Derive the client initial secret from the initial secret.
+ * Returns the size of the derived secret if succeeded, 0 if not.
+ */
+static ssize_t quic_derive_client_initial_secret(struct quic_conn *conn)
+{
+	size_t outlen;
+	const unsigned char label[] = "client in";
+
+	outlen = sizeof conn->ctx.client_initial_secret;
+	if (!quic_hdkf_expand_label(conn->ctx.client_initial_secret, &outlen,
+	                            conn->ctx.initial_secret, sizeof conn->ctx.initial_secret,
+	                            label, sizeof label - 1))
+	    return 0;
+
+	hexdump(conn->ctx.client_initial_secret, outlen, "CLIENT INITIAL SECRET:\n");
+	return outlen;
+}
+
+/*
+ * Derive the client secret key from the the client initial secret.
+ * Returns the size of the derived key if succeeded, 0 if not.
+ */
+static ssize_t quic_derive_key(struct quic_conn *conn)
+{
+	size_t outlen;
+	const unsigned char label[] = "quic key";
+
+	outlen = sizeof conn->ctx.key;
+	if (!quic_hdkf_expand_label(conn->ctx.key, &outlen,
+	                            conn->ctx.client_initial_secret, sizeof conn->ctx.client_initial_secret,
+	                            label, sizeof label - 1))
+	    return 0;
+
+	hexdump(conn->ctx.key, outlen, "KEY:\n");
+	return outlen;
+}
+
+/*
+ * Derive the client IV from the client initial secret.
+ * Returns the size of this IV if succeeded, 0 if not.
+ */
+static ssize_t quic_derive_iv(struct quic_conn *conn)
+{
+	size_t outlen;
+	const unsigned char label[] = "quic iv";
+
+	outlen = sizeof conn->ctx.iv;
+	if (!quic_hdkf_expand_label(conn->ctx.iv, &outlen,
+	                            conn->ctx.client_initial_secret, sizeof conn->ctx.client_initial_secret,
+	                            label, sizeof label - 1))
+	    return 0;
+
+	hexdump(conn->ctx.iv, outlen, "IV:\n");
+	return outlen;
+}
+
+/*
+ * Derive the client header protection key from the client initial secret.
+ * Returns the size of this key if succeeded, 0, if not.
+ */
+static ssize_t quic_derive_hp(struct quic_conn *conn)
+{
+	size_t outlen;
+	const unsigned char label[] = "quic hp";
+
+	outlen = sizeof conn->ctx.hp;
+	if (!quic_hdkf_expand_label(conn->ctx.hp, &outlen,
+	                            conn->ctx.client_initial_secret, sizeof conn->ctx.client_initial_secret,
+	                            label, sizeof label - 1))
+	    return 0;
+
+	hexdump(conn->ctx.hp, outlen, "HP:\n");
+	return outlen;
+}
+
+/*
+ * Initialize the client crytographic secrets for a new connection.
+ * Must be called after having received a new QUIC client Initial packet.
+ * Return 1 if succeeded, 0 if not.
+ */
+static int quic_client_setup_crypto_ctx(struct quic_conn *conn)
+{
+	if (!quic_derive_initial_secret(conn) ||
+	    !quic_derive_client_initial_secret(conn) ||
+	    !quic_derive_key(conn) ||
+	    !quic_derive_iv(conn) ||
+	    !quic_derive_hp(conn))
+		return 0;
+
+	return 1;
+}
+
+
+uint64_t *quic_max_pn(struct quic_conn *conn, int server, int long_header, int packet_type)
+{
+	/* Packet number space */
+    int pn_space;
+
+    if (long_header && packet_type == QUIC_PACKET_TYPE_INITIAL) {
+        pn_space = 0;
+    } else if (long_header && packet_type == QUIC_PACKET_TYPE_HANDSHAKE) {
+        pn_space = 1;
+    } else {
+        pn_space = 2;
+    }
+
+    if (server) {
+        return &conn->server_max_pn[pn_space];
+    } else {
+        return &conn->client_max_pn[pn_space];
+    }
+}
+
+/*
+ * See https://quicwg.org/base-drafts/draft-ietf-quic-transport.html#packet-encoding
+ * The comments come from this draft.
+ */
+uint64_t decode_packet_number(uint64_t largest_pn, uint32_t truncated_pn, unsigned int pn_nbits)
+{
+   uint64_t expected_pn = largest_pn + 1;
+   uint64_t pn_win = (uint64_t)1 << pn_nbits;
+   uint64_t pn_hwin = pn_win / 2;
+   uint64_t pn_mask = pn_win - 1;
+   uint64_t candidate_pn;
+
+
+   // The incoming packet number should be greater than
+   // expected_pn - pn_hwin and less than or equal to
+   // expected_pn + pn_hwin
+   //
+   // This means we can't just strip the trailing bits from
+   // expected_pn and add the truncated_pn because that might
+   // yield a value outside the window.
+   //
+   // The following code calculates a candidate value and
+   // makes sure it's within the packet number window.
+   candidate_pn = (expected_pn & ~pn_mask) | truncated_pn;
+   if (candidate_pn + pn_hwin <= expected_pn)
+      return candidate_pn + pn_win;
+
+   // Note the extra check for underflow when candidate_pn
+   // is near zero.
+   if (candidate_pn > expected_pn + pn_hwin && candidate_pn > pn_win)
+      return candidate_pn - pn_win;
+
+   return candidate_pn;
+}
+
+static int quic_remove_header_protection(struct quic_conn *conn, struct quic_packet *pkt,
+                                         unsigned char *pn, unsigned char *byte0, const unsigned char *end)
+{
+	int outlen, i, pnlen;
+	uint64_t *largest_pn, packet_number;
+	uint32_t truncated_pn = 0;
+	unsigned char mask[16] = {0};
+	unsigned char *sample;
+	EVP_CIPHER_CTX *ctx;
+
+	ctx = EVP_CIPHER_CTX_new();
+	if (!ctx)
+		return 0;
+
+	sample = pn + QUIC_PACKET_PN_MAXLEN;
+
+	/*
+	 * May be required for ECB?:
+	 * EVP_CIPHER_CTX_set_padding(ctx, 0);
+	 */
+
+	hexdump(sample, 16, "packet sample:\n");
+	if (!EVP_DecryptInit_ex(ctx, EVP_aes_128_ctr(), NULL, conn->ctx.hp, NULL))
+		goto out;
+
+	EVP_CIPHER_CTX_ctrl(ctx, EVP_CTRL_AEAD_SET_IVLEN, 16, NULL);
+
+	if (!EVP_DecryptInit_ex(ctx, NULL, NULL, NULL, sample) ||
+	    !EVP_DecryptUpdate(ctx, mask, &outlen, mask, sizeof mask) ||
+	    !EVP_DecryptFinal_ex(ctx, mask, &outlen))
+	    goto out;
+
+
+	*byte0 ^= mask[0] & (pkt->type == QUIC_PACKET_TYPE_INITIAL ? 0xf : 0x1f);
+	pnlen = (*byte0 & QUIC_PACKET_PNL_BITMASK) + 1;
+	for (i = 0; i < pnlen; i++) {
+		pn[i] ^= mask[i + 1];
+		truncated_pn = (truncated_pn << 8) | pn[i];
+	}
+
+	largest_pn = quic_max_pn(conn, 0, *byte0 & QUIC_PACKET_LONG_HEADER_BIT, pkt->type);
+	packet_number = decode_packet_number(*largest_pn, truncated_pn, pnlen * 8);
+	/* Store remaining information for this unprotected header */
+	pkt->pn = packet_number;
+	pkt->pnl = pnlen;
+	fprintf(stderr, "%s packet_number: %lu\n", __func__, packet_number);
+
+ out:
+	EVP_CIPHER_CTX_free(ctx);
+
+	return outlen;
+}
+
+static void quic_aead_iv_build(struct quic_conn *conn, uint64_t pn, uint32_t pnl)
+{
+	int i;
+	unsigned int shift;
+	unsigned char *iv = conn->ctx.iv;
+	unsigned char *aead_iv = conn->ctx.aead_iv;
+	size_t iv_size = sizeof conn->ctx.iv;
+
+	for (i = 0; i < iv_size - sizeof pn; i++)
+		*aead_iv++ = *iv++;
+
+	shift = 56;
+	for (i = iv_size - sizeof pn; i < iv_size; i++, shift -= 8)
+		*aead_iv++ = *iv++ ^ (pn >> shift);
+	hexdump(conn->ctx.aead_iv, iv_size, "BUILD IV:\n");
+}
+
+/*
+ * https://quicwg.org/base-drafts/draft-ietf-quic-tls.html#aead
+ *
+ * 5.3. AEAD Usage
+ *
+ * Packets are protected prior to applying header protection (Section 5.4).
+ * The unprotected packet header is part of the associated data (A). When removing
+ * packet protection, an endpoint first removes the header protection.
+ * (...)
+ * These ciphersuites have a 16-byte authentication tag and produce an output 16
+ * bytes larger than their input.
+ * The key and IV for the packet are computed as described in Section 5.1. The nonce,
+ * N, is formed by combining the packet protection IV with the packet number. The 62
+ * bits of the reconstructed QUIC packet number in network byte order are left-padded
+ * with zeros to the size of the IV. The exclusive OR of the padded packet number and
+ * the IV forms the AEAD nonce.
+ *
+ * The associated data, A, for the AEAD is the contents of the QUIC header, starting
+ * from the flags byte in either the short or long header, up to and including the
+ * unprotected packet number.
+ *
+ * The input plaintext, P, for the AEAD is the payload of the QUIC packet, as described
+ * in [QUIC-TRANSPORT].
+ *
+ * The output ciphertext, C, of the AEAD is transmitted in place of P.
+ *
+ * Some AEAD functions have limits for how many packets can be encrypted under the same
+ * key and IV (see for example [AEBounds]). This might be lower than the packet number limit.
+ * An endpoint MUST initiate a key update (Section 6) prior to exceeding any limit set for
+ * the AEAD that is in use.
+ */
+static int quic_decrypt_payload(struct quic_conn *conn, struct quic_packet *pkt,
+                                unsigned char *pn, unsigned char *buf, const unsigned char *end)
+{
+	int algo;
+	int  outlen, payload_len, aad_len;
+	unsigned char *payload;
+	size_t off;
+
+	EVP_CIPHER_CTX *ctx;
+
+	algo = pkt->type == QUIC_PACKET_TYPE_INITIAL ? TLS1_3_CK_AES_128_GCM_SHA256 : conn->aead_algo;
+
+	aad_len = pn + pkt->pnl - buf;
+
+	/* The payload is after the Packet Number field. */
+	payload = pn + pkt->pnl;
+	payload_len = pkt->len - pkt->pnl;
+	off = 0;
+
+	hexdump(payload, payload_len, "Payload to decrypt:\n");
+
+	quic_aead_iv_build(conn, pkt->pn, pkt->pnl);
+
+	ctx = EVP_CIPHER_CTX_new();
+	switch (algo) {
+		case TLS1_3_CK_AES_128_GCM_SHA256:
+			if (!EVP_DecryptInit_ex(ctx, EVP_aes_128_gcm(), NULL, conn->ctx.key, conn->ctx.aead_iv) ||
+			    !EVP_DecryptUpdate(ctx, NULL, &outlen, buf, aad_len) ||
+			    !EVP_DecryptUpdate(ctx, payload, &outlen, payload, payload_len - 16))
+			    return -1;
+
+			off += outlen;
+
+			if (!EVP_CIPHER_CTX_ctrl(ctx, EVP_CTRL_AEAD_SET_TAG, 16, payload + payload_len - 16) ||
+			    !EVP_DecryptFinal_ex(ctx, payload + off, &outlen))
+				return -1;
+
+			off += outlen;
+
+			hexdump(payload, off, "Decrypted payload(%zu):\n", off);
+			break;
+	}
+
+	EVP_CIPHER_CTX_free(ctx);
+
+	return 1;
+}
 
 ssize_t quic_packet_read_header(struct quic_packet *qpkt,
-                                const unsigned char **buf, const unsigned char *end,
-                                struct listener *l)
+                                 unsigned char **buf, const unsigned char *end,
+                                 struct listener *l)
 {
-	const unsigned char *beg;
+	unsigned char *beg;
 	unsigned char dcid_len, scid_len;
 	uint64_t len;
-
+	unsigned char *pn = NULL; /* Packet number */
+	struct quic_conn *conn;
 
 	if (end - *buf <= QUIC_PACKET_MINLEN)
 		goto err;
@@ -197,9 +570,10 @@ ssize_t quic_packet_read_header(struct quic_packet *qpkt,
 
 		if (qpkt->dcid.len) {
 			struct ebmb_node *node;
+
 			node = ebmb_lookup(&l->quic_clients, qpkt->dcid.data, qpkt->dcid.len);
 			if (!node) {
-				struct quic_conn *conn;
+
 				conn = calloc(1, sizeof *conn + qpkt->dcid.len);
 				if (conn) {
 					conn->cid_len = qpkt->dcid.len;
@@ -207,17 +581,20 @@ ssize_t quic_packet_read_header(struct quic_packet *qpkt,
 					ebmb_insert(&l->quic_clients, &conn->cid, conn->cid_len);
 				}
 			}
+			else {
+				conn = ebmb_entry(node, struct quic_conn, cid);
+			}
 		}
 	}
 	else {
-		/* Short header */
+		/* XXX TO DO: Short header XXX */
 	}
 
 	if (qpkt->type == QUIC_PACKET_TYPE_INITIAL) {
 		uint64_t token_len;
 
 		fprintf(stderr, "QUIC_PACKET_TYPE_INITIAL packet\n");
-		token_len = quic_dec_int(buf, end);
+		token_len = quic_dec_int((const unsigned char **)buf, end);
 		if (token_len == -1 || end - *buf < token_len)
 			goto err;
 
@@ -230,17 +607,27 @@ ssize_t quic_packet_read_header(struct quic_packet *qpkt,
 		 */
 		qpkt->token_len = token_len;
 
-		/* The following payload contains an initial handshake message. */
-
+		quic_client_setup_crypto_ctx(conn);
 	}
 
-	if (qpkt->type != QUIC_PACKET_TYPE_RETRY) {
-		len = quic_dec_int(buf, end);
+	if (qpkt->type != QUIC_PACKET_TYPE_RETRY && qpkt->version) {
+		len = quic_dec_int((const unsigned char **)buf, end);
 		if (len == -1 || end - *buf < len)
 			goto err;
-		qpkt->len = len;
-	}
 
+		qpkt->len = len;
+		/*
+		 * The packet number is here. This is also the start minus QUIC_PACKET_PN_MAXLEN
+		 * of the sample used to add/remove the header protection.
+		 */
+		pn = *buf;
+
+		hexdump(pn, 2, "Packet Number two first bytes:\n");
+		if (qpkt->type == QUIC_PACKET_TYPE_INITIAL) {
+			quic_remove_header_protection(conn, qpkt, pn, beg, end);
+			quic_decrypt_payload(conn, qpkt, pn, beg, end);
+		}
+	}
 
 	fprintf(stderr, "\ttoken_len: %lu len: %lu pnl: %u\n",
 	        qpkt->token_len, qpkt->len, qpkt->pnl);
@@ -251,12 +638,13 @@ ssize_t quic_packet_read_header(struct quic_packet *qpkt,
 	return -1;
 }
 
-ssize_t quic_packet_read(char *buf, size_t len, struct listener *l)
+ssize_t quic_packets_read(char *buf, size_t len, struct listener *l)
 {
-	const unsigned char *pos, *end;
+	unsigned char *pos;
+	const unsigned char *end;
 	struct quic_packet qpkt = {0};
 
-	pos = (const unsigned char *)buf;
+	pos = (unsigned char *)buf;
 	end = pos + len;
 
 	if (quic_packet_read_header(&qpkt, &pos, end, l) == -1)
@@ -295,6 +683,7 @@ ssize_t quic_packet_read(char *buf, size_t len, struct listener *l)
  * errno is cleared before starting so that the caller knows that if it spots an
  * error without errno, it's pending and can be retrieved via getsockopt(SO_ERROR).
  */
+
 size_t quic_conn_to_buf(int fd, void *ctx)
 {
 	ssize_t ret;
@@ -320,9 +709,14 @@ size_t quic_conn_to_buf(int fd, void *ctx)
 			break;
 		}
 		else {
-			hexdump(trash.area, 32, "%s: recvfrom()\n", __func__);
+			hexdump(trash.area, 64, "%s: recvfrom()\n", __func__);
 			done = trash.data = ret;
-			quic_packet_read(trash.area, trash.size, l);
+			/*
+			 * Senders MUST NOT coalesce QUIC packets for different connections into a single
+			 * UDP datagram. Receivers SHOULD ignore any subsequent packets with a different
+			 * Destination Connection ID than the first packet in the datagram.
+			 */
+			quic_packets_read(trash.area, trash.size, l);
 		}
 	} while (0);
 
