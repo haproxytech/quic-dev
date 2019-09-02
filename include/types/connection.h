@@ -453,6 +453,7 @@ struct connection {
 	unsigned int flags;           /* CO_FL_* */
 	const struct protocol *ctrl;  /* operations at the socket layer */
 	const struct xprt_ops *xprt;  /* operations at the transport layer */
+	struct quic_conn *quic_conn;  /* Only present if this connection is a QUIC one */
 	const struct mux_ops  *mux;   /* mux layer operations. Must be set before xprt->init() */
 	void *xprt_ctx;               /* general purpose pointer, initialized to NULL */
 	void *ctx;                    /* highest level context (usually the mux), initialized to NULL */
