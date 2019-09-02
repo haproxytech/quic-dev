@@ -14,12 +14,19 @@
 
 #include <common/chunk.h>
 
+#include <proto/connection.h>
 #include <proto/fd.h>
+#include <proto/listener.h>
 #include <proto/quic_tls.h>
 
 #include <types/global.h>
 #include <types/quic.h>
 #include <types/quic_tls.h>
+
+/* The maximum number of QUIC packets stored by the fd I/O handler by QUIC
+ * connection. Must be a power of two.
+ */
+#define QUIC_CONN_MAX_PACKET  64
 
 __attribute__((format (printf, 3, 4)))
 void hexdump(const void *buf, size_t buflen, const char *title_fmt, ...)
@@ -76,6 +83,7 @@ struct quic_packet {
 	uint64_t token_len;
 	/* Packet length */
 	uint64_t len;
+	unsigned char data[QUIC_PACKET_MAXLEN];
 };
 
 
@@ -100,11 +108,17 @@ struct quic_conn {
 	uint64_t client_max_pn[3];
 	uint64_t server_max_pn[3];
 
+	/* Last QUIC_CONN_MAX_PACKET QUIC received packets */
+	struct quic_packet pkts[QUIC_CONN_MAX_PACKET];
+	/* The packet used among ->pkts to store the current QUIC received packet */
+	int curr_pkt;
 
 	/* XXX Do not insert anything after <cid> which contains a flexible array member!!! XXX */
 	struct ebmb_node cid;
 };
 
+DECLARE_POOL(pool_head_quic_conn, "quic_conn",
+             sizeof(struct quic_conn) + QUIC_CID_MAXLEN);
 
 /* The first two bits of byte #0 gives the 2 logarithm of the encoded length. */
 #define QUIC_VARINT_BYTE_0_BITMASK 0x3f
@@ -366,7 +380,7 @@ uint64_t decode_packet_number(uint64_t largest_pn, uint32_t truncated_pn, unsign
 static int quic_remove_header_protection(struct quic_conn *conn, struct quic_packet *pkt,
                                          unsigned char *pn, unsigned char *byte0, const unsigned char *end)
 {
-	int outlen, i, pnlen;
+	int ret, outlen, i, pnlen;
 	uint64_t *largest_pn, packet_number;
 	uint32_t truncated_pn = 0;
 	unsigned char mask[16] = {0};
@@ -377,6 +391,7 @@ static int quic_remove_header_protection(struct quic_conn *conn, struct quic_pac
 	if (!ctx)
 		return 0;
 
+	ret = 0;
 	sample = pn + QUIC_PACKET_PN_MAXLEN;
 
 	/*
@@ -409,11 +424,12 @@ static int quic_remove_header_protection(struct quic_conn *conn, struct quic_pac
 	pkt->pn = packet_number;
 	pkt->pnl = pnlen;
 	fprintf(stderr, "%s packet_number: %lu\n", __func__, packet_number);
+	ret = 1;
 
  out:
 	EVP_CIPHER_CTX_free(ctx);
 
-	return outlen;
+	return ret;
 }
 
 static void quic_aead_iv_build(struct quic_conn *conn, uint64_t pn, uint32_t pnl)
@@ -483,8 +499,6 @@ static int quic_decrypt_payload(struct quic_conn *conn, struct quic_packet *pkt,
 	payload_len = pkt->len - pkt->pnl;
 	off = 0;
 
-	hexdump(payload, payload_len, "Payload to decrypt:\n");
-
 	quic_aead_iv_build(conn, pkt->pn, pkt->pnl);
 
 	ctx = EVP_CIPHER_CTX_new();
@@ -493,13 +507,13 @@ static int quic_decrypt_payload(struct quic_conn *conn, struct quic_packet *pkt,
 			if (!EVP_DecryptInit_ex(ctx, EVP_aes_128_gcm(), NULL, conn->ctx.key, conn->ctx.aead_iv) ||
 			    !EVP_DecryptUpdate(ctx, NULL, &outlen, buf, aad_len) ||
 			    !EVP_DecryptUpdate(ctx, payload, &outlen, payload, payload_len - 16))
-			    return -1;
+			    return 0;
 
 			off += outlen;
 
 			if (!EVP_CIPHER_CTX_ctrl(ctx, EVP_CTRL_AEAD_SET_TAG, 16, payload + payload_len - 16) ||
 			    !EVP_DecryptFinal_ex(ctx, payload + off, &outlen))
-				return -1;
+				return 0;
 
 			off += outlen;
 
@@ -512,9 +526,86 @@ static int quic_decrypt_payload(struct quic_conn *conn, struct quic_packet *pkt,
 	return 1;
 }
 
+/*
+ * Inspired from session_accept_fd().
+ */
+int quic_new_conn(struct quic_conn *quic_conn,
+                  struct listener *l, struct sockaddr_storage *saddr)
+{
+	struct connection *cli_conn;
+	struct proxy *p = l->bind_conf->frontend;
+	struct session *sess;
+
+	if (unlikely((cli_conn = conn_new()) == NULL))
+		goto out;
+
+	if (!sockaddr_alloc(&cli_conn->src))
+		goto out_free_conn;
+
+	/* XXX Not sure it is safe to keep this statement. */
+	cli_conn->handle.fd = l->fd;
+	if (saddr)
+		*cli_conn->src = *saddr;
+	cli_conn->flags |= CO_FL_ADDR_FROM_SET;
+	cli_conn->target = &l->obj_type;
+	cli_conn->proxy_netns = l->netns;
+
+	conn_prepare(cli_conn, l->proto, l->bind_conf->xprt);
+
+#if 0
+	/* XXX DO NOT fd_insert() l->fd again with another I/O handler XXX
+	 * This should be the case for an outgoing QUIC connection (haproxy as QUIC client).
+	 */
+	conn_ctrl_init(cli_conn);
+#endif
+
+	/* wait for a PROXY protocol header */
+	if (l->options & LI_O_ACC_PROXY)
+		cli_conn->flags |= CO_FL_ACCEPT_PROXY;
+
+	/* wait for a NetScaler client IP insertion protocol header */
+	if (l->options & LI_O_ACC_CIP)
+		cli_conn->flags |= CO_FL_ACCEPT_CIP;
+
+	if (conn_xprt_init(cli_conn) < 0)
+		goto out_free_conn;
+
+	/* Add the handshake pseudo-XPRT */
+	if (cli_conn->flags & (CO_FL_ACCEPT_PROXY | CO_FL_ACCEPT_CIP)) {
+		if (xprt_add_hs(cli_conn) != 0)
+			goto out_free_conn;
+	}
+	sess = session_new(p, l, &cli_conn->obj_type);
+	if (!sess)
+		goto out_free_conn;
+
+	conn_set_owner(cli_conn, sess, NULL);
+
+	cli_conn->quic_conn = quic_conn;
+
+	/* OK let's complete stream initialization since there is no handshake */
+	if (conn_complete_session(cli_conn) >= 0)
+		return 1;
+
+	/* error unrolling */
+ out_free_sess:
+	 /* prevent call to listener_release during session_free. It will be
+	  * done below, for all errors. */
+	sess->listener = NULL;
+	session_free(sess);
+ out_free_conn:
+	conn_stop_tracking(cli_conn);
+	conn_xprt_close(cli_conn);
+	conn_free(cli_conn);
+ out:
+
+	return 0;
+}
+
 ssize_t quic_packet_read_header(struct quic_packet *qpkt,
                                  unsigned char **buf, const unsigned char *end,
-                                 struct listener *l)
+                                 struct listener *l,
+                                 struct sockaddr_storage *saddr, socklen_t *saddrlen)
 {
 	unsigned char *beg;
 	unsigned char dcid_len, scid_len;
@@ -573,12 +664,18 @@ ssize_t quic_packet_read_header(struct quic_packet *qpkt,
 
 			node = ebmb_lookup(&l->quic_clients, qpkt->dcid.data, qpkt->dcid.len);
 			if (!node) {
+				int ret;
 
-				conn = calloc(1, sizeof *conn + qpkt->dcid.len);
-				if (conn) {
+				conn = pool_alloc(pool_head_quic_conn);
+				memset(conn, 0, sizeof *conn);
+				ret = quic_new_conn(conn, l, saddr);
+				if (conn && ret != -1) {
 					conn->cid_len = qpkt->dcid.len;
 					memcpy(conn->cid.key, qpkt->dcid.data, qpkt->dcid.len);
 					ebmb_insert(&l->quic_clients, &conn->cid, conn->cid_len);
+				}
+				else {
+					/* XXX TODO XXX */
 				}
 			}
 			else {
@@ -593,8 +690,8 @@ ssize_t quic_packet_read_header(struct quic_packet *qpkt,
 	if (qpkt->type == QUIC_PACKET_TYPE_INITIAL) {
 		uint64_t token_len;
 
-		fprintf(stderr, "QUIC_PACKET_TYPE_INITIAL packet\n");
 		token_len = quic_dec_int((const unsigned char **)buf, end);
+		fprintf(stderr, "QUIC_PACKET_TYPE_INITIAL packet token_len: %lu\n", token_len);
 		if (token_len == -1 || end - *buf < token_len)
 			goto err;
 
@@ -624,8 +721,18 @@ ssize_t quic_packet_read_header(struct quic_packet *qpkt,
 
 		hexdump(pn, 2, "Packet Number two first bytes:\n");
 		if (qpkt->type == QUIC_PACKET_TYPE_INITIAL) {
-			quic_remove_header_protection(conn, qpkt, pn, beg, end);
-			quic_decrypt_payload(conn, qpkt, pn, beg, end);
+			if (!quic_remove_header_protection(conn, qpkt, pn, beg, end)) {
+				fprintf(stderr, "Could not remove packet header protection\n");
+				goto err;
+			}
+
+			if (!quic_decrypt_payload(conn, qpkt, pn, beg, end)) {
+				fprintf(stderr, "Could not decrypt the payload\n");
+				goto err;
+			}
+
+			memcpy(&conn->pkts[conn->curr_pkt++].data, beg, end - beg);
+			conn->curr_pkt &= sizeof conn->pkts / sizeof *conn->pkts - 1;
 		}
 	}
 
@@ -638,7 +745,8 @@ ssize_t quic_packet_read_header(struct quic_packet *qpkt,
 	return -1;
 }
 
-ssize_t quic_packets_read(char *buf, size_t len, struct listener *l)
+ssize_t quic_packets_read(char *buf, size_t len, struct listener *l,
+                          struct sockaddr_storage *saddr, socklen_t *saddrlen)
 {
 	unsigned char *pos;
 	const unsigned char *end;
@@ -647,7 +755,7 @@ ssize_t quic_packets_read(char *buf, size_t len, struct listener *l)
 	pos = (unsigned char *)buf;
 	end = pos + len;
 
-	if (quic_packet_read_header(&qpkt, &pos, end, l) == -1)
+	if (quic_packet_read_header(&qpkt, &pos, end, l, saddr, saddrlen) == -1)
 		goto err;
 
 	/* XXX Servers SHOULD be able to read longer (than QUIC_CID_MAXLEN)
@@ -689,18 +797,24 @@ size_t quic_conn_to_buf(int fd, void *ctx)
 	ssize_t ret;
 	size_t done = 0;
 	struct listener *l = ctx;
+	struct buffer *buf = get_trash_chunk();
 
 	if (!fd_recv_ready(fd))
 		return 0;
 
 	if (unlikely(!(fdtab[fd].ev & FD_POLL_IN))) {
-		/* report error on POLL_ERR before connection establishment */
 		if ((fdtab[fd].ev & FD_POLL_ERR))
 			goto out;
 	}
 
 	do {
-		ret = recvfrom(fd, trash.area, trash.size, 0, NULL, 0);
+		/* Source address */
+		struct sockaddr_storage saddr = {0};
+		socklen_t saddrlen;
+
+		saddrlen = sizeof saddr;
+		ret = recvfrom(fd, buf->area, buf->size, 0,
+		               (struct sockaddr *)&saddr, &saddrlen);
 		if (ret < 0) {
 			if (errno == EINTR)
 				continue;
@@ -709,14 +823,15 @@ size_t quic_conn_to_buf(int fd, void *ctx)
 			break;
 		}
 		else {
-			hexdump(trash.area, 64, "%s: recvfrom()\n", __func__);
-			done = trash.data = ret;
+			hexdump(buf->area, ret, "%s: recvfrom() (%ld)\n", __func__, ret);
+			done = buf->data = ret;
 			/*
 			 * Senders MUST NOT coalesce QUIC packets for different connections into a single
 			 * UDP datagram. Receivers SHOULD ignore any subsequent packets with a different
 			 * Destination Connection ID than the first packet in the datagram.
 			 */
-			quic_packets_read(trash.area, trash.size, l);
+			quic_packets_read(buf->area, buf->data, l, &saddr, &saddrlen);
+			fd_done_recv(fd);
 		}
 	} while (0);
 
