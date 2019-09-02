@@ -408,7 +408,7 @@ static void session_kill_embryonic(struct session *sess, unsigned short state)
 /* Manages the embryonic session timeout. It is only called when the timeout
  * strikes and performs the required cleanup.
  */
-static struct task *session_expire_embryonic(struct task *t, void *context, unsigned short state)
+struct task *session_expire_embryonic(struct task *t, void *context, unsigned short state)
 {
 	struct session *sess = context;
 

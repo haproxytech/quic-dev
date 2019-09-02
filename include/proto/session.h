@@ -135,6 +135,8 @@ static inline int session_check_idle_conn(struct session *sess, struct connectio
 	return 0;
 }
 
+int conn_complete_session(struct connection *conn);
+
 #endif /* _PROTO_SESSION_H */
 
 /*
