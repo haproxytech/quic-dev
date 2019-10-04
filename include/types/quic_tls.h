@@ -16,6 +16,24 @@
 
 #include <stdint.h>
 
+/* It seems TLS 1.3 ciphersuites macros differ between openssl and boringssl */
+
+#if defined(OPENSSL_IS_BORINGSSL)
+#if !defined(TLS1_3_CK_AES_128_GCM_SHA256)
+#define TLS1_3_CK_AES_128_GCM_SHA256       TLS1_CK_AES_128_GCM_SHA256
+#endif
+#if !defined(TLS1_3_CK_AES_256_GCM_SHA384)
+#define TLS1_3_CK_AES_256_GCM_SHA384       TLS1_CK_AES_256_GCM_SHA384
+#endif
+#if !defined(TLS1_3_CK_CHACHA20_POLY1305_SHA256)
+#define TLS1_3_CK_CHACHA20_POLY1305_SHA256 TLS1_CK_CHACHA20_POLY1305_SHA256
+#endif
+#if !defined(TLS1_3_CK_AES_128_CCM_SHA256)
+/* Note that TLS1_CK_AES_128_CCM_SHA256 is not defined in boringssl */
+#define TLS1_3_CK_AES_128_CCM_SHA256       0x03001304
+#endif
+#endif
+
 /* Initial salt depending on QUIC version to derive client/server initial secrets.
  * This one is for draft-22 QUIC version.
  */

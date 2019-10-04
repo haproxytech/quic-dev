@@ -1,7 +1,29 @@
 #include <string.h>
+
+#include <openssl/ssl.h>
+
+#if defined(OPENSSL_IS_BORINGSSL)
+#include <openssl/hkdf.h>
+#else
 #include <openssl/evp.h>
 #include <openssl/kdf.h>
+#endif
 
+#if defined(OPENSSL_IS_BORINGSSL)
+int quic_hdkf_extract(unsigned char *buf, size_t *buflen,
+                      unsigned char *key, size_t keylen,
+                      unsigned char *salt, size_t saltlen)
+{
+	return HKDF_extract(buf, buflen, EVP_sha256(), key, keylen, salt, saltlen);
+}
+
+int quic_hdkf_expand(unsigned char *buf, size_t *buflen,
+                     const unsigned char *key, size_t keylen,
+                     const unsigned char *label, size_t labellen)
+{
+	return HKDF_expand(buf, *buflen, EVP_sha256(), key, keylen, label, labellen);
+}
+#else
 int quic_hdkf_extract(unsigned char *buf, size_t *buflen,
                       unsigned char *key, size_t keylen,
                       unsigned char *salt, size_t saltlen)
@@ -53,6 +75,7 @@ int quic_hdkf_expand(unsigned char *buf, size_t *buflen,
     EVP_PKEY_CTX_free(ctx);
     return 0;
 }
+#endif
 
 /* https://quicwg.org/base-drafts/draft-ietf-quic-tls.html#protection-keys
  * refers to:
