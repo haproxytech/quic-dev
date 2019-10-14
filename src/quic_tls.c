@@ -9,6 +9,15 @@
 #include <openssl/kdf.h>
 #endif
 
+/* Initial salt depending on QUIC version to derive client/server initial secrets.
+ * This one is for draft-23 QUIC version.
+ */
+unsigned char initial_salt[20] = {
+	0xc3, 0xee, 0xf7, 0x12, 0xc7, 0x2e, 0xbb, 0x5a,
+	0x11, 0xa7, 0xd2, 0x43, 0x2b, 0xb4, 0x63, 0x65,
+	0xbe, 0xf9, 0xf5, 0x02,
+};
+
 #if defined(OPENSSL_IS_BORINGSSL)
 int quic_hdkf_extract(unsigned char *buf, size_t *buflen,
                       unsigned char *key, size_t keylen,
