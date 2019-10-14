@@ -535,6 +535,8 @@ int quic_new_conn(struct quic_conn *quic_conn,
 	if (!sockaddr_alloc(&cli_conn->src))
 		goto out_free_conn;
 
+	cli_conn->quic_conn = quic_conn;
+
 	/* XXX Not sure it is safe to keep this statement. */
 	cli_conn->handle.fd = l->fd;
 	if (saddr)
@@ -550,6 +552,8 @@ int quic_new_conn(struct quic_conn *quic_conn,
 	 * This should be the case for an outgoing QUIC connection (haproxy as QUIC client).
 	 */
 	conn_ctrl_init(cli_conn);
+#else
+	cli_conn->flags |= CO_FL_CTRL_READY;
 #endif
 
 	/* wait for a PROXY protocol header */
@@ -574,7 +578,6 @@ int quic_new_conn(struct quic_conn *quic_conn,
 
 	conn_set_owner(cli_conn, sess, NULL);
 
-	cli_conn->quic_conn = quic_conn;
 
 	/* OK let's complete stream initialization since there is no handshake */
 	if (conn_complete_session(cli_conn) >= 0)
