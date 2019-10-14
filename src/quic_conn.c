@@ -425,7 +425,7 @@ static void quic_aead_iv_build(struct quic_conn *conn, uint64_t pn, uint32_t pnl
  * the AEAD that is in use.
  */
 static int quic_decrypt_payload(struct quic_conn *conn, struct quic_packet *pkt,
-                                unsigned char *pn, unsigned char *buf, const unsigned char *end)
+                                unsigned char *pn, unsigned char **buf, const unsigned char *end)
 {
 	int algo;
 	int  outlen, payload_len, aad_len;
@@ -436,7 +436,7 @@ static int quic_decrypt_payload(struct quic_conn *conn, struct quic_packet *pkt,
 
 	algo = pkt->type == QUIC_PACKET_TYPE_INITIAL ? TLS1_3_CK_AES_128_GCM_SHA256 : conn->aead_algo;
 
-	aad_len = pn + pkt->pnl - buf;
+	aad_len = pn + pkt->pnl - *buf;
 
 	/* The payload is after the Packet Number field. */
 	payload = pn + pkt->pnl;
@@ -449,7 +449,7 @@ static int quic_decrypt_payload(struct quic_conn *conn, struct quic_packet *pkt,
 	switch (algo) {
 		case TLS1_3_CK_AES_128_GCM_SHA256:
 			if (!EVP_DecryptInit_ex(ctx, EVP_aes_128_gcm(), NULL, conn->ctx.key, conn->ctx.aead_iv) ||
-			    !EVP_DecryptUpdate(ctx, NULL, &outlen, buf, aad_len) ||
+			    !EVP_DecryptUpdate(ctx, NULL, &outlen, *buf, aad_len) ||
 			    !EVP_DecryptUpdate(ctx, payload, &outlen, payload, payload_len - 16))
 			    return 0;
 
@@ -460,6 +460,7 @@ static int quic_decrypt_payload(struct quic_conn *conn, struct quic_packet *pkt,
 				return 0;
 
 			off += outlen;
+			*buf = payload;
 
 			hexdump(payload, off, "Decrypted payload(%zu):\n", off);
 			break;
@@ -670,7 +671,7 @@ ssize_t quic_packet_read_header(struct quic_packet *qpkt,
 				goto err;
 			}
 
-			if (!quic_decrypt_payload(conn, qpkt, pn, beg, end)) {
+			if (!quic_decrypt_payload(conn, qpkt, pn, &beg, end)) {
 				fprintf(stderr, "Could not decrypt the payload\n");
 				goto err;
 			}
