@@ -471,6 +471,54 @@ static int quic_decrypt_payload(struct quic_conn *conn, struct quic_packet *pkt,
 	return 1;
 }
 
+static int quic_parse_packet_frames(struct quic_conn *conn, struct quic_packet *pkt,
+                                    unsigned char *pn, unsigned char *buf, const unsigned char *end)
+{
+	const unsigned char *pos;
+
+	pos = buf;
+
+	while (pos < end) {
+		switch (*pos++) {
+		case QUIC_FT_CRYPTO:
+		{
+			struct crypto_frame *cf;
+
+			fprintf(stderr, "%s CRYPTO frame\n", __func__);
+			cf = &conn->icfs[conn->curr_icf];
+
+			cf->offset = quic_dec_int(&pos, end);
+			if (cf->offset == -1)
+				return 0;
+
+			cf->datalen = quic_dec_int(&pos, end);
+			if (cf->datalen == -1)
+				return 0;
+			fprintf(stderr, "%s frame length %zu\n", __func__, cf->datalen);
+
+			if (end - pos < cf->datalen)
+				return 0;
+
+			cf->data = pos;
+			pos += cf->datalen;
+			conn->curr_icf++;
+			conn->curr_icf &= sizeof conn->icfs / sizeof *conn->icfs - 1;
+			break;
+		}
+
+		case QUIC_FT_PADDING:
+			fprintf(stderr, "%s PADDING frame\n", __func__);
+			pos = end;
+			break;
+
+		default:
+			break;
+		}
+	}
+
+	return 1;
+}
+
 /*
  * Inspired from session_accept_fd().
  */
@@ -678,6 +726,10 @@ ssize_t quic_packet_read_header(struct quic_packet *qpkt,
 
 			memcpy(&conn->pkts[conn->curr_pkt++].data, beg, end - beg);
 			conn->curr_pkt &= sizeof conn->pkts / sizeof *conn->pkts - 1;
+
+			if (!quic_parse_packet_frames(conn, qpkt, pn, beg, end)) {
+				fprintf(stderr, "Could not parse the packet frames\n");
+			}
 		}
 	}
 
