@@ -574,8 +574,10 @@ int create_listeners(struct bind_conf *bc, const struct sockaddr_storage *ss,
 		return 0;
 	}
 
-	if (is_sa_family_quic(ss))
+	if (is_sa_family_quic(ss)) {
 		bc->xprt = xprt_get(XPRT_QUIC);
+		bc->is_quic = 1;
+	}
 
 	for (port = portl; port <= porth; port++) {
 		l = calloc(1, sizeof(*l));
