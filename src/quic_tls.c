@@ -9,6 +9,11 @@
 #include <openssl/kdf.h>
 #endif
 
+#include <types/quic_tls.h>
+
+__attribute__((format (printf, 3, 4)))
+void hexdump(const void *buf, size_t buflen, const char *title_fmt, ...);
+
 /* Initial salt depending on QUIC version to derive client/server initial secrets.
  * This one is for draft-23 QUIC version.
  */
@@ -19,21 +24,21 @@ unsigned char initial_salt[20] = {
 };
 
 #if defined(OPENSSL_IS_BORINGSSL)
-int quic_hdkf_extract(unsigned char *buf, size_t *buflen,
+int quic_hdkf_extract(unsigned char *buf, size_t *buflen, const EVP_MD *md,
                       unsigned char *key, size_t keylen,
                       unsigned char *salt, size_t saltlen)
 {
 	return HKDF_extract(buf, buflen, EVP_sha256(), key, keylen, salt, saltlen);
 }
 
-int quic_hdkf_expand(unsigned char *buf, size_t *buflen,
+int quic_hdkf_expand(unsigned char *buf, size_t *buflen, const EVP_MD *md,
                      const unsigned char *key, size_t keylen,
                      const unsigned char *label, size_t labellen)
 {
 	return HKDF_expand(buf, *buflen, EVP_sha256(), key, keylen, label, labellen);
 }
 #else
-int quic_hdkf_extract(unsigned char *buf, size_t *buflen,
+int quic_hdkf_extract(unsigned char *buf, size_t *buflen, const EVP_MD *md,
                       unsigned char *key, size_t keylen,
                       unsigned char *salt, size_t saltlen)
 {
@@ -59,7 +64,7 @@ int quic_hdkf_extract(unsigned char *buf, size_t *buflen,
     return 0;
 }
 
-int quic_hdkf_expand(unsigned char *buf, size_t *buflen,
+int quic_hdkf_expand(unsigned char *buf, size_t *buflen, const EVP_MD *md,
                      const unsigned char *key, size_t keylen,
                      const unsigned char *label, size_t labellen)
 {
@@ -112,7 +117,7 @@ int quic_hdkf_expand(unsigned char *buf, size_t *buflen,
  *                            Transcript-Hash(Messages), Hash.length)
  *
  */
-int quic_hdkf_expand_label(unsigned char *buf, size_t *buflen,
+int quic_hdkf_expand_label(unsigned char *buf, size_t *buflen, const EVP_MD *md,
                            const unsigned char *key, size_t keylen,
                            const unsigned char *label, size_t labellen)
 {
@@ -130,5 +135,116 @@ int quic_hdkf_expand_label(unsigned char *buf, size_t *buflen,
 	pos += labellen;
 	*pos++ = '\0';
 
-	return quic_hdkf_expand(buf, buflen, key, keylen, hdkf_label, pos - hdkf_label);
+	return quic_hdkf_expand(buf, buflen, md,
+	                        key, keylen, hdkf_label, pos - hdkf_label);
+}
+
+/*
+ * Derive the initial secret from the CID and QUIC version dependent salt.
+ * Returns the size of the derived secret if succeeded, 0 if not.
+ */
+static int quic_derive_initial_secret(struct quic_tls_ctx *ctx, unsigned char *cid, size_t cid_len)
+{
+	size_t outlen;
+
+	outlen = sizeof ctx->initial_secret;
+	if (!quic_hdkf_extract(ctx->initial_secret, &outlen, ctx->md,
+	                       cid, cid_len,
+	                       initial_salt, sizeof initial_salt))
+		return 0;
+
+	return outlen;
+}
+
+/*
+ * Derive the client initial secret from the initial secret.
+ * Returns the size of the derived secret if succeeded, 0 if not.
+ */
+static ssize_t quic_derive_client_initial_secret(struct quic_tls_ctx *ctx)
+{
+	size_t outlen;
+	const unsigned char label[] = "client in";
+
+	outlen = sizeof ctx->rx_initial_secret;
+	if (!quic_hdkf_expand_label(ctx->rx_initial_secret, &outlen, ctx->md,
+	                            ctx->initial_secret, sizeof ctx->initial_secret,
+	                            label, sizeof label - 1))
+	    return 0;
+
+	hexdump(ctx->rx_initial_secret, outlen, "CLIENT INITIAL SECRET:\n");
+	return outlen;
+}
+
+/*
+ * Derive the client secret key from the the client initial secret.
+ * Returns the size of the derived key if succeeded, 0 if not.
+ */
+static ssize_t quic_derive_key(struct quic_tls_ctx *ctx)
+{
+	size_t outlen;
+	const unsigned char label[] = "quic key";
+
+	outlen = sizeof ctx->key;
+	if (!quic_hdkf_expand_label(ctx->key, &outlen, ctx->md,
+	                            ctx->rx_initial_secret, sizeof ctx->rx_initial_secret,
+	                            label, sizeof label - 1))
+	    return 0;
+
+	hexdump(ctx->key, outlen, "KEY:\n");
+	return outlen;
+}
+
+/*
+ * Derive the client IV from the client initial secret.
+ * Returns the size of this IV if succeeded, 0 if not.
+ */
+static ssize_t quic_derive_iv(struct quic_tls_ctx *ctx)
+{
+	size_t outlen;
+	const unsigned char label[] = "quic iv";
+
+	outlen = sizeof ctx->iv;
+	if (!quic_hdkf_expand_label(ctx->iv, &outlen, ctx->md,
+	                            ctx->rx_initial_secret, sizeof ctx->rx_initial_secret,
+	                            label, sizeof label - 1))
+	    return 0;
+
+	hexdump(ctx->iv, outlen, "IV:\n");
+	return outlen;
+}
+
+/*
+ * Derive the client header protection key from the client initial secret.
+ * Returns the size of this key if succeeded, 0, if not.
+ */
+static ssize_t quic_derive_hp(struct quic_tls_ctx *ctx)
+{
+	size_t outlen;
+	const unsigned char label[] = "quic hp";
+
+	outlen = sizeof ctx->hp;
+	if (!quic_hdkf_expand_label(ctx->hp, &outlen, ctx->md,
+	                            ctx->rx_initial_secret, sizeof ctx->rx_initial_secret,
+	                            label, sizeof label - 1))
+	    return 0;
+
+	hexdump(ctx->hp, outlen, "HP:\n");
+	return outlen;
+}
+
+/*
+ * Initialize the client crytographic secrets for a new connection.
+ * Must be called after having received a new QUIC client Initial packet.
+ * Return 1 if succeeded, 0 if not.
+ */
+int quic_client_setup_crypto_ctx(struct quic_tls_ctx *ctx, unsigned char *cid, size_t cid_len)
+{
+	if (!quic_derive_initial_secret(ctx, cid, cid_len) ||
+	    !quic_derive_client_initial_secret(ctx) ||
+	    !quic_derive_key(ctx) ||
+	    !quic_derive_iv(ctx) ||
+	    !quic_derive_hp(ctx))
+		return 0;
+
+	return 1;
 }

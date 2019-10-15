@@ -23,6 +23,7 @@
 #define _TYPES_QUIC_CONN_H
 
 #include <types/quic.h>
+#include <types/quic_tls.h>
 
 /* The maximum number of QUIC packets stored by the fd I/O handler by QUIC
  * connection. Must be a power of two.
@@ -60,25 +61,10 @@ struct crypto_frame {
 
 struct quic_conn {
 	size_t cid_len;
-	int aead_algo;
-	struct ctx {
-		unsigned char initial_secret[32];
-		unsigned char client_initial_secret[32];
-		unsigned char key[16];
-		unsigned char iv[12];
-		unsigned char aead_iv[16];
-		/* Header protection key.
-		 * Note: the header protection is applied after packet protection.
-		 * As the header belong to the data, its protection must be removed before removing
-		 * the packet protection.
-		 */
-		unsigned char hp[16];
-		const EVP_CIPHER *aead;
-	} ctx;
+	struct quic_tls_ctx tls_ctx[4];
 	/* One largest packet number by client/server by number space */
 	uint64_t client_max_pn[3];
 	uint64_t server_max_pn[3];
-
 	/* Last QUIC_CONN_MAX_PACKET QUIC received packets */
 	struct quic_packet pkts[QUIC_CONN_MAX_PACKET];
 	/* The packet used among ->pkts to store the current QUIC received packet */

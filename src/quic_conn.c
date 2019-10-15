@@ -155,116 +155,6 @@ static int quic_read_uint32(uint32_t *val, const unsigned char **buf, const unsi
 	return 1;
 }
 
-/*
- * Derive the initial secret from the CID and QUIC version dependent salt.
- * Returns the size of the derived secret if succeeded, 0 if not.
- */
-static int quic_derive_initial_secret(struct quic_conn *conn)
-{
-	size_t outlen;
-
-	outlen = sizeof conn->ctx.initial_secret;
-	if (!quic_hdkf_extract(conn->ctx.initial_secret, &outlen,
-	                       conn->cid.key, conn->cid_len,
-	                       initial_salt, sizeof initial_salt))
-		return 0;
-
-	return outlen;
-}
-
-/*
- * Derive the client initial secret from the initial secret.
- * Returns the size of the derived secret if succeeded, 0 if not.
- */
-static ssize_t quic_derive_client_initial_secret(struct quic_conn *conn)
-{
-	size_t outlen;
-	const unsigned char label[] = "client in";
-
-	outlen = sizeof conn->ctx.client_initial_secret;
-	if (!quic_hdkf_expand_label(conn->ctx.client_initial_secret, &outlen,
-	                            conn->ctx.initial_secret, sizeof conn->ctx.initial_secret,
-	                            label, sizeof label - 1))
-	    return 0;
-
-	hexdump(conn->ctx.client_initial_secret, outlen, "CLIENT INITIAL SECRET:\n");
-	return outlen;
-}
-
-/*
- * Derive the client secret key from the the client initial secret.
- * Returns the size of the derived key if succeeded, 0 if not.
- */
-static ssize_t quic_derive_key(struct quic_conn *conn)
-{
-	size_t outlen;
-	const unsigned char label[] = "quic key";
-
-	outlen = sizeof conn->ctx.key;
-	if (!quic_hdkf_expand_label(conn->ctx.key, &outlen,
-	                            conn->ctx.client_initial_secret, sizeof conn->ctx.client_initial_secret,
-	                            label, sizeof label - 1))
-	    return 0;
-
-	hexdump(conn->ctx.key, outlen, "KEY:\n");
-	return outlen;
-}
-
-/*
- * Derive the client IV from the client initial secret.
- * Returns the size of this IV if succeeded, 0 if not.
- */
-static ssize_t quic_derive_iv(struct quic_conn *conn)
-{
-	size_t outlen;
-	const unsigned char label[] = "quic iv";
-
-	outlen = sizeof conn->ctx.iv;
-	if (!quic_hdkf_expand_label(conn->ctx.iv, &outlen,
-	                            conn->ctx.client_initial_secret, sizeof conn->ctx.client_initial_secret,
-	                            label, sizeof label - 1))
-	    return 0;
-
-	hexdump(conn->ctx.iv, outlen, "IV:\n");
-	return outlen;
-}
-
-/*
- * Derive the client header protection key from the client initial secret.
- * Returns the size of this key if succeeded, 0, if not.
- */
-static ssize_t quic_derive_hp(struct quic_conn *conn)
-{
-	size_t outlen;
-	const unsigned char label[] = "quic hp";
-
-	outlen = sizeof conn->ctx.hp;
-	if (!quic_hdkf_expand_label(conn->ctx.hp, &outlen,
-	                            conn->ctx.client_initial_secret, sizeof conn->ctx.client_initial_secret,
-	                            label, sizeof label - 1))
-	    return 0;
-
-	hexdump(conn->ctx.hp, outlen, "HP:\n");
-	return outlen;
-}
-
-/*
- * Initialize the client crytographic secrets for a new connection.
- * Must be called after having received a new QUIC client Initial packet.
- * Return 1 if succeeded, 0 if not.
- */
-static int quic_client_setup_crypto_ctx(struct quic_conn *conn)
-{
-	if (!quic_derive_initial_secret(conn) ||
-	    !quic_derive_client_initial_secret(conn) ||
-	    !quic_derive_key(conn) ||
-	    !quic_derive_iv(conn) ||
-	    !quic_derive_hp(conn))
-		return 0;
-
-	return 1;
-}
-
 
 uint64_t *quic_max_pn(struct quic_conn *conn, int server, int long_header, int packet_type)
 {
@@ -344,7 +234,7 @@ static int quic_remove_header_protection(struct quic_conn *conn, struct quic_pac
 	 */
 
 	hexdump(sample, 16, "packet sample:\n");
-	if (!EVP_DecryptInit_ex(ctx, EVP_aes_128_ctr(), NULL, conn->ctx.hp, NULL))
+	if (!EVP_DecryptInit_ex(ctx, EVP_aes_128_ctr(), NULL, conn->tls_ctx[0].hp, NULL))
 		goto out;
 
 	EVP_CIPHER_CTX_ctrl(ctx, EVP_CTRL_AEAD_SET_IVLEN, 16, NULL);
@@ -380,9 +270,9 @@ static void quic_aead_iv_build(struct quic_conn *conn, uint64_t pn, uint32_t pnl
 {
 	int i;
 	unsigned int shift;
-	unsigned char *iv = conn->ctx.iv;
-	unsigned char *aead_iv = conn->ctx.aead_iv;
-	size_t iv_size = sizeof conn->ctx.iv;
+	unsigned char *iv = conn->tls_ctx[0].iv;
+	unsigned char *aead_iv = conn->tls_ctx[0].aead_iv;
+	size_t iv_size = sizeof conn->tls_ctx[0].iv;
 
 	for (i = 0; i < iv_size - sizeof pn; i++)
 		*aead_iv++ = *iv++;
@@ -390,7 +280,7 @@ static void quic_aead_iv_build(struct quic_conn *conn, uint64_t pn, uint32_t pnl
 	shift = 56;
 	for (i = iv_size - sizeof pn; i < iv_size; i++, shift -= 8)
 		*aead_iv++ = *iv++ ^ (pn >> shift);
-	hexdump(conn->ctx.aead_iv, iv_size, "BUILD IV:\n");
+	hexdump(conn->tls_ctx[0].aead_iv, iv_size, "BUILD IV:\n");
 }
 
 /*
@@ -427,14 +317,15 @@ static void quic_aead_iv_build(struct quic_conn *conn, uint64_t pn, uint32_t pnl
 static int quic_decrypt_payload(struct quic_conn *conn, struct quic_packet *pkt,
                                 unsigned char *pn, unsigned char **buf, const unsigned char *end)
 {
-	int algo;
+	uint32_t algo;
 	int  outlen, payload_len, aad_len;
 	unsigned char *payload;
 	size_t off;
 
 	EVP_CIPHER_CTX *ctx;
 
-	algo = pkt->type == QUIC_PACKET_TYPE_INITIAL ? TLS1_3_CK_AES_128_GCM_SHA256 : conn->aead_algo;
+	algo = pkt->type == QUIC_PACKET_TYPE_INITIAL ?
+		TLS1_3_CK_AES_128_GCM_SHA256 : SSL_CIPHER_get_id(conn->tls_ctx[0].aead);
 
 	aad_len = pn + pkt->pnl - *buf;
 
@@ -448,7 +339,7 @@ static int quic_decrypt_payload(struct quic_conn *conn, struct quic_packet *pkt,
 	ctx = EVP_CIPHER_CTX_new();
 	switch (algo) {
 		case TLS1_3_CK_AES_128_GCM_SHA256:
-			if (!EVP_DecryptInit_ex(ctx, EVP_aes_128_gcm(), NULL, conn->ctx.key, conn->ctx.aead_iv) ||
+			if (!EVP_DecryptInit_ex(ctx, EVP_aes_128_gcm(), NULL, conn->tls_ctx[0].key, conn->tls_ctx[0].aead_iv) ||
 			    !EVP_DecryptUpdate(ctx, NULL, &outlen, *buf, aad_len) ||
 			    !EVP_DecryptUpdate(ctx, payload, &outlen, payload, payload_len - 16))
 			    return 0;
@@ -700,7 +591,7 @@ ssize_t quic_packet_read_header(struct quic_packet *qpkt,
 		 */
 		qpkt->token_len = token_len;
 
-		quic_client_setup_crypto_ctx(conn);
+		quic_client_setup_crypto_ctx(&conn->tls_ctx[0], qpkt->dcid.data, qpkt->dcid.len);
 	}
 
 	if (qpkt->type != QUIC_PACKET_TYPE_RETRY && qpkt->version) {

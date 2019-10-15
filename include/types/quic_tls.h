@@ -14,6 +14,8 @@
 #ifndef _TYPES_QUIC_TLS_H
 #define _TYPES_QUIC_TLS_H
 
+#include <openssl/evp.h>
+
 /* It seems TLS 1.3 ciphersuites macros differ between openssl and boringssl */
 
 #if defined(OPENSSL_IS_BORINGSSL)
@@ -53,6 +55,23 @@
 #define TLS_QUIC_TP_ACTIVE_CONNECTION_ID_LIMIT          14
 
 extern unsigned char initial_salt[20];
+
+struct quic_tls_ctx {
+	SSL_CIPHER *aead;
+	EVP_MD *md;
+	unsigned char initial_secret[32];
+	unsigned char rx_initial_secret[32];
+	unsigned char tx_initial_secret[32];
+	unsigned char key[16];
+	unsigned char iv[12];
+	unsigned char aead_iv[16];
+	/* Header protection key.
+	* Note: the header protection is applied after packet protection.
+	* As the header belong to the data, its protection must be removed before removing
+	* the packet protection.
+	*/
+	unsigned char hp[16];
+};
 
 #endif /* _TYPES_QUIC_TLS_H */
 
