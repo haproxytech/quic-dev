@@ -63,8 +63,9 @@
 extern unsigned char initial_salt[20];
 
 struct quic_tls_ctx {
-	SSL_CIPHER *aead;
-	EVP_MD *md;
+	const EVP_CIPHER *aead;
+	const EVP_MD *md;
+	const EVP_CIPHER *hp;
 	unsigned char initial_secret[32];
 	unsigned char rx_initial_secret[32];
 	unsigned char tx_initial_secret[32];
@@ -76,7 +77,7 @@ struct quic_tls_ctx {
 	* As the header belong to the data, its protection must be removed before removing
 	* the packet protection.
 	*/
-	unsigned char hp[16];
+	unsigned char hp_key[16];
 };
 
 #endif /* _TYPES_QUIC_TLS_H */

@@ -14,6 +14,7 @@
 #ifndef _PROTO_QUIC_TLS_H
 #define _PROTO_QUIC_TLS_H
 
+#include <stdlib.h>
 #include <openssl/ssl.h>
 
 #include <types/quic_tls.h>
@@ -28,7 +29,7 @@ int quic_hdkf_expand_label(unsigned char *buf, size_t *buflen, const EVP_MD *md,
 
 int quic_client_setup_crypto_ctx(struct quic_tls_ctx *ctx, unsigned char *cid, size_t cid_len);
 
-static inline const EVP_CIPHER *tls_aead(SSL_CIPHER *cipher)
+static inline const EVP_CIPHER *tls_aead(const SSL_CIPHER *cipher)
 {
 	switch (SSL_CIPHER_get_id(cipher)) {
 	case TLS1_3_CK_AES_128_GCM_SHA256:
@@ -48,6 +49,48 @@ static inline const EVP_CIPHER *tls_aead(SSL_CIPHER *cipher)
 	default:
 		return NULL;
 	}
+}
+
+static inline const EVP_MD *tls_md(const SSL_CIPHER *cipher)
+{
+	switch (SSL_CIPHER_get_id(cipher)) {
+	case TLS1_3_CK_AES_128_GCM_SHA256:
+#ifndef OPENSSL_IS_BORINGSSL
+	/* XXX TO DO XXX */
+    /* Note that for chacha20_poly1305, there exists EVP_AEAD_chacha20_poly135() function
+     * which returns a pointer to const EVP_AEAD.
+     */
+	case TLS1_3_CK_AES_128_CCM_SHA256:
+	case TLS1_3_CK_CHACHA20_POLY1305_SHA256:
+#endif
+		return EVP_sha256();
+	case TLS1_3_CK_AES_256_GCM_SHA384:
+		return EVP_sha384();
+	default:
+		return NULL;
+	}
+}
+
+static inline const EVP_CIPHER *tls_hp(const SSL_CIPHER *cipher)
+{
+	switch (SSL_CIPHER_get_id(cipher)) {
+#ifndef OPENSSL_IS_BORINGSSL
+	/* XXX TO DO XXX */
+    /* Note that for chacha20_poly1305, there exists EVP_AEAD_chacha20_poly135() function
+     * which returns a pointer to const EVP_AEAD.
+     */
+	case TLS1_3_CK_CHACHA20_POLY1305_SHA256:
+		return EVP_chacha20();
+	case TLS1_3_CK_AES_128_CCM_SHA256:
+#endif
+	case TLS1_3_CK_AES_128_GCM_SHA256:
+		return EVP_aes_128_ctr();
+	case TLS1_3_CK_AES_256_GCM_SHA384:
+		return EVP_aes_256_ctr();
+	default:
+		return NULL;
+	}
+
 }
 
 /* These two following functions map TLS implementation encryption level to ours */
@@ -82,5 +125,8 @@ static inline int quic_to_ssl_enc_level(int level)
 		return -1;
 	}
 }
+
+ssize_t quic_derive_packet_protection_key(struct quic_tls_ctx *ctx,
+                                          const unsigned char *secret, size_t secretlen);
 #endif /* _PROTO_QUIC_TLS_H */
 
