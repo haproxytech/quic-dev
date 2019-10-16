@@ -14,6 +14,8 @@
 #ifndef _PROTO_QUIC_TLS_H
 #define _PROTO_QUIC_TLS_H
 
+#include <openssl/ssl.h>
+
 #include <types/quic_tls.h>
 
 int quic_hdkf_extract(unsigned char *buf, size_t *buflen, const EVP_MD *md,
@@ -25,5 +27,60 @@ int quic_hdkf_expand_label(unsigned char *buf, size_t *buflen, const EVP_MD *md,
                            const unsigned char *label, size_t labellen);
 
 int quic_client_setup_crypto_ctx(struct quic_tls_ctx *ctx, unsigned char *cid, size_t cid_len);
+
+static inline const EVP_CIPHER *tls_aead(SSL_CIPHER *cipher)
+{
+	switch (SSL_CIPHER_get_id(cipher)) {
+	case TLS1_3_CK_AES_128_GCM_SHA256:
+		return EVP_aes_128_gcm();
+	case TLS1_3_CK_AES_256_GCM_SHA384:
+		return EVP_aes_256_gcm();
+#ifndef OPENSSL_IS_BORINGSSL
+	/* XXX TO DO XXX */
+    /* Note that for chacha20_poly1305, there exists EVP_AEAD_chacha20_poly135() function
+     * which returns a pointer to const EVP_AEAD.
+     */
+	case TLS1_3_CK_CHACHA20_POLY1305_SHA256:
+		return EVP_chacha20_poly1305();
+	case TLS1_3_CK_AES_128_CCM_SHA256:
+		return EVP_aes_128_ccm();
+#endif
+	default:
+		return NULL;
+	}
+}
+
+/* These two following functions map TLS implementation encryption level to ours */
+static inline int ssl_to_quic_enc_level(int level)
+{
+	switch (level) {
+	case ssl_encryption_initial:
+		return QUIC_TLS_ENC_LEVEL_INITIAL;
+	case ssl_encryption_early_data:
+		return QUIC_TLS_ENC_LEVEL_EARLY_DATA;
+	case ssl_encryption_handshake:
+		return QUIC_TLS_ENC_LEVEL_HANDSHAKE;
+	case ssl_encryption_application:
+		return QUIC_TLS_ENC_LEVEL_APP;
+	default:
+		return -1;
+	}
+}
+
+static inline int quic_to_ssl_enc_level(int level)
+{
+	switch (level) {
+	case QUIC_TLS_ENC_LEVEL_INITIAL:
+		return ssl_encryption_initial;
+	case QUIC_TLS_ENC_LEVEL_EARLY_DATA:
+		return ssl_encryption_early_data;
+	case QUIC_TLS_ENC_LEVEL_HANDSHAKE:
+		return ssl_encryption_handshake;
+	case QUIC_TLS_ENC_LEVEL_APP:
+		return ssl_encryption_application;
+	default:
+		return -1;
+	}
+}
 #endif /* _PROTO_QUIC_TLS_H */
 

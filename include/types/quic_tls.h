@@ -54,6 +54,12 @@
 #define TLS_QUIC_TP_PREFERRED_ADDRESS                   13
 #define TLS_QUIC_TP_ACTIVE_CONNECTION_ID_LIMIT          14
 
+/* QUIC TLS level encryption */
+#define QUIC_TLS_ENC_LEVEL_INITIAL    0
+#define QUIC_TLS_ENC_LEVEL_EARLY_DATA 1
+#define QUIC_TLS_ENC_LEVEL_HANDSHAKE  2
+#define QUIC_TLS_ENC_LEVEL_APP        3
+
 extern unsigned char initial_salt[20];
 
 struct quic_tls_ctx {
