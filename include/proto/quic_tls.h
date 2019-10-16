@@ -19,11 +19,11 @@
 
 #include <types/quic_tls.h>
 
-int quic_hdkf_extract(unsigned char *buf, size_t *buflen, const EVP_MD *md,
+int quic_hkdf_extract(unsigned char *buf, size_t *buflen, const EVP_MD *md,
                       unsigned char *key, size_t keylen,
                       unsigned char *salt, size_t saltlen);
 
-int quic_hdkf_expand_label(unsigned char *buf, size_t *buflen, const EVP_MD *md,
+int quic_hkdf_expand_label(unsigned char *buf, size_t *buflen, const EVP_MD *md,
                            const unsigned char *key, size_t keylen,
                            const unsigned char *label, size_t labellen);
 
