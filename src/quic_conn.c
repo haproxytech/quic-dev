@@ -234,7 +234,7 @@ static int quic_remove_header_protection(struct quic_conn *conn, struct quic_pac
 	 */
 
 	hexdump(sample, 16, "packet sample:\n");
-	if (!EVP_DecryptInit_ex(ctx, EVP_aes_128_ctr(), NULL, conn->tls_ctx[0].hp, NULL))
+	if (!EVP_DecryptInit_ex(ctx, EVP_aes_128_ctr(), NULL, conn->tls_ctx[0].hp_key, NULL))
 		goto out;
 
 	EVP_CIPHER_CTX_ctrl(ctx, EVP_CTRL_AEAD_SET_IVLEN, 16, NULL);
@@ -324,8 +324,7 @@ static int quic_decrypt_payload(struct quic_conn *conn, struct quic_packet *pkt,
 
 	EVP_CIPHER_CTX *ctx;
 
-	algo = pkt->type == QUIC_PACKET_TYPE_INITIAL ?
-		TLS1_3_CK_AES_128_GCM_SHA256 : SSL_CIPHER_get_id(conn->tls_ctx[0].aead);
+	algo = pkt->type == QUIC_PACKET_TYPE_INITIAL ? TLS1_3_CK_AES_128_GCM_SHA256 : -1;
 
 	aad_len = pn + pkt->pnl - *buf;
 

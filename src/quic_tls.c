@@ -31,11 +31,11 @@ int quic_hdkf_extract(unsigned char *buf, size_t *buflen, const EVP_MD *md,
 	return HKDF_extract(buf, buflen, EVP_sha256(), key, keylen, salt, saltlen);
 }
 
-int quic_hdkf_expand(unsigned char *buf, size_t *buflen, const EVP_MD *md,
+int quic_hdkf_expand(unsigned char *buf, size_t buflen, const EVP_MD *md,
                      const unsigned char *key, size_t keylen,
                      const unsigned char *label, size_t labellen)
 {
-	return HKDF_expand(buf, *buflen, EVP_sha256(), key, keylen, label, labellen);
+	return HKDF_expand(buf, buflen, EVP_sha256(), key, keylen, label, labellen);
 }
 #else
 int quic_hdkf_extract(unsigned char *buf, size_t *buflen, const EVP_MD *md,
@@ -64,7 +64,7 @@ int quic_hdkf_extract(unsigned char *buf, size_t *buflen, const EVP_MD *md,
     return 0;
 }
 
-int quic_hdkf_expand(unsigned char *buf, size_t *buflen, const EVP_MD *md,
+int quic_hdkf_expand(unsigned char *buf, size_t buflen, const EVP_MD *md,
                      const unsigned char *key, size_t keylen,
                      const unsigned char *label, size_t labellen)
 {
@@ -79,7 +79,7 @@ int quic_hdkf_expand(unsigned char *buf, size_t *buflen, const EVP_MD *md,
         EVP_PKEY_CTX_set_hkdf_md(ctx, EVP_sha256()) <= 0 ||
         EVP_PKEY_CTX_set1_hkdf_key(ctx, key, keylen) <= 0 ||
         EVP_PKEY_CTX_add1_hkdf_info(ctx, label, labellen) <= 0 ||
-        EVP_PKEY_derive(ctx, buf, buflen) <= 0)
+        EVP_PKEY_derive(ctx, buf, &buflen) <= 0)
         goto err;
 
     EVP_PKEY_CTX_free(ctx);
@@ -117,7 +117,7 @@ int quic_hdkf_expand(unsigned char *buf, size_t *buflen, const EVP_MD *md,
  *                            Transcript-Hash(Messages), Hash.length)
  *
  */
-int quic_hdkf_expand_label(unsigned char *buf, size_t *buflen, const EVP_MD *md,
+int quic_hdkf_expand_label(unsigned char *buf, size_t buflen, const EVP_MD *md,
                            const unsigned char *key, size_t keylen,
                            const unsigned char *label, size_t labellen)
 {
@@ -126,8 +126,8 @@ int quic_hdkf_expand_label(unsigned char *buf, size_t *buflen, const EVP_MD *md,
 	size_t hdkf_label_label_sz = sizeof hdkf_label_label - 1;
 
 	pos = hdkf_label;
-	*pos++ = *buflen >> 8;
-	*pos++ = *buflen & 0xff;
+	*pos++ = buflen >> 8;
+	*pos++ = buflen & 0xff;
 	*pos++ = hdkf_label_label_sz + labellen;
 	memcpy(pos, hdkf_label_label, hdkf_label_label_sz);
 	pos += hdkf_label_label_sz;
@@ -137,6 +137,29 @@ int quic_hdkf_expand_label(unsigned char *buf, size_t *buflen, const EVP_MD *md,
 
 	return quic_hdkf_expand(buf, buflen, md,
 	                        key, keylen, hdkf_label, pos - hdkf_label);
+}
+
+ssize_t quic_derive_packet_protection_key(struct quic_tls_ctx *ctx,
+                                          const unsigned char *secret, size_t secretlen)
+{
+	size_t keylen = EVP_CIPHER_key_length(ctx->aead);
+	size_t ivlen = EVP_CIPHER_iv_length(ctx->aead);
+	const unsigned char key_label[] = "quic key";
+	const unsigned char iv_label[] = "quic iv";
+	const unsigned char hp_key_label[] = "quic hp";
+
+	if (!quic_hdkf_expand_label(ctx->key, keylen, ctx->md, secret, secretlen,
+	                            key_label, sizeof key_label - 1) ||
+	    !quic_hdkf_expand_label(ctx->iv, ivlen, ctx->md, secret, secretlen,
+	                            iv_label, sizeof iv_label - 1) ||
+	    !quic_hdkf_expand_label(ctx->hp_key, keylen, ctx->md, secret, secretlen,
+	                            hp_key_label, sizeof hp_key_label - 1))
+		return 0;
+
+	hexdump(ctx->key, keylen, "===> %s: key:\n", __func__);
+	hexdump(ctx->iv, ivlen, "===> %s: iv:\n", __func__);
+	hexdump(ctx->hp_key, keylen, "===> %s: hp_key:\n", __func__);
+	return keylen;
 }
 
 /*
@@ -166,7 +189,7 @@ static ssize_t quic_derive_client_initial_secret(struct quic_tls_ctx *ctx)
 	const unsigned char label[] = "client in";
 
 	outlen = sizeof ctx->rx_initial_secret;
-	if (!quic_hdkf_expand_label(ctx->rx_initial_secret, &outlen, ctx->md,
+	if (!quic_hdkf_expand_label(ctx->rx_initial_secret, outlen, ctx->md,
 	                            ctx->initial_secret, sizeof ctx->initial_secret,
 	                            label, sizeof label - 1))
 	    return 0;
@@ -185,7 +208,7 @@ static ssize_t quic_derive_key(struct quic_tls_ctx *ctx)
 	const unsigned char label[] = "quic key";
 
 	outlen = sizeof ctx->key;
-	if (!quic_hdkf_expand_label(ctx->key, &outlen, ctx->md,
+	if (!quic_hdkf_expand_label(ctx->key, outlen, ctx->md,
 	                            ctx->rx_initial_secret, sizeof ctx->rx_initial_secret,
 	                            label, sizeof label - 1))
 	    return 0;
@@ -204,7 +227,7 @@ static ssize_t quic_derive_iv(struct quic_tls_ctx *ctx)
 	const unsigned char label[] = "quic iv";
 
 	outlen = sizeof ctx->iv;
-	if (!quic_hdkf_expand_label(ctx->iv, &outlen, ctx->md,
+	if (!quic_hdkf_expand_label(ctx->iv, outlen, ctx->md,
 	                            ctx->rx_initial_secret, sizeof ctx->rx_initial_secret,
 	                            label, sizeof label - 1))
 	    return 0;
@@ -222,13 +245,13 @@ static ssize_t quic_derive_hp(struct quic_tls_ctx *ctx)
 	size_t outlen;
 	const unsigned char label[] = "quic hp";
 
-	outlen = sizeof ctx->hp;
-	if (!quic_hdkf_expand_label(ctx->hp, &outlen, ctx->md,
+	outlen = sizeof ctx->hp_key;
+	if (!quic_hdkf_expand_label(ctx->hp_key, outlen, ctx->md,
 	                            ctx->rx_initial_secret, sizeof ctx->rx_initial_secret,
 	                            label, sizeof label - 1))
 	    return 0;
 
-	hexdump(ctx->hp, outlen, "HP:\n");
+	hexdump(ctx->hp_key, outlen, "HP:\n");
 	return outlen;
 }
 
@@ -248,3 +271,4 @@ int quic_client_setup_crypto_ctx(struct quic_tls_ctx *ctx, unsigned char *cid, s
 
 	return 1;
 }
+
