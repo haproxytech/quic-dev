@@ -139,6 +139,7 @@ static inline void quic_initial_tls_ctx_init(struct quic_tls_ctx *ctx)
 {
 	ctx->aead = EVP_aes_128_gcm();
 	ctx->md = EVP_sha256();
+	ctx->hp = EVP_aes_128_ctr();
 }
 
 #endif /* _PROTO_QUIC_TLS_H */

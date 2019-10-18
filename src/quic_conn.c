@@ -220,6 +220,7 @@ static int quic_remove_header_protection(struct quic_conn *conn, struct quic_pac
 	unsigned char mask[16] = {0};
 	unsigned char *sample;
 	EVP_CIPHER_CTX *ctx;
+	struct quic_tls_ctx *tls_ctx;
 	unsigned char *hp_key;
 
 	ctx = EVP_CIPHER_CTX_new();
@@ -228,15 +229,11 @@ static int quic_remove_header_protection(struct quic_conn *conn, struct quic_pac
 
 	ret = 0;
 	sample = pn + QUIC_PACKET_PN_MAXLEN;
-
-	/*
-	 * May be required for ECB?:
-	 * EVP_CIPHER_CTX_set_padding(ctx, 0);
-	 */
+	tls_ctx = &conn->tls_ctx[QUIC_TLS_ENC_LEVEL_INITIAL];
 
 	hexdump(sample, 16, "packet sample:\n");
-	hp_key = conn->tls_ctx[QUIC_TLS_ENC_LEVEL_INITIAL].rx.hp_key;
-	if (!EVP_DecryptInit_ex(ctx, EVP_aes_128_ctr(), NULL, hp_key, NULL))
+	hp_key = tls_ctx->rx.hp_key;
+	if (!EVP_DecryptInit_ex(ctx, tls_ctx->hp, NULL, hp_key, NULL))
 		goto out;
 
 	EVP_CIPHER_CTX_ctrl(ctx, EVP_CTRL_AEAD_SET_IVLEN, 16, NULL);
