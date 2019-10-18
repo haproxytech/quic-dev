@@ -62,22 +62,24 @@
 
 extern unsigned char initial_salt[20];
 
-struct quic_tls_ctx {
-	const EVP_CIPHER *aead;
-	const EVP_MD *md;
-	const EVP_CIPHER *hp;
-	unsigned char initial_secret[32];
-	unsigned char rx_initial_secret[32];
-	unsigned char tx_initial_secret[32];
+struct quic_tls_secrets {
 	unsigned char key[16];
 	unsigned char iv[12];
-	unsigned char aead_iv[16];
 	/* Header protection key.
 	* Note: the header protection is applied after packet protection.
 	* As the header belong to the data, its protection must be removed before removing
 	* the packet protection.
 	*/
 	unsigned char hp_key[16];
+};
+
+struct quic_tls_ctx {
+	const EVP_CIPHER *aead;
+	unsigned char aead_iv[12];
+	const EVP_MD *md;
+	const EVP_CIPHER *hp;
+	struct quic_tls_secrets rx;
+	struct quic_tls_secrets tx;
 };
 
 #endif /* _TYPES_QUIC_TLS_H */

@@ -220,6 +220,7 @@ static int quic_remove_header_protection(struct quic_conn *conn, struct quic_pac
 	unsigned char mask[16] = {0};
 	unsigned char *sample;
 	EVP_CIPHER_CTX *ctx;
+	unsigned char *hp_key;
 
 	ctx = EVP_CIPHER_CTX_new();
 	if (!ctx)
@@ -234,7 +235,8 @@ static int quic_remove_header_protection(struct quic_conn *conn, struct quic_pac
 	 */
 
 	hexdump(sample, 16, "packet sample:\n");
-	if (!EVP_DecryptInit_ex(ctx, EVP_aes_128_ctr(), NULL, conn->tls_ctx[0].hp_key, NULL))
+	hp_key = conn->tls_ctx[QUIC_TLS_ENC_LEVEL_INITIAL].rx.hp_key;
+	if (!EVP_DecryptInit_ex(ctx, EVP_aes_128_ctr(), NULL, hp_key, NULL))
 		goto out;
 
 	EVP_CIPHER_CTX_ctrl(ctx, EVP_CTRL_AEAD_SET_IVLEN, 16, NULL);
@@ -270,17 +272,19 @@ static void quic_aead_iv_build(struct quic_conn *conn, uint64_t pn, uint32_t pnl
 {
 	int i;
 	unsigned int shift;
-	unsigned char *iv = conn->tls_ctx[0].iv;
-	unsigned char *aead_iv = conn->tls_ctx[0].aead_iv;
-	size_t iv_size = sizeof conn->tls_ctx[0].iv;
+	struct quic_tls_ctx *ctx = &conn->tls_ctx[QUIC_TLS_ENC_LEVEL_INITIAL];
+	unsigned char *iv = ctx->rx.iv;
+	unsigned char *aead_iv = ctx->aead_iv;
+	size_t iv_size = sizeof ctx->rx.iv;
 
+	hexdump(iv, iv_size, "%s: IV:\n", __func__);
 	for (i = 0; i < iv_size - sizeof pn; i++)
 		*aead_iv++ = *iv++;
 
 	shift = 56;
 	for (i = iv_size - sizeof pn; i < iv_size; i++, shift -= 8)
 		*aead_iv++ = *iv++ ^ (pn >> shift);
-	hexdump(conn->tls_ctx[0].aead_iv, iv_size, "BUILD IV:\n");
+	hexdump(ctx->aead_iv, iv_size, "%s: BUILD IV:\n", __func__);
 }
 
 /*
@@ -321,12 +325,18 @@ static int quic_decrypt_payload(struct quic_conn *conn, struct quic_packet *pkt,
 	int  outlen, payload_len, aad_len;
 	unsigned char *payload;
 	size_t off;
+	unsigned char *key;
+	struct quic_tls_ctx *tls_ctx;
 
 	EVP_CIPHER_CTX *ctx;
 
 	algo = pkt->type == QUIC_PACKET_TYPE_INITIAL ? TLS1_3_CK_AES_128_GCM_SHA256 : -1;
+	tls_ctx = pkt->type == QUIC_PACKET_TYPE_INITIAL ? &conn->tls_ctx[QUIC_PACKET_TYPE_INITIAL] : NULL;
+
+	key = tls_ctx->rx.key;
 
 	aad_len = pn + pkt->pnl - *buf;
+	hexdump(key, 16, "\n\n%s key: (aad_len: %d)\n", __func__, aad_len);
 
 	/* The payload is after the Packet Number field. */
 	payload = pn + pkt->pnl;
@@ -338,7 +348,7 @@ static int quic_decrypt_payload(struct quic_conn *conn, struct quic_packet *pkt,
 	ctx = EVP_CIPHER_CTX_new();
 	switch (algo) {
 		case TLS1_3_CK_AES_128_GCM_SHA256:
-			if (!EVP_DecryptInit_ex(ctx, EVP_aes_128_gcm(), NULL, conn->tls_ctx[0].key, conn->tls_ctx[0].aead_iv) ||
+			if (!EVP_DecryptInit_ex(ctx, EVP_aes_128_gcm(), NULL, key, conn->tls_ctx[QUIC_PACKET_TYPE_INITIAL].aead_iv) ||
 			    !EVP_DecryptUpdate(ctx, NULL, &outlen, *buf, aad_len) ||
 			    !EVP_DecryptUpdate(ctx, payload, &outlen, payload, payload_len - 16))
 			    return 0;
@@ -488,6 +498,50 @@ int quic_new_conn(struct quic_conn *quic_conn,
 	return 0;
 }
 
+static int quic_conn_derive_initial_secrets(struct quic_tls_ctx *ctx,
+                                            const unsigned char *cid, size_t cidlen,
+                                            int server)
+{
+	unsigned char initial_secret[32];
+	/* Initial secret to be derived for incoming packets */
+	unsigned char rx_init_sec[32];
+	/* Initial secret to be derived for outgoing packets */
+	unsigned char tx_init_sec[32];
+	struct quic_tls_secrets *rx_ctx, *tx_ctx;
+
+
+	if (!quic_derive_initial_secret(ctx->md, initial_secret, sizeof initial_secret,
+	                                cid, cidlen))
+		return 0;
+	if (!quic_tls_derive_initial_secrets(ctx->md,
+	                                     rx_init_sec, sizeof rx_init_sec,
+	                                     tx_init_sec, sizeof tx_init_sec,
+	                                     initial_secret, sizeof initial_secret, server))
+	    return 0;
+
+	if (server) {
+		rx_ctx = &ctx->rx;
+		tx_ctx = &ctx->tx;
+	}
+	else {
+		rx_ctx = &ctx->tx;
+		tx_ctx = &ctx->rx;
+	}
+	if (!quic_tls_derive_packet_protection_keys(ctx->aead, ctx->md,
+	                                            rx_ctx->key, sizeof rx_ctx->key,
+	                                            rx_ctx->iv, sizeof rx_ctx->iv,
+	                                            rx_ctx->hp_key, sizeof rx_ctx->hp_key,
+	                                            rx_init_sec, sizeof rx_init_sec))
+		return 0;
+	if (!quic_tls_derive_packet_protection_keys(ctx->aead, ctx->md,
+	                                            tx_ctx->key, sizeof tx_ctx->key,
+	                                            tx_ctx->iv, sizeof tx_ctx->iv,
+	                                            tx_ctx->hp_key, sizeof tx_ctx->hp_key,
+	                                            tx_init_sec, sizeof tx_init_sec))
+		return 0;
+	return 1;
+}
+
 ssize_t quic_packet_read_header(struct quic_packet *qpkt,
                                  unsigned char **buf, const unsigned char *end,
                                  struct listener *l,
@@ -556,6 +610,7 @@ ssize_t quic_packet_read_header(struct quic_packet *qpkt,
 				memset(conn, 0, sizeof *conn);
 				ret = quic_new_conn(conn, l, saddr);
 				if (conn && ret != -1) {
+					quic_initial_tls_ctx_init(&conn->tls_ctx[QUIC_TLS_ENC_LEVEL_INITIAL]);
 					conn->cid_len = qpkt->dcid.len;
 					memcpy(conn->cid.key, qpkt->dcid.data, qpkt->dcid.len);
 					ebmb_insert(&l->quic_clients, &conn->cid, conn->cid_len);
@@ -575,9 +630,9 @@ ssize_t quic_packet_read_header(struct quic_packet *qpkt,
 
 	if (qpkt->type == QUIC_PACKET_TYPE_INITIAL) {
 		uint64_t token_len;
+		struct quic_tls_ctx *ctx = &conn->tls_ctx[QUIC_TLS_ENC_LEVEL_INITIAL];
 
 		token_len = quic_dec_int((const unsigned char **)buf, end);
-		fprintf(stderr, "QUIC_PACKET_TYPE_INITIAL packet token_len: %lu\n", token_len);
 		if (token_len == -1 || end - *buf < token_len)
 			goto err;
 
@@ -589,8 +644,7 @@ ssize_t quic_packet_read_header(struct quic_packet *qpkt,
 		 * The token must be provided in a Retry packet or NEW_TOKEN frame.
 		 */
 		qpkt->token_len = token_len;
-
-		quic_client_setup_crypto_ctx(&conn->tls_ctx[0], qpkt->dcid.data, qpkt->dcid.len);
+		quic_conn_derive_initial_secrets(ctx, qpkt->dcid.data, qpkt->dcid.len, 1);
 	}
 
 	if (qpkt->type != QUIC_PACKET_TYPE_RETRY && qpkt->version) {

@@ -19,15 +19,21 @@
 
 #include <types/quic_tls.h>
 
-int quic_hkdf_extract(unsigned char *buf, size_t *buflen, const EVP_MD *md,
-                      unsigned char *key, size_t keylen,
-                      unsigned char *salt, size_t saltlen);
+int quic_derive_initial_secret(const EVP_MD *md,
+                               unsigned char *initial_secret, size_t initial_secret_sz,
+                               const unsigned char *secret, size_t secret_sz);
 
-int quic_hkdf_expand_label(unsigned char *buf, size_t *buflen, const EVP_MD *md,
-                           const unsigned char *key, size_t keylen,
-                           const unsigned char *label, size_t labellen);
+int quic_tls_derive_initial_secrets(const EVP_MD *md,
+                                    unsigned char *rx, size_t rx_sz,
+                                    unsigned char *tx, size_t tx_sz,
+                                    const unsigned char *secret, size_t secret_sz,
+                                    int server);
 
-int quic_client_setup_crypto_ctx(struct quic_tls_ctx *ctx, unsigned char *cid, size_t cid_len);
+int quic_tls_derive_packet_protection_keys(const EVP_CIPHER *aead, const EVP_MD *md,
+                                           unsigned char *key, size_t keylen,
+                                           unsigned char *iv, size_t ivlen,
+                                           unsigned char *hp_key, size_t hp_keylen,
+                                           const unsigned char *secret, size_t secretlen);
 
 static inline const EVP_CIPHER *tls_aead(const SSL_CIPHER *cipher)
 {
@@ -126,7 +132,14 @@ static inline int quic_to_ssl_enc_level(int level)
 	}
 }
 
-ssize_t quic_derive_packet_protection_key(struct quic_tls_ctx *ctx,
-                                          const unsigned char *secret, size_t secretlen);
+/*
+ * Initialize a TLS cryptographic context for the Initial encryption level.
+ */
+static inline void quic_initial_tls_ctx_init(struct quic_tls_ctx *ctx)
+{
+	ctx->aead = EVP_aes_128_gcm();
+	ctx->md = EVP_sha256();
+}
+
 #endif /* _PROTO_QUIC_TLS_H */
 
