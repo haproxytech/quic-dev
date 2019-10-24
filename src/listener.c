@@ -37,6 +37,7 @@
 #include <proto/listener.h>
 #include <proto/protocol.h>
 #include <proto/proto_sockpair.h>
+#include <proto/quic_conn.h>
 #include <proto/sample.h>
 #include <proto/stream.h>
 #include <proto/task.h>
@@ -577,6 +578,15 @@ int create_listeners(struct bind_conf *bc, const struct sockaddr_storage *ss,
 	if (is_sa_family_quic(ss)) {
 		bc->xprt = xprt_get(XPRT_QUIC);
 		bc->is_quic = 1;
+		quic_transport_params_init(&bc->quic_params, 1);
+		bc->enc_quic_params_len =
+			quic_transport_params_encode(bc->enc_quic_params,
+			                             bc->enc_quic_params + sizeof bc->enc_quic_params,
+			                             &bc->quic_params, 1);
+		if (!bc->enc_quic_params_len) {
+			memprintf(err, "QUIC transport parameters encoding failed");
+			return 0;
+		}
 	}
 
 	for (port = portl; port <= porth; port++) {

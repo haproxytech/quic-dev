@@ -34,6 +34,7 @@
 #include <common/hathreads.h>
 
 #include <types/obj_type.h>
+#include <types/quic_conn.h>
 #include <eb32tree.h>
 
 /* Some pointer types reference below */
@@ -172,6 +173,9 @@ struct bind_conf {
 	struct xprt_ops *xprt;     /* transport-layer operations for all listeners */
 	int is_ssl;                /* SSL is required for these listeners */
 	int is_quic;               /* 1 if QUIC listeners */
+	struct quic_transport_params quic_params; /* QUIC transport parameters */
+	unsigned char enc_quic_params[128];       /* encoded QUIC transport parameters */
+	size_t enc_quic_params_len;
 	int generate_certs;        /* 1 if generate-certificates option is set, else 0 */
 	int level;                 /* stats access level (ACCESS_LVL_*) */
 	int severity_output;       /* default severity output format in cli feedback messages */
