@@ -37,23 +37,6 @@
 /* The TLS extension (enum) for QUIC transport parameters */
 #define TLS_EXTENSION_QUIC_TRANSPORT_PARAMETERS 0xffa5
 
-/* QUIC transport parameters */
-#define TLS_QUIC_TP_ORIGINAL_CONNECTION_ID               0
-#define TLS_QUIC_TP_IDLE_TIMEOUT                         1
-#define TLS_QUIC_TP_STATELESS_RESET_TOKEN                2
-#define TLS_QUIC_TP_MAX_PACKET_SIZE                      3
-#define TLS_QUIC_TP_INITIAL_MAX_DATA                     4
-#define TLS_QUIC_TP_INITIAL_MAX_STREAM_DATA_BIDI_LOCAL   5
-#define TLS_QUIC_TP_INITIAL_MAX_STREAM_DATA_BIDI_REMOTE  6
-#define TLS_QUIC_TP_INITIAL_MAX_STREAM_DATA_UNI          7
-#define TLS_QUIC_TP_INITIAL_MAX_STREAM_BIDI              8
-#define TLS_QUIC_TP_INITIAL_MAX_STREAM_UNI               9
-#define TLS_QUIC_TP_ACK_DELAY_EXPONENT                  10
-#define TLS_QUIC_TP_MAX_ACK_DELAY                       11
-#define TLS_QUIC_TP_DISABLE_ACTIVE_MIGRATION            12
-#define TLS_QUIC_TP_PREFERRED_ADDRESS                   13
-#define TLS_QUIC_TP_ACTIVE_CONNECTION_ID_LIMIT          14
-
 /* QUIC TLS level encryption */
 #define QUIC_TLS_ENC_LEVEL_INITIAL    0
 #define QUIC_TLS_ENC_LEVEL_EARLY_DATA 1

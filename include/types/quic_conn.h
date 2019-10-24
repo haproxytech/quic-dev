@@ -25,6 +25,8 @@
 #include <types/quic.h>
 #include <types/quic_tls.h>
 
+#include <ebmbtree.h>
+
 /* The maximum number of QUIC packets stored by the fd I/O handler by QUIC
  * connection. Must be a power of two.
  */
@@ -35,6 +37,69 @@ struct quic_cid {
 	unsigned char data[QUIC_CID_MAXLEN];
 };
 
+#define QUIC_STATELESS_RESET_TOKEN_LEN 16
+
+struct preferred_address {
+	uint16_t ipv4_port;
+	uint16_t ipv6_port;
+	uint8_t ipv4_addr[4];
+	uint8_t ipv6_addr[16];
+	struct quic_cid cid;
+	uint8_t stateless_reset_token[QUIC_STATELESS_RESET_TOKEN_LEN];
+};
+
+/* Default values for some of transport parameters */
+#define QUIC_DFLT_MAX_PACKET_SIZE     65527
+#define QUIC_DFLT_ACK_DELAY_COMPONENT     3 /* milliseconds */
+#define QUIC_DFLT_MAX_ACK_DELAY          25 /* milliseconds */
+
+/* Types of QUIC transport parameters */
+#define QUIC_TP_ORIGINAL_CONNECTION_ID               0
+#define QUIC_TP_IDLE_TIMEOUT                         1
+#define QUIC_TP_STATELESS_RESET_TOKEN                2
+#define QUIC_TP_MAX_PACKET_SIZE                      3
+#define QUIC_TP_INITIAL_MAX_DATA                     4
+#define QUIC_TP_INITIAL_MAX_STREAM_DATA_BIDI_LOCAL   5
+#define QUIC_TP_INITIAL_MAX_STREAM_DATA_BIDI_REMOTE  6
+#define QUIC_TP_INITIAL_MAX_STREAM_DATA_UNI          7
+#define QUIC_TP_INITIAL_MAX_STREAMS_BIDI             8
+#define QUIC_TP_INITIAL_MAX_STREAMS_UNI              9
+#define QUIC_TP_ACK_DELAY_EXPONENT                  10
+#define QUIC_TP_MAX_ACK_DELAY                       11
+#define QUIC_TP_DISABLE_ACTIVE_MIGRATION            12
+#define QUIC_TP_PREFERRED_ADDRESS                   13
+#define QUIC_TP_ACTIVE_CONNECTION_ID_LIMIT          14
+
+/*
+ * QUIC transport parameters.
+ * Note that forbidden parameters sent by clients MUST generate TRANSPORT_PARAMETER_ERROR errors.
+ */
+struct quic_transport_params {
+	uint64_t idle_timeout;
+	uint64_t max_packet_size;                                      /* Default: 65527 (max of UDP payload for IPv6) */
+	uint64_t initial_max_data;
+	uint64_t initial_max_stream_data_bidi_local;
+	uint64_t initial_max_stream_data_bidi_remote;
+	uint64_t initial_max_stream_data_uni;
+	uint64_t initial_max_streams_bidi;
+	uint64_t initial_max_streams_uni;
+	uint64_t ack_delay_exponent;                                   /* Default: 3, max: 20 */
+	uint64_t max_ack_delay;                                        /* Default: 3ms, max: 2^14ms*/
+	uint64_t active_connection_id_limit;
+
+	/* Booleans */
+	uint8_t disable_active_migration;
+	uint8_t with_stateless_reset_token;
+	uint8_t with_preferred_address;
+	uint8_t with_original_connection_id;
+
+	uint8_t stateless_reset_token[QUIC_STATELESS_RESET_TOKEN_LEN]; /* Forbidden for clients */
+	struct quic_cid original_connection_id;                        /* Forbidden for clients */
+	struct preferred_address preferred_address;                    /* Forbidden for clients */
+};
+
+/* Default QUIC connection transport parameters */
+extern struct quic_transport_params quid_dflt_transport_params;
 struct quic_packet {
 	int from_server;
 	int long_header;
@@ -73,7 +138,8 @@ struct quic_conn {
 	struct crypto_frame icfs[QUIC_CONN_MAX_PACKET];
 	int curr_icf;
 	int pend_icf;
-
+	/* Transport parameters */
+	struct quic_transport_params params;
 	/* XXX Do not insert anything after <cid> which contains a flexible array member!!! XXX */
 	struct ebmb_node cid;
 };

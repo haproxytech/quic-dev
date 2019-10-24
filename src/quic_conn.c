@@ -14,15 +14,21 @@
 
 #include <common/chunk.h>
 
+#include <types/global.h>
+#include <types/quic.h>
+#include <types/quic_tls.h>
+
 #include <proto/connection.h>
 #include <proto/fd.h>
 #include <proto/listener.h>
+#include <proto/quic_conn.h>
 #include <proto/quic_tls.h>
 
-#include <types/global.h>
-#include <types/quic.h>
-#include <types/quic_conn.h>
-#include <types/quic_tls.h>
+struct quic_transport_params quid_dflt_transport_params = {
+	.max_packet_size    = QUIC_DFLT_MAX_PACKET_SIZE,
+	.ack_delay_exponent = QUIC_DFLT_ACK_DELAY_COMPONENT,
+	.max_ack_delay      = QUIC_DFLT_MAX_ACK_DELAY,
+};
 
 __attribute__((format (printf, 3, 4)))
 void hexdump(const void *buf, size_t buflen, const char *title_fmt, ...)
@@ -64,80 +70,6 @@ void hexdump(const void *buf, size_t buflen, const char *title_fmt, ...)
 DECLARE_POOL(pool_head_quic_conn, "quic_conn",
              sizeof(struct quic_conn) + QUIC_CID_MAXLEN);
 
-/* The first two bits of byte #0 gives the 2 logarithm of the encoded length. */
-#define QUIC_VARINT_BYTE_0_BITMASK 0x3f
-#define QUIC_VARINT_BYTE_0_SHIFT   6
-
-/*
- * Decode a QUIC variable length integer.
- * Note that the result is a 64-bits integer but with the less significant
- * 62 bits as relevant information. The most significant 2 remaining bits encode
- * the length of the integer to be decoded. So, this function can return (uint64_t)-1
- * in case of any error.
- * Return the 64-bits decoded value when succeeded, -1 if not: <buf> provided buffer
- * was not big enough.
- */
-uint64_t quic_dec_int(const unsigned char **buf, const unsigned char *end)
-{
-	uint64_t ret;
-	size_t len;
-
-	if (*buf == end)
-		return -1;
-
-	len = 1 << (**buf >> QUIC_VARINT_BYTE_0_SHIFT);
-	if (*buf + len > end)
-		return -1;
-
-	ret = *(*buf)++ & QUIC_VARINT_BYTE_0_BITMASK;
-	while (--len)
-		ret = (ret << 8) | *(*buf)++;
-
-
-	return ret;
-}
-
-int quic_enc_int(unsigned char **buf, const unsigned char *end, uint64_t val)
-{
-	switch (val) {
-	case (1UL << 30) ... (1UL << 62) - 1:
-		if (end - *buf < 8)
-			return 0;
-		*(*buf)++ = 0xc0 | (val >> 56);
-		*(*buf)++ = val >> 48;
-		*(*buf)++ = val >> 40;
-		*(*buf)++ = val >> 32;
-		*(*buf)++ = val >> 24;
-		*(*buf)++ = val >> 16;
-		*(*buf)++ = val >> 8;
-		break;
-
-	case (1UL << 14) ... (1UL << 30) - 1:
-		if (end - *buf < 4)
-			return 0;
-		*(*buf)++ = 0x80 | (val >> 24);
-		*(*buf)++ = val >> 16;
-		*(*buf)++ = val >> 8;
-		break;
-
-	case (1UL <<  6) ... (1UL << 14) - 1:
-		if (end - *buf < 2)
-			return 0;
-		*(*buf)++ = 0x40 | (val >> 8);
-		break;
-
-	case 0 ... (1UL <<  6) - 1:
-		if (end - *buf < 1)
-			return 0;
-		break;
-
-	default:
-		return 0;
-	}
-	*(*buf)++ = val;
-
-	return 1;
-}
 
 /* Return a 32-bits integer in <val> from QUIC packet with <buf> as address.
  * Returns 0 if failed (not enough data), 1 if succeeded.
