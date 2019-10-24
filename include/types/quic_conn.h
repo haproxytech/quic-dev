@@ -139,10 +139,6 @@ struct quic_conn {
 	struct crypto_frame icfs[QUIC_CONN_MAX_PACKET];
 	int curr_icf;
 	int pend_icf;
-	/* Transport parameters */
-	struct quic_transport_params params;
-	unsigned char enc_params[128];
-	size_t enc_params_len;
 	struct ebpt_node cid;
 };
 
