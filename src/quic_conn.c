@@ -471,6 +471,29 @@ static int quic_conn_derive_initial_secrets(struct quic_tls_ctx *ctx,
 	return 1;
 }
 
+static int quic_conn_init(struct listener *l, struct quic_conn *conn,
+                          unsigned char *cid, size_t cid_len)
+{
+	/* Transport parameters initializations. */
+	quic_transport_params_init(&conn->params, 1);
+	conn->enc_params_len =
+		quic_transport_params_encode(conn->enc_params,
+		                             conn->enc_params + sizeof conn->enc_params,
+		                             &conn->params, 1);
+	if (!conn->enc_params_len)
+		return 0;
+
+	/* Copy the connection ID. */
+	conn->dcid.len = cid_len;
+	memcpy(conn->dcid.data, cid, cid_len);
+	/* Store this connection in the QUIC clients tree of this <l> listener. */
+	ebpt_insert(&l->quic_clients, &conn->cid);
+	/* Initialize the Initial level TLS encryption context. */
+	quic_initial_tls_ctx_init(&conn->tls_ctx[QUIC_TLS_ENC_LEVEL_INITIAL]);
+
+	return 1;
+}
+
 ssize_t quic_packet_read_header(struct quic_packet *qpkt,
                                  unsigned char **buf, const unsigned char *end,
                                  struct listener *l,
@@ -538,15 +561,15 @@ ssize_t quic_packet_read_header(struct quic_packet *qpkt,
 				conn = pool_alloc(pool_head_quic_conn);
 				memset(conn, 0, sizeof *conn);
 				ret = quic_new_conn(conn, l, saddr);
-				if (conn && ret != -1) {
-					quic_initial_tls_ctx_init(&conn->tls_ctx[QUIC_TLS_ENC_LEVEL_INITIAL]);
-					conn->cid_len = qpkt->dcid.len;
-					memcpy(conn->cid.key, qpkt->dcid.data, qpkt->dcid.len);
-					ebmb_insert(&l->quic_clients, &conn->cid, conn->cid_len);
-				}
-				else {
-					/* XXX TODO XXX */
-				}
+
+				if (!conn || ret == -1)
+					goto err;
+
+				if (!quic_conn_init(l, conn, qpkt->dcid.data, qpkt->dcid.len))
+					goto err;
+
+				hexdump(conn->enc_params, conn->enc_params_len,
+				        "%s: encoded transport parameters:\n", __func__);
 			}
 			else {
 				conn = ebmb_entry(node, struct quic_conn, cid);

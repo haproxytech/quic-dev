@@ -25,7 +25,7 @@
 #include <types/quic.h>
 #include <types/quic_tls.h>
 
-#include <ebmbtree.h>
+#include <ebpttree.h>
 
 /* The maximum number of QUIC packets stored by the fd I/O handler by QUIC
  * connection. Must be a power of two.
@@ -125,7 +125,8 @@ struct crypto_frame {
 };
 
 struct quic_conn {
-	size_t cid_len;
+	struct quic_cid dcid;
+	struct quic_cid scid;
 	struct quic_tls_ctx tls_ctx[4];
 	/* One largest packet number by client/server by number space */
 	uint64_t client_max_pn[3];
@@ -140,8 +141,9 @@ struct quic_conn {
 	int pend_icf;
 	/* Transport parameters */
 	struct quic_transport_params params;
-	/* XXX Do not insert anything after <cid> which contains a flexible array member!!! XXX */
-	struct ebmb_node cid;
+	unsigned char enc_params[128];
+	size_t enc_params_len;
+	struct ebpt_node cid;
 };
 
 #endif /* _TYPES_QUIC_CONN_H */

@@ -101,7 +101,6 @@ static inline uint64_t quic_dec_int(const unsigned char **buf, const unsigned ch
 	while (--len)
 		ret = (ret << 8) | *(*buf)++;
 
-
 	return ret;
 }
 
@@ -180,6 +179,7 @@ static inline int quic_transport_param_enc_mem(unsigned char **buf, const unsign
 
 	quic_transport_param_encode_type_len(buf, end, type, length);
 	memcpy(*buf, param, length);
+	*buf += length;
 
 	return 1;
 }
@@ -193,7 +193,7 @@ static inline int quic_transport_param_enc_int(unsigned char **buf, const unsign
 {
 	uint16_t len;
 	unsigned int shift;
-	unsigned char *head;
+	unsigned char size_bits, *head;
 
 	len = quic_int_getsize(val);
 	if (!len || end - *buf < len + sizeof type + sizeof len)
@@ -202,13 +202,15 @@ static inline int quic_transport_param_enc_int(unsigned char **buf, const unsign
 	/* Encode the type and the length of <val> */
 	quic_transport_param_encode_type_len(buf, end, type, len);
 
+	/* set the bits of byte#0 which gives the length of the encoded integer */
+	size_bits = my_log2(len) << QUIC_VARINT_BYTE_0_SHIFT;
 	shift = (len - 1) * 8;
 	head = *buf;
 	while (len--) {
 		*(*buf)++ = val >> shift;
 		shift -= 8;
 	}
-	*head |= my_log2(len) << QUIC_VARINT_BYTE_0_SHIFT;
+	*head |= size_bits;
 
 	return 1;
 }
