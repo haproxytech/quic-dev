@@ -168,6 +168,22 @@ static inline void quic_transport_param_encode_type_len(unsigned char **buf, con
 }
 
 /*
+ * Decode the 16bits type and length values of a QUIC transport parameter in <type> and <len>
+ * encoded in a data stream with <buf> as current position address.
+ * Move forward this position to the next data stream field to be parsed after <type> and <len>.
+ * It is the responsability of the caller to check there is enough room in
+ * <*buf> to decode these values.
+ */
+static inline void quic_transport_param_decode_type_len(uint16_t *type, uint16_t *len,
+                                                        const unsigned char **buf, const unsigned char *end)
+{
+	*type = read_n16(*buf);
+	*buf += sizeof *type;
+	*len = read_n16(*buf);
+	*buf += sizeof *len;
+}
+
+/*
  * Encode <param> bytes tream with <type> as type and <length> as length in buf.
  * Returns 1 if succeded, 0 if not.
  */
@@ -260,6 +276,47 @@ static inline int quic_transport_param_enc_pref_addr(unsigned char **buf, const 
 	}
 
 	memcpy(*buf, addr->stateless_reset_token, sizeof addr->stateless_reset_token);
+	*buf += sizeof addr->stateless_reset_token;
+
+	return 1;
+}
+
+static inline int quic_transport_param_dec_pref_addr(struct preferred_address *addr,
+													 const unsigned char **buf, const unsigned char *end)
+{
+	ssize_t addr_len;
+
+	addr_len = sizeof addr->ipv4_port + sizeof addr->ipv4_addr;
+	addr_len += sizeof addr->ipv6_port + sizeof addr->ipv6_addr;
+	addr_len += sizeof addr->cid.len;
+
+	if (end - *buf < addr_len)
+		return 0;
+
+	addr->ipv4_port = read_n16(*buf);
+	*buf += sizeof addr->ipv4_port;
+
+	memcpy(addr->ipv4_addr, *buf, sizeof addr->ipv4_addr);
+	*buf += sizeof addr->ipv4_addr;
+
+	addr->ipv6_port = read_n16(*buf);
+	*buf += sizeof addr->ipv6_port;
+
+	memcpy(addr->ipv6_addr, *buf, sizeof addr->ipv6_addr);
+	*buf += sizeof addr->ipv6_addr;
+
+	addr->cid.len = *(*buf)++;
+	if (addr->cid.len) {
+		if (end - *buf > addr->cid.len || addr->cid.len > sizeof addr->cid.data)
+			return 0;
+		memcpy(addr->cid.data, *buf, addr->cid.len);
+		*buf += addr->cid.len;
+	}
+
+	if (end - *buf != sizeof addr->stateless_reset_token)
+		return 0;
+
+	memcpy(addr->stateless_reset_token, *buf, end - *buf);
 	*buf += sizeof addr->stateless_reset_token;
 
 	return 1;
@@ -371,4 +428,129 @@ static inline int quic_transport_params_encode(unsigned char *buf, const unsigne
 	return pos - head;
 }
 
+static inline int quic_transport_params_decode(struct quic_transport_params *p, int server,
+                                               const unsigned char *buf, const unsigned char *end)
+{
+	uint16_t params_len;
+	const unsigned char *pos;
+
+	pos = buf;
+
+	if (end - pos < sizeof params_len)
+		return 0;
+
+	params_len = read_n16(pos);
+	pos += sizeof params_len;
+	if (end - pos < params_len)
+		return 0;
+
+	quic_transport_params_init(p, server);
+	while (pos != end) {
+		uint16_t type, len;
+
+		if (end - pos < sizeof type + sizeof len)
+			return 0;
+
+		quic_transport_param_decode_type_len(&type, &len, &pos, end);
+		if (end - pos < len)
+			return 0;
+
+		switch (type) {
+		case QUIC_TP_ORIGINAL_CONNECTION_ID:
+			if (!server)
+				return 0;
+			if (end - pos < len || len > sizeof p->original_connection_id.data)
+				return 0;
+			memcpy(p->original_connection_id.data, pos, len);
+			p->original_connection_id.len = len;
+			pos += len;
+			p->with_original_connection_id = 1;
+			break;
+		case QUIC_TP_STATELESS_RESET_TOKEN:
+			if (!server)
+				return 0;
+			if (end - pos < len || len != sizeof p->stateless_reset_token)
+				return 0;
+			memcpy(p->stateless_reset_token, pos, len);
+			pos += len;
+			p->with_stateless_reset_token = 1;
+			break;
+		case QUIC_TP_PREFERRED_ADDRESS:
+			if (!server)
+				return 0;
+			if (!quic_transport_param_dec_pref_addr(&p->preferred_address, &pos, pos + len))
+			    return 0;
+			p->with_preferred_address = 1;
+			break;
+		case QUIC_TP_IDLE_TIMEOUT:
+			p->idle_timeout = quic_dec_int(&pos, end);
+			if ((int64_t)p->idle_timeout == -1)
+				return 0;
+			break;
+		case QUIC_TP_MAX_PACKET_SIZE:
+			p->max_packet_size = quic_dec_int(&pos, end);
+			if ((int64_t)p->max_packet_size == -1)
+				return 0;
+			break;
+		case QUIC_TP_INITIAL_MAX_DATA:
+			p->initial_max_data = quic_dec_int(&pos, end);
+			if ((int64_t)p->initial_max_data == -1)
+				return 0;
+			break;
+		case QUIC_TP_INITIAL_MAX_STREAM_DATA_BIDI_LOCAL:
+			p->initial_max_stream_data_bidi_local = quic_dec_int(&pos, end);
+			if ((int64_t)p->initial_max_stream_data_bidi_local == -1)
+				return 0;
+			break;
+		case QUIC_TP_INITIAL_MAX_STREAM_DATA_BIDI_REMOTE:
+			p->initial_max_stream_data_bidi_remote = quic_dec_int(&pos, end);
+			if ((int64_t)p->initial_max_stream_data_bidi_remote == -1)
+				return 0;
+			break;
+		case QUIC_TP_INITIAL_MAX_STREAM_DATA_UNI:
+			p->initial_max_stream_data_uni = quic_dec_int(&pos, end);
+			if ((int64_t)p->initial_max_stream_data_uni == -1)
+				return 0;
+			break;
+		case QUIC_TP_INITIAL_MAX_STREAMS_BIDI:
+			p->initial_max_streams_bidi = quic_dec_int(&pos, end);
+			if ((int64_t)p->initial_max_streams_bidi == -1)
+				return 0;
+			break;
+		case QUIC_TP_INITIAL_MAX_STREAMS_UNI:
+			p->initial_max_streams_uni = quic_dec_int(&pos, end);
+			if ((int64_t)p->initial_max_streams_uni == -1)
+				return 0;
+			break;
+		case QUIC_TP_ACK_DELAY_EXPONENT:
+			p->ack_delay_exponent = quic_dec_int(&pos, end);
+			if ((int64_t)p->ack_delay_exponent == -1 ||
+			    p->ack_delay_exponent > QUIC_TP_ACK_DELAY_EXPONENT_LIMIT)
+				return 0;
+			break;
+		case QUIC_TP_MAX_ACK_DELAY:
+			p->max_ack_delay = quic_dec_int(&pos, end);
+			if ((int64_t)p->max_ack_delay == -1 ||
+			    p->max_ack_delay > QUIC_TP_MAX_ACK_DELAY_LIMIT)
+				return 0;
+			break;
+		case QUIC_TP_DISABLE_ACTIVE_MIGRATION:
+			/* Zero-length parameter type. */
+			if (len != 0)
+				return 0;
+			p->disable_active_migration = 1;
+			break;
+		case QUIC_TP_ACTIVE_CONNECTION_ID_LIMIT:
+			p->active_connection_id_limit = quic_dec_int(&pos, end);
+			if ((int64_t)p->active_connection_id_limit == -1)
+				return 0;
+			break;
+		default:
+			pos += len;
+		};
+
+	}
+
+	return 1;
+}
 #endif /* _PROTO_QUIC_CONN_H */

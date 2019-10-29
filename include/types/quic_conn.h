@@ -71,6 +71,13 @@ struct preferred_address {
 #define QUIC_TP_ACTIVE_CONNECTION_ID_LIMIT          14
 
 /*
+ * These defines are not for transport parameter type, but the maximum accepted value for
+ * transport parameter types.
+ */
+#define QUIC_TP_ACK_DELAY_EXPONENT_LIMIT 20
+#define QUIC_TP_MAX_ACK_DELAY_LIMIT      (1UL << 14)
+
+/*
  * QUIC transport parameters.
  * Note that forbidden parameters sent by clients MUST generate TRANSPORT_PARAMETER_ERROR errors.
  */
