@@ -46,7 +46,7 @@
 extern unsigned char initial_salt[20];
 
 struct quic_tls_secrets {
-	unsigned char key[16];
+	unsigned char key[32];
 	unsigned char iv[12];
 	/* Header protection key.
 	* Note: the header protection is applied after packet protection.
