@@ -199,8 +199,8 @@ static size_t quic_sock_from_buf(struct connection *conn, void *xprt_ctx, const 
 		if (try < count || flags & CO_SFL_MSG_MORE)
 			send_flag |= MSG_MORE;
 
-		ret = send(conn->handle.fd, b_peek(buf, done), try, send_flag);
-
+		ret = sendto(conn->handle.fd, b_peek(buf, done), try, send_flag,
+		             (struct sockaddr *)conn->src, get_addr_len(conn->src));
 		if (ret > 0) {
 			count -= ret;
 			done += ret;
