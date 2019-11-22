@@ -105,8 +105,12 @@ struct quic_transport_params {
 	struct preferred_address preferred_address;                    /* Forbidden for clients */
 };
 
+/* The QUIC packet numbers are 62-bits integers */
+#define QUIC_MAX_PACKET_NUM      ((1ULL << 62) - 1)
+
 /* Default QUIC connection transport parameters */
 extern struct quic_transport_params quid_dflt_transport_params;
+
 struct quic_packet {
 	int from_server;
 	int long_header;
@@ -124,14 +128,19 @@ struct quic_packet {
 	unsigned char data[QUIC_PACKET_MAXLEN];
 };
 
-
 struct crypto_frame {
-	const unsigned char *data;
+	unsigned char data[QUIC_PACKET_MAXLEN];
 	size_t datalen;
 	size_t offset;
 };
 
+union quic_frame {
+	unsigned char type;
+	struct crypto_frame crypto_frame;
+};
+
 struct quic_conn {
+	uint32_t version;
 	struct quic_cid dcid;
 	struct quic_cid scid;
 	struct quic_tls_ctx tls_ctx[4];

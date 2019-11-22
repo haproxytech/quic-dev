@@ -30,6 +30,10 @@
 
 size_t quic_conn_to_buf(int fd, void *ctx);
 
+ssize_t quic_build_handshake_packet(unsigned char **buf, const unsigned char *end,
+                                    const unsigned char *data, size_t datalen,
+                                    int type, struct quic_conn *conn);
+
 /*
  * The two most significant bits of byte #0 gives the 2 logarithm of the encoded length
  * of a variable length integer for QUIC
@@ -158,6 +162,26 @@ static inline int quic_enc_int(unsigned char **buf, const unsigned char *end, ui
 		shift -= 8;
 	}
 	*head |= size_bits;
+
+	return 1;
+}
+
+static inline size_t quic_packet_number_length(int64_t next_pn, int64_t last_acked_pn)
+{
+	int64_t max_nack_pkts;
+
+	/* About packet number encoding, the RFC says:
+	 * The sender MUST use a packet number size able to represent more than
+	 * twice as large a range than the difference between the largest
+	 * acknowledged packet and packet number being sent.
+	 */
+	max_nack_pkts = 2 * (next_pn - last_acked_pn) + 1;
+	if (max_nack_pkts > 0xffffff)
+		return 4;
+	if (max_nack_pkts > 0xffff)
+		return 3;
+	if (max_nack_pkts > 0xff)
+		return 2;
 
 	return 1;
 }

@@ -24,12 +24,15 @@
 #include <proto/quic_conn.h>
 #include <proto/quic_tls.h>
 
+#define QUIC_DEBUG
+
 struct quic_transport_params quid_dflt_transport_params = {
 	.max_packet_size    = QUIC_DFLT_MAX_PACKET_SIZE,
 	.ack_delay_exponent = QUIC_DFLT_ACK_DELAY_COMPONENT,
 	.max_ack_delay      = QUIC_DFLT_MAX_ACK_DELAY,
 };
 
+#if 1
 __attribute__((format (printf, 3, 4)))
 void hexdump(const void *buf, size_t buflen, const char *title_fmt, ...)
 {
@@ -66,26 +69,13 @@ void hexdump(const void *buf, size_t buflen, const char *title_fmt, ...)
 		p++;
 	}
 }
+#else
+__attribute__((format (printf, 3, 4)))
+void hexdump(const void *buf, size_t buflen, const char *title_fmt, ...) {}
+#endif
 
 DECLARE_POOL(pool_head_quic_conn, "quic_conn",
              sizeof(struct quic_conn) + QUIC_CID_MAXLEN);
-
-
-/* Return a 32-bits integer in <val> from QUIC packet with <buf> as address.
- * Returns 0 if failed (not enough data), 1 if succeeded.
- * Makes <buf> point to the data after this 32-bits value if succeeded.
- * Note that these 32-bits integers are network bytes ordered objects.
- */
-static int quic_read_uint32(uint32_t *val, const unsigned char **buf, const unsigned char *end)
-{
-	if (end - *buf < sizeof *val)
-		return 0;
-
-	*val = ntohl(*(uint32_t *)*buf);
-	*buf += sizeof *val;
-
-	return 1;
-}
 
 
 uint64_t *quic_max_pn(struct quic_conn *conn, int server, int long_header, int packet_type)
@@ -165,16 +155,10 @@ static int quic_remove_header_protection(struct quic_conn *conn, struct quic_pac
 
 	hexdump(sample, 16, "packet sample:\n");
 	hp_key = tls_ctx->rx.hp_key;
-	if (!EVP_DecryptInit_ex(ctx, tls_ctx->hp, NULL, hp_key, NULL))
-		goto out;
-
-	EVP_CIPHER_CTX_ctrl(ctx, EVP_CTRL_AEAD_SET_IVLEN, 16, NULL);
-
-	if (!EVP_DecryptInit_ex(ctx, NULL, NULL, NULL, sample) ||
+	if (!EVP_DecryptInit_ex(ctx, tls_ctx->hp, NULL, hp_key, sample) ||
 	    !EVP_DecryptUpdate(ctx, mask, &outlen, mask, sizeof mask) ||
 	    !EVP_DecryptFinal_ex(ctx, mask, &outlen))
 	    goto out;
-
 
 	*byte0 ^= mask[0] & (pkt->type == QUIC_PACKET_TYPE_INITIAL ? 0xf : 0x1f);
 	pnlen = (*byte0 & QUIC_PACKET_PNL_BITMASK) + 1;
@@ -247,46 +231,36 @@ static void quic_aead_iv_build(struct quic_conn *conn, uint64_t pn, uint32_t pnl
  * An endpoint MUST initiate a key update (Section 6) prior to exceeding any limit set for
  * the AEAD that is in use.
  */
-static int quic_decrypt_payload(struct quic_conn *conn, struct quic_packet *pkt,
-                                unsigned char *pn, unsigned char **buf, const unsigned char *end)
+static int quic_decrypt_payload(int type, unsigned char *payload, size_t payload_len,
+                                const EVP_CIPHER *aead, const unsigned char *key, const unsigned char *iv,
+                                unsigned char **buf, const unsigned char *end)
 {
+	int ret, outlen, aad_len;
 	uint32_t algo;
-	int  outlen, payload_len, aad_len;
-	unsigned char *payload;
 	size_t off;
-	unsigned char *key;
-	struct quic_tls_ctx *tls_ctx;
-
 	EVP_CIPHER_CTX *ctx;
 
-	algo = pkt->type == QUIC_PACKET_TYPE_INITIAL ? TLS1_3_CK_AES_128_GCM_SHA256 : -1;
-	tls_ctx = pkt->type == QUIC_PACKET_TYPE_INITIAL ? &conn->tls_ctx[QUIC_PACKET_TYPE_INITIAL] : NULL;
-
-	key = tls_ctx->rx.key;
-
-	aad_len = pn + pkt->pnl - *buf;
-	hexdump(key, 16, "\n\n%s key: (aad_len: %d)\n", __func__, aad_len);
-
-	/* The payload is after the Packet Number field. */
-	payload = pn + pkt->pnl;
-	payload_len = pkt->len - pkt->pnl;
+	ret = 0;
 	off = 0;
-
-	quic_aead_iv_build(conn, pkt->pn, pkt->pnl);
-
+	algo = type == QUIC_PACKET_TYPE_INITIAL ? TLS1_3_CK_AES_128_GCM_SHA256 : -1;
+	aad_len = payload - *buf;
 	ctx = EVP_CIPHER_CTX_new();
+	if (!ctx)
+		return 0;
+
 	switch (algo) {
 		case TLS1_3_CK_AES_128_GCM_SHA256:
-			if (!EVP_DecryptInit_ex(ctx, EVP_aes_128_gcm(), NULL, key, conn->tls_ctx[QUIC_PACKET_TYPE_INITIAL].aead_iv) ||
+			if (!EVP_DecryptInit_ex(ctx, aead, NULL, key, iv) ||
 			    !EVP_DecryptUpdate(ctx, NULL, &outlen, *buf, aad_len) ||
-			    !EVP_DecryptUpdate(ctx, payload, &outlen, payload, payload_len - 16))
-			    return 0;
+			    !EVP_DecryptUpdate(ctx, payload, &outlen, payload, payload_len - QUIC_TLS_TAG_LEN))
+				goto out;
 
 			off += outlen;
 
-			if (!EVP_CIPHER_CTX_ctrl(ctx, EVP_CTRL_AEAD_SET_TAG, 16, payload + payload_len - 16) ||
+			if (!EVP_CIPHER_CTX_ctrl(ctx, EVP_CTRL_AEAD_SET_TAG, QUIC_TLS_TAG_LEN,
+			                         payload + payload_len - QUIC_TLS_TAG_LEN) ||
 			    !EVP_DecryptFinal_ex(ctx, payload + off, &outlen))
-				return 0;
+				goto out;
 
 			off += outlen;
 			*buf = payload;
@@ -294,10 +268,59 @@ static int quic_decrypt_payload(struct quic_conn *conn, struct quic_packet *pkt,
 			hexdump(payload, off, "Decrypted payload(%zu):\n", off);
 			break;
 	}
-
+	ret = 1;
+ out:
 	EVP_CIPHER_CTX_free(ctx);
 
-	return 1;
+	return ret;
+}
+
+static int quic_encrypt_payload(int type, const unsigned char *aad, size_t aad_len,
+								unsigned char *payload, size_t payload_len,
+                                const EVP_CIPHER *aead, const unsigned char *key, const unsigned char *iv)
+{
+	uint32_t algo;
+	EVP_CIPHER_CTX *ctx;
+	int ret, outlen;
+#ifdef QUIC_DEBUG
+	unsigned char dec_buf[2048], *dec_bufp = dec_buf;
+#endif
+
+	ret = 0;
+	algo = type == QUIC_PACKET_TYPE_INITIAL ? TLS1_3_CK_AES_128_GCM_SHA256 : -1;
+	ctx = EVP_CIPHER_CTX_new();
+	if (!ctx)
+		return 0;
+
+	switch (algo) {
+	case TLS1_3_CK_AES_128_GCM_SHA256:
+		if (!EVP_EncryptInit_ex(ctx, aead, NULL, key, iv) ||
+		    !EVP_EncryptUpdate(ctx, NULL, &outlen, aad, aad_len) ||
+		    !EVP_EncryptUpdate(ctx, payload, &outlen, payload, payload_len) ||
+		    !EVP_EncryptFinal_ex(ctx, payload + outlen, &outlen) ||
+		    !EVP_CIPHER_CTX_ctrl(ctx, EVP_CTRL_AEAD_GET_TAG, QUIC_TLS_TAG_LEN, payload + payload_len))
+			goto out;
+
+		break;
+	default:
+		goto out;
+	}
+
+#ifdef QUIC_DEBUG
+	hexdump(payload, payload_len + QUIC_TLS_TAG_LEN, "%s FINAL ENCRYPTED PAYLOAD\n", __func__);
+	hexdump(aad, aad_len + payload_len + QUIC_TLS_TAG_LEN, "%s FINAL ENCRYPTED PACKET\n", __func__);
+	/* Make a copy of this encrypted packet. */
+	memcpy(dec_buf, aad, aad_len + payload_len + QUIC_TLS_TAG_LEN);
+	if (!quic_decrypt_payload(type, dec_buf + aad_len, payload_len + QUIC_TLS_TAG_LEN,
+	                          aead, key, iv, &dec_bufp, dec_bufp + 2048))
+		goto out;
+#endif
+	ret = 1;
+
+ out:
+	EVP_CIPHER_CTX_free(ctx);
+
+	return ret;
 }
 
 static int quic_parse_packet_frames(struct quic_conn *conn, struct quic_packet *pkt,
@@ -321,15 +344,14 @@ static int quic_parse_packet_frames(struct quic_conn *conn, struct quic_packet *
 				return 0;
 
 			cf->datalen = quic_dec_int(&pos, end);
-			if (cf->datalen == -1)
+			if (cf->datalen == -1 || cf->datalen > sizeof cf->data)
 				return 0;
 			fprintf(stderr, "%s frame length %zu\n", __func__, cf->datalen);
 
 			if (end - pos < cf->datalen)
 				return 0;
 
-			cf->data = pos;
-			pos += cf->datalen;
+			memcpy(cf->data, pos, cf->datalen);
 			conn->curr_icf++;
 			conn->curr_icf &= sizeof conn->icfs / sizeof *conn->icfs - 1;
 			break;
@@ -471,16 +493,30 @@ static int quic_conn_derive_initial_secrets(struct quic_tls_ctx *ctx,
 	return 1;
 }
 
-static int quic_conn_init(struct listener *l, struct quic_conn *conn,
+/*
+ * Initialize a QUIC packet number space.
+ * Never fails.
+ */
+static void quic_tls_ctx_pkt_ns_init(struct quic_pkt_ns *pkt_ns)
+{
+	pkt_ns->last_pn = -1;
+	pkt_ns->last_acked_pn = -1;
+}
+
+static int quic_conn_init(struct listener *l, struct quic_conn *conn, uint32_t version,
                           unsigned char *cid, size_t cid_len)
 {
+	conn->version = version;
 	/* Copy the connection ID. */
-	conn->dcid.len = cid_len;
+	conn->dcid.len = conn->scid.len = cid_len;
 	memcpy(conn->dcid.data, cid, cid_len);
+	memset(conn->scid.data, 0, cid_len);
 	/* Store this connection in the QUIC clients tree of this <l> listener. */
 	ebpt_insert(&l->quic_clients, &conn->cid);
 	/* Initialize the Initial level TLS encryption context. */
 	quic_initial_tls_ctx_init(&conn->tls_ctx[QUIC_TLS_ENC_LEVEL_INITIAL]);
+	quic_tls_ctx_pkt_ns_init(&conn->tls_ctx[QUIC_TLS_ENC_LEVEL_INITIAL].tx_ns);
+	quic_tls_ctx_pkt_ns_init(&conn->tls_ctx[QUIC_TLS_ENC_LEVEL_INITIAL].rx_ns);
 
 	return 1;
 }
@@ -496,7 +532,7 @@ ssize_t quic_packet_read_header(struct quic_packet *qpkt,
 	unsigned char *pn = NULL; /* Packet number */
 	struct quic_conn *conn;
 
-	if (end - *buf <= QUIC_PACKET_MINLEN)
+	if (end <= *buf)
 		goto err;
 
 	/* Fixed bit */
@@ -510,10 +546,12 @@ ssize_t quic_packet_read_header(struct quic_packet *qpkt,
 	/* Packet type */
 	qpkt->type = (*(*buf)++ >> QUIC_PACKET_TYPE_SHIFT) & QUIC_PACKET_TYPE_BITMASK;
 	/* Version */
-	if (!quic_read_uint32(&qpkt->version, (const unsigned char **)buf, end))
-		goto err;
+	if (qpkt->long_header) {
+	    if (!quic_read_uint32(&qpkt->version, (const unsigned char **)buf, end))
+			goto err;
 
-	if (!qpkt->version) { /* XXX TO DO XXX Version negotiation packet */ };
+	    if (!qpkt->version) { /* XXX TO DO XXX Version negotiation packet */ };
+	}
 
 	if (qpkt->long_header) {
 		/* Destination Connection ID Length */
@@ -527,9 +565,6 @@ ssize_t quic_packet_read_header(struct quic_packet *qpkt,
 			memcpy(qpkt->dcid.data, *buf, dcid_len);
 		qpkt->dcid.len = dcid_len;
 		*buf += dcid_len;
-
-		if (qpkt->dcid.len)
-			hexdump(qpkt->dcid.data, qpkt->dcid.len, "\n%s: DCID:\n", __func__);
 
 		/* Source Connection ID Length */
 		scid_len = *(*buf)++;
@@ -556,7 +591,7 @@ ssize_t quic_packet_read_header(struct quic_packet *qpkt,
 				if (!conn || ret == -1)
 					goto err;
 
-				if (!quic_conn_init(l, conn, qpkt->dcid.data, qpkt->dcid.len))
+				if (!quic_conn_init(l, conn, qpkt->version, qpkt->scid.data, qpkt->scid.len))
 					goto err;
 			}
 			else {
@@ -599,14 +634,19 @@ ssize_t quic_packet_read_header(struct quic_packet *qpkt,
 		 */
 		pn = *buf;
 
-		hexdump(pn, 2, "Packet Number two first bytes:\n");
 		if (qpkt->type == QUIC_PACKET_TYPE_INITIAL) {
+			struct quic_tls_ctx *tls_ctx;
+
+			tls_ctx = &conn->tls_ctx[qpkt->type];
 			if (!quic_remove_header_protection(conn, qpkt, pn, beg, end)) {
 				fprintf(stderr, "Could not remove packet header protection\n");
 				goto err;
 			}
 
-			if (!quic_decrypt_payload(conn, qpkt, pn, &beg, end)) {
+			quic_aead_iv_build(conn, qpkt->pn, qpkt->pnl);
+			/* The payload is just after the packet number field */
+			if (!quic_decrypt_payload(qpkt->type, pn + qpkt->pnl, qpkt->len - qpkt->pnl,
+			                          tls_ctx->aead, tls_ctx->rx.key, tls_ctx->rx.iv, &beg, end)) {
 				fprintf(stderr, "Could not decrypt the payload\n");
 				goto err;
 			}
@@ -662,6 +702,183 @@ ssize_t quic_packets_read(char *buf, size_t len, struct listener *l,
 
  err:
 	return -1;
+}
+
+static int quic_build_packet_long_header(unsigned char **buf, const unsigned char *end,
+                                         int type, size_t pn_len, struct quic_conn *conn)
+{
+	if (type > QUIC_PACKET_TYPE_RETRY)
+		return 0;
+
+	/* #0 byte flags */
+	*(*buf)++ = QUIC_PACKET_FIXED_BIT | QUIC_PACKET_LONG_HEADER_BIT |
+		(type << QUIC_PACKET_TYPE_SHIFT) | (pn_len - 1);
+	/* Version */
+	quic_write_uint32(buf, end, conn->version);
+	*(*buf)++ = conn->dcid.len;
+	/* Destination connection ID */
+	if (conn->dcid.len) {
+		memcpy(*buf, conn->dcid.data, conn->dcid.len);
+		*buf += conn->dcid.len;
+	}
+	/* Source connection ID */
+	*(*buf)++ = conn->scid.len;
+	if (conn->scid.len) {
+		memcpy(*buf, conn->scid.data, conn->scid.len);
+		*buf += conn->scid.len;
+	}
+
+	return 1;
+}
+
+/*
+ * This function builds a handshake packet used during a QUIC TLS handshake in <buf> buffer.
+ * Return the length of the packet if succeeded minus QUIC_TLS_TAG_LEN, or -1 if failed (not
+ * enough room in <buf> to build this packet plus QUIC_TLS_TAG_LEN bytes).
+ * So, the trailing QUIC_TLS_TAG_LEN bytes of this packet are not built. But after having
+ * successfully retured from this function, we are sure there is enough room the build this AEAD tag.
+ * So, the <buf> address will point after the last byte of the payload after having built the handshake
+ * with the confidence there is at least QUIC_TLS_TAG_LEN bytes available packet to encrypt it.
+ */
+ssize_t __quic_build_handshake_packet(unsigned char **buf, const unsigned char *end,
+                                      unsigned char **buf_pn, size_t *buf_pn_len,
+                                      const unsigned char *data, size_t datalen,
+                                      int type, struct quic_conn *conn)
+{
+	unsigned char *beg;
+	struct quic_tls_ctx *tls_ctx;
+	int64_t pn, last_acked_pn;
+	size_t len;
+	size_t token_fields_len;
+
+	beg = *buf;
+	tls_ctx = &conn->tls_ctx[type];
+	pn = tls_ctx->tx_ns.last_pn + 1;
+	last_acked_pn = tls_ctx->rx_ns.last_acked_pn;
+	*buf_pn_len = quic_packet_number_length(pn, last_acked_pn);
+	len = *buf_pn_len + datalen + QUIC_TLS_TAG_LEN;
+
+	if (type == QUIC_PACKET_TYPE_INITIAL) {
+		/* Zero-length token field */
+		token_fields_len = 1;
+	}
+	else {
+		token_fields_len = 1; /* plus something XXX TO DO XXX */
+	}
+
+	if ((type != QUIC_PACKET_TYPE_INITIAL && type != QUIC_PACKET_TYPE_HANDSHAKE) ||
+	    end - *buf < QUIC_LONG_PACKET_MINLEN + conn->dcid.len + conn->scid.len +
+	    token_fields_len + quic_int_getsize(len) + len)
+		return -1;
+
+	quic_build_packet_long_header(buf, end, type, *buf_pn_len, conn);
+
+	if (type == QUIC_PACKET_TYPE_INITIAL) {
+		/* Encode the token length which is zero for a client or for an
+		 * Initial packet of a server.
+		 */
+		*(*buf)++ = 0;
+	}
+
+	/* Length (of the remaining data) */
+	quic_enc_int(buf, end, len);
+
+	/* Packet number */
+	*buf_pn = *buf;
+	switch (*buf_pn_len) {
+	case 1:
+		**buf = pn;
+		break;
+	case 2:
+		write_n16(*buf, pn);
+		break;
+	case 3:
+		pn = htonl(pn);
+		memcpy(*buf, &pn, *buf_pn_len);
+		break;
+	case 4:
+		write_n32(*buf, pn);
+		break;
+	}
+	*buf += *buf_pn_len;
+
+	/* Payload */
+	memcpy(*buf, data, datalen);
+	*buf += datalen;
+
+	return *buf - beg;
+}
+
+
+static int quic_apply_header_protection(unsigned char *buf, unsigned char *pn, size_t pnlen, int type,
+                                        const EVP_CIPHER *aead, const unsigned char *key)
+{
+	int i, ret, outlen;
+	EVP_CIPHER_CTX *ctx;
+	/*
+	 * We need an IV of at least 5 bytes: one byte for bytes #0
+	 * and at most 4 bytes for the packet number
+	 */
+	unsigned char mask[5] = {0};
+
+	ret = 0;
+	ctx = EVP_CIPHER_CTX_new();
+	if (!ctx)
+		return 0;
+
+	if (!EVP_EncryptInit_ex(ctx, aead, NULL, key, pn + QUIC_PACKET_PN_MAXLEN) ||
+	    !EVP_EncryptUpdate(ctx, mask, &outlen, mask, sizeof mask) ||
+	    !EVP_EncryptFinal_ex(ctx, mask, &outlen))
+		goto out;
+
+	*buf ^= mask[0] & (type == QUIC_PACKET_TYPE_INITIAL ? 0xf: 0x1f);
+	for (i = 0; i < pnlen; i++)
+		pn[i] ^= mask[i + 1];
+
+	ret = 1;
+
+ out:
+	EVP_CIPHER_CTX_free(ctx);
+
+	return ret;
+}
+
+ssize_t quic_build_handshake_packet(unsigned char **buf, const unsigned char *end,
+                                    const unsigned char *data, size_t datalen,
+                                    int type, struct quic_conn *conn)
+{
+	/* A pointer to the packet number fiel in <buf> */
+	unsigned char *buf_pn;
+	unsigned char *beg, *payload;
+	size_t pn_len, aad_len;
+	ssize_t pkt_len;
+	int payload_len;
+	struct quic_tls_ctx *tls_ctx;
+
+	beg = *buf;
+	/* <pkt_len> is the length of this packet before encryption. */
+	pkt_len = __quic_build_handshake_packet(buf, end, &buf_pn, &pn_len,
+	                                        data, datalen, type, conn);
+	if (pkt_len == -1)
+		return -1;
+
+	hexdump(beg, pkt_len, "%s PKT (%zd)\n", __func__, pkt_len);
+	payload = (unsigned char *)buf_pn + pn_len;
+	payload_len = *buf - payload;
+	aad_len = payload - beg;
+
+	tls_ctx = &conn->tls_ctx[type];
+	if (!quic_encrypt_payload(type, beg, aad_len, payload, payload_len,
+	                          tls_ctx->aead, tls_ctx->tx.key, tls_ctx->tx.iv))
+	    return -1;
+
+	*buf += QUIC_TLS_TAG_LEN;
+
+	if (!quic_apply_header_protection(beg, buf_pn, pn_len, type,
+	                                  tls_ctx->hp, tls_ctx->tx.hp_key))
+		return -1;
+
+	return *buf - beg;
 }
 
 /* XXX TODO: adapt these comments */

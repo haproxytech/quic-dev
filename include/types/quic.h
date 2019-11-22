@@ -30,10 +30,11 @@
 /* QUIC connection ID maximum length for version 1. */
 #define QUIC_CID_MAXLEN               20 /* bytes */
 /*
- * All QUIC packets are made of at least (in bytes):
- * flags(1), version(4), DCID length(1), DCID(1..20)
+ * All QUIC packets with long headers are made of at least (in bytes):
+ * flags(1), version(4), DCID length(1), DCID(0..20), SCID length(1), SCID(0..20)
  */
-#define QUIC_PACKET_MINLEN            7
+#define QUIC_LONG_PACKET_MINLEN            7
+
 /* Byte 0 of QUIC packets. */
 #define QUIC_PACKET_LONG_HEADER_BIT  0x80 /* Long header format if set, short if not. */
 #define QUIC_PACKET_FIXED_BIT        0x40 /* Must always be set for all the headers. */
