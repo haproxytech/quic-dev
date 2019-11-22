@@ -38,6 +38,41 @@ size_t quic_conn_to_buf(int fd, void *ctx);
 #define QUIC_VARINT_BYTE_0_SHIFT   6
 
 /*
+ * Return a 32-bits integer in <val> from QUIC packet with <buf> as address.
+ * Returns 0 if failed (not enough data in the buffer), 1 if succeeded.
+ * Makes <buf> point to the data after this 32-bits value if succeeded.
+ * Note that these 32-bits integers are network bytes ordered.
+ */
+static inline int quic_read_uint32(uint32_t *val, const unsigned char **buf, const unsigned char *end)
+{
+	if (end - *buf < sizeof *val)
+		return 0;
+
+	*val = ntohl(*(uint32_t *)*buf);
+	*buf += sizeof *val;
+
+	return 1;
+}
+
+/*
+ * Write a 32-bits integer to a buffer with <buf> as address.
+ * Returns 0 if failed (not enough room in the buffer), 1 if succeeded.
+ * Make <buf> point to the data after this 32-buts value if succeeded.
+ * Note that thes 32-bits integers are networkg bytes ordered.
+ */
+static inline int quic_write_uint32(unsigned char **buf, const unsigned char *end, uint32_t val)
+{
+	if (end - *buf < sizeof val)
+		return 0;
+
+	*(uint32_t *)*buf = htonl(val);
+	*buf += sizeof val;
+
+	return 1;
+}
+
+
+/*
  * Returns enough log2 of first powers of two to encode QUIC variable length integers.
  * Returns -1 if <val> if out of the range of lengths supported by QUIC.
  */
