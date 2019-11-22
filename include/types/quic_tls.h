@@ -43,6 +43,9 @@
 #define QUIC_TLS_ENC_LEVEL_HANDSHAKE  2
 #define QUIC_TLS_ENC_LEVEL_APP        3
 
+/* The ciphersuites for AEAD QUIC-TLS have 16-bytes authentication tag */
+#define QUIC_TLS_TAG_LEN             16
+
 extern unsigned char initial_salt[20];
 
 struct quic_tls_secrets {
@@ -56,6 +59,16 @@ struct quic_tls_secrets {
 	unsigned char hp_key[16];
 };
 
+/* QUIC packet number space */
+struct quic_pkt_ns {
+	/* Last packet number */
+	int64_t last_pn;
+	/* Last acked packet number */
+	int64_t last_acked_pn;
+	/* Offset of the CRYPTO stream of data */
+	int64_t offset;
+};
+
 struct quic_tls_ctx {
 	const EVP_CIPHER *aead;
 	unsigned char aead_iv[12];
@@ -63,6 +76,8 @@ struct quic_tls_ctx {
 	const EVP_CIPHER *hp;
 	struct quic_tls_secrets rx;
 	struct quic_tls_secrets tx;
+	struct quic_pkt_ns tx_ns;
+	struct quic_pkt_ns rx_ns;
 };
 
 #endif /* _TYPES_QUIC_TLS_H */
