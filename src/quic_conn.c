@@ -16,6 +16,7 @@
 
 #include <types/global.h>
 #include <types/quic.h>
+#include <types/quic_frame.h>
 #include <types/quic_tls.h>
 
 #include <proto/connection.h>
