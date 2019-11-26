@@ -100,7 +100,7 @@ static inline int my_log2(unsigned int val)
  * Returns the size in bytes required to encode a 64bits integer if
  * not out of range (< (1 << 62)), or 0 if out of range.
  */
-static inline uint16_t quic_int_getsize(uint64_t val)
+static inline size_t quic_int_getsize(uint64_t val)
 {
 	switch (val) {
 	case 0 ... (1UL <<  6) - 1:
@@ -145,7 +145,7 @@ static inline uint64_t quic_dec_int(const unsigned char **buf, const unsigned ch
 
 static inline int quic_enc_int(unsigned char **buf, const unsigned char *end, uint64_t val)
 {
-	uint16_t len;
+	size_t len;
 	unsigned int shift;
 	unsigned char size_bits, *head;
 
@@ -266,7 +266,7 @@ static inline int quic_transport_param_enc_mem(unsigned char **buf, const unsign
 static inline int quic_transport_param_enc_int(unsigned char **buf, const unsigned char *end,
                                                uint16_t type, uint64_t val)
 {
-	uint16_t len;
+	size_t len;
 	unsigned int shift;
 	unsigned char size_bits, *head;
 
