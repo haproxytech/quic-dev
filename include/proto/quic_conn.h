@@ -35,6 +35,14 @@ ssize_t quic_build_handshake_packet(unsigned char **buf, const unsigned char *en
                                     int type, struct quic_conn *conn);
 
 /*
+ * Returns the required length in bytes to encode <cid> QUIC connection ID.
+ */
+static inline size_t sizeof_quic_cid(struct quic_cid *cid)
+{
+	return sizeof cid->len + cid->len;
+}
+
+/*
  * The two most significant bits of byte #0 gives the 2 logarithm of the encoded length
  * of a variable length integer for QUIC
  */
