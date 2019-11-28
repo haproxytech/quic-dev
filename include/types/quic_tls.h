@@ -38,10 +38,23 @@
 #define TLS_EXTENSION_QUIC_TRANSPORT_PARAMETERS 0xffa5
 
 /* QUIC TLS level encryption */
-#define QUIC_TLS_ENC_LEVEL_INITIAL    0
-#define QUIC_TLS_ENC_LEVEL_EARLY_DATA 1
-#define QUIC_TLS_ENC_LEVEL_HANDSHAKE  2
-#define QUIC_TLS_ENC_LEVEL_APP        3
+enum quic_tls_enc_level {
+	QUIC_TLS_ENC_LEVEL_INITIAL,
+	QUIC_TLS_ENC_LEVEL_EARLY_DATA,
+	QUIC_TLS_ENC_LEVEL_HANDSHAKE,
+	QUIC_TLS_ENC_LEVEL_APP,
+	/* Please do not insert any value after this following one */
+	QUIC_TLS_ENC_LEVEL_MAX,
+};
+
+/* QUIC packet number spaces */
+enum quic_tls_pktns {
+	QUIC_TLS_PKTNS_INITIAL,
+	QUIC_TLS_PKTNS_01RTT,
+	QUIC_TLS_PKTNS_HANDSHAKE,
+	/* Please do not insert any value after this following one */
+	QUIC_TLS_PKTNS_MAX,
+};
 
 /* The ciphersuites for AEAD QUIC-TLS have 16-bytes authentication tag */
 #define QUIC_TLS_TAG_LEN             16
@@ -60,7 +73,7 @@ struct quic_tls_secrets {
 };
 
 /* QUIC packet number space */
-struct quic_pkt_ns {
+struct quic_pktns {
 	/* Last packet number */
 	int64_t last_pn;
 	/* Last acked packet number */
@@ -76,8 +89,6 @@ struct quic_tls_ctx {
 	const EVP_CIPHER *hp;
 	struct quic_tls_secrets rx;
 	struct quic_tls_secrets tx;
-	struct quic_pkt_ns tx_ns;
-	struct quic_pkt_ns rx_ns;
 };
 
 #endif /* _TYPES_QUIC_TLS_H */

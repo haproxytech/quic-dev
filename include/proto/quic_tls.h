@@ -132,6 +132,21 @@ static inline int quic_to_ssl_enc_level(int level)
 	}
 }
 
+static inline enum quic_tls_pktns quic_tls_pktns(enum quic_tls_enc_level level)
+{
+	switch (level) {
+	case QUIC_TLS_ENC_LEVEL_INITIAL:
+		return QUIC_TLS_PKTNS_INITIAL;
+	case QUIC_TLS_ENC_LEVEL_EARLY_DATA:
+	case QUIC_TLS_ENC_LEVEL_APP:
+		return QUIC_TLS_PKTNS_01RTT;
+	case QUIC_TLS_ENC_LEVEL_HANDSHAKE:
+		return QUIC_TLS_PKTNS_HANDSHAKE;
+	default:
+		return -1;
+	}
+}
+
 /*
  * Initialize a TLS cryptographic context for the Initial encryption level.
  */
@@ -142,5 +157,29 @@ static inline void quic_initial_tls_ctx_init(struct quic_tls_ctx *ctx)
 	ctx->hp = EVP_aes_128_ctr();
 }
 
+/*
+ * Initialize a QUIC packet number space.
+ * Never fails.
+ */
+static inline void quic_tls_ctx_pktns_init(struct quic_pktns *pktns)
+{
+	pktns->last_pn = -1;
+	pktns->last_acked_pn = -1;
+	pktns->offset = 0;
+}
+
+static inline int quic_tls_level_pkt_type(enum quic_tls_enc_level level)
+{
+	switch (level) {
+	case QUIC_TLS_ENC_LEVEL_INITIAL:
+		return QUIC_PACKET_TYPE_INITIAL;
+	case QUIC_TLS_ENC_LEVEL_EARLY_DATA:
+		return QUIC_PACKET_TYPE_0RTT;
+	case QUIC_TLS_ENC_LEVEL_HANDSHAKE:
+		return QUIC_PACKET_TYPE_HANDSHAKE;
+	default:
+		return -1;
+	}
+}
 #endif /* _PROTO_QUIC_TLS_H */
 

@@ -134,16 +134,13 @@ struct crypto_frame {
 	size_t offset;
 };
 
-union quic_frame {
-	unsigned char type;
-	struct crypto_frame crypto_frame;
-};
-
 struct quic_conn {
 	uint32_t version;
 	struct quic_cid dcid;
 	struct quic_cid scid;
-	struct quic_tls_ctx tls_ctx[4];
+	struct quic_tls_ctx tls_ctx[QUIC_TLS_ENC_LEVEL_MAX];
+	struct quic_pktns tx_ns[QUIC_TLS_PKTNS_MAX];
+	struct quic_pktns rx_ns[QUIC_TLS_PKTNS_MAX];
 	/* One largest packet number by client/server by number space */
 	uint64_t client_max_pn[3];
 	uint64_t server_max_pn[3];

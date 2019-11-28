@@ -23,6 +23,7 @@
 #include <proto/fd.h>
 #include <proto/listener.h>
 #include <proto/quic_conn.h>
+#include <proto/quic_frame.h>
 #include <proto/quic_tls.h>
 
 #define QUIC_DEBUG
@@ -494,19 +495,11 @@ static int quic_conn_derive_initial_secrets(struct quic_tls_ctx *ctx,
 	return 1;
 }
 
-/*
- * Initialize a QUIC packet number space.
- * Never fails.
- */
-static void quic_tls_ctx_pkt_ns_init(struct quic_pkt_ns *pkt_ns)
-{
-	pkt_ns->last_pn = -1;
-	pkt_ns->last_acked_pn = -1;
-}
-
 static int quic_conn_init(struct listener *l, struct quic_conn *conn, uint32_t version,
                           unsigned char *cid, size_t cid_len)
 {
+	int i;
+
 	conn->version = version;
 	/* Copy the connection ID. */
 	conn->dcid.len = conn->scid.len = cid_len;
@@ -516,8 +509,11 @@ static int quic_conn_init(struct listener *l, struct quic_conn *conn, uint32_t v
 	ebpt_insert(&l->quic_clients, &conn->cid);
 	/* Initialize the Initial level TLS encryption context. */
 	quic_initial_tls_ctx_init(&conn->tls_ctx[QUIC_TLS_ENC_LEVEL_INITIAL]);
-	quic_tls_ctx_pkt_ns_init(&conn->tls_ctx[QUIC_TLS_ENC_LEVEL_INITIAL].tx_ns);
-	quic_tls_ctx_pkt_ns_init(&conn->tls_ctx[QUIC_TLS_ENC_LEVEL_INITIAL].rx_ns);
+	/* Packet number spaces initialization. */
+	for (i = 0; i < QUIC_TLS_PKTNS_MAX; i++) {
+		quic_tls_ctx_pktns_init(&conn->tx_ns[i]);
+		quic_tls_ctx_pktns_init(&conn->rx_ns[i]);
+	}
 
 	return 1;
 }
@@ -705,6 +701,12 @@ ssize_t quic_packets_read(char *buf, size_t len, struct listener *l,
 	return -1;
 }
 
+/*
+ * This function builds a QUIC long packet header whose size may be computed
+ * in advance in <buf> buffer. This is the reponsability of the caller to check
+ * there is enought room in this buffer to build a long header.
+ * Returns 0 if <type> QUIC packet type is not supported by long header, or 1 if succeeded.
+ */
 static int quic_build_packet_long_header(unsigned char **buf, const unsigned char *end,
                                          int type, size_t pn_len, struct quic_conn *conn)
 {
@@ -744,22 +746,44 @@ static int quic_build_packet_long_header(unsigned char **buf, const unsigned cha
 ssize_t __quic_build_handshake_packet(unsigned char **buf, const unsigned char *end,
                                       unsigned char **buf_pn, size_t *buf_pn_len,
                                       const unsigned char *data, size_t datalen,
-                                      int type, struct quic_conn *conn)
+                                      enum quic_tls_enc_level level, struct quic_conn *conn)
 {
 	unsigned char *beg;
-	struct quic_tls_ctx *tls_ctx;
+	struct quic_pktns *rx_pktns, *tx_pktns;
+	int packet_type;
 	int64_t pn, last_acked_pn;
 	size_t len;
 	size_t token_fields_len;
+	size_t frm_sz;
+	struct quic_frame frm = { .type = QUIC_FT_CRYPTO, };
+	struct quic_crypto *crypto = &frm.crypto;
+
+	if ((level != QUIC_TLS_ENC_LEVEL_INITIAL && level != QUIC_TLS_ENC_LEVEL_HANDSHAKE))
+		return -1;
+
 
 	beg = *buf;
-	tls_ctx = &conn->tls_ctx[type];
-	pn = tls_ctx->tx_ns.last_pn + 1;
-	last_acked_pn = tls_ctx->rx_ns.last_acked_pn;
-	*buf_pn_len = quic_packet_number_length(pn, last_acked_pn);
-	len = *buf_pn_len + datalen + QUIC_TLS_TAG_LEN;
+	tx_pktns = &conn->tx_ns[quic_tls_pktns(level)];
+	crypto->len = datalen;
+	crypto->data = data;
+	crypto->offset = tx_pktns->offset;
+	rx_pktns = &conn->rx_ns[quic_tls_pktns(level)];
+	packet_type = quic_tls_level_pkt_type(level);
 
-	if (type == QUIC_PACKET_TYPE_INITIAL) {
+	/* Crypto frame information */
+	frm_sz = sizeof frm.type + quic_int_getsize(crypto->offset) +
+		quic_int_getsize(crypto->len) + datalen;
+
+	/* packet number */
+	pn = tx_pktns->last_pn + 1;
+	last_acked_pn = rx_pktns->last_acked_pn;
+
+	/* packet number length */
+	*buf_pn_len = quic_packet_number_length(pn, last_acked_pn);
+	/* packet length (after encryption) */
+	len = *buf_pn_len + frm_sz + QUIC_TLS_TAG_LEN;
+
+	if (packet_type == QUIC_PACKET_TYPE_INITIAL) {
 		/* Zero-length token field */
 		token_fields_len = 1;
 	}
@@ -767,14 +791,14 @@ ssize_t __quic_build_handshake_packet(unsigned char **buf, const unsigned char *
 		token_fields_len = 1; /* plus something XXX TO DO XXX */
 	}
 
-	if ((type != QUIC_PACKET_TYPE_INITIAL && type != QUIC_PACKET_TYPE_HANDSHAKE) ||
-	    end - *buf < QUIC_LONG_PACKET_MINLEN + conn->dcid.len + conn->scid.len +
+	if (end - *buf < QUIC_LONG_PACKET_MINLEN + conn->dcid.len + conn->scid.len +
 	    token_fields_len + quic_int_getsize(len) + len)
 		return -1;
 
-	quic_build_packet_long_header(buf, end, type, *buf_pn_len, conn);
+	quic_build_packet_long_header(buf, end, packet_type, *buf_pn_len, conn);
 
-	if (type == QUIC_PACKET_TYPE_INITIAL) {
+	/* Token */
+	if (packet_type == QUIC_PACKET_TYPE_INITIAL) {
 		/* Encode the token length which is zero for a client or for an
 		 * Initial packet of a server.
 		 */
@@ -803,9 +827,9 @@ ssize_t __quic_build_handshake_packet(unsigned char **buf, const unsigned char *
 	}
 	*buf += *buf_pn_len;
 
-	/* Payload */
-	memcpy(*buf, data, datalen);
-	*buf += datalen;
+	/* Crypto frame */
+	if (!quic_build_frame(buf, end, &frm))
+		return -1;
 
 	return *buf - beg;
 }
@@ -846,7 +870,7 @@ static int quic_apply_header_protection(unsigned char *buf, unsigned char *pn, s
 
 ssize_t quic_build_handshake_packet(unsigned char **buf, const unsigned char *end,
                                     const unsigned char *data, size_t datalen,
-                                    int type, struct quic_conn *conn)
+                                    enum quic_tls_enc_level level, struct quic_conn *conn)
 {
 	/* A pointer to the packet number fiel in <buf> */
 	unsigned char *buf_pn;
@@ -859,7 +883,7 @@ ssize_t quic_build_handshake_packet(unsigned char **buf, const unsigned char *en
 	beg = *buf;
 	/* <pkt_len> is the length of this packet before encryption. */
 	pkt_len = __quic_build_handshake_packet(buf, end, &buf_pn, &pn_len,
-	                                        data, datalen, type, conn);
+	                                        data, datalen, level, conn);
 	if (pkt_len == -1)
 		return -1;
 
@@ -868,14 +892,14 @@ ssize_t quic_build_handshake_packet(unsigned char **buf, const unsigned char *en
 	payload_len = *buf - payload;
 	aad_len = payload - beg;
 
-	tls_ctx = &conn->tls_ctx[type];
-	if (!quic_encrypt_payload(type, beg, aad_len, payload, payload_len,
+	tls_ctx = &conn->tls_ctx[level];
+	if (!quic_encrypt_payload(level, beg, aad_len, payload, payload_len,
 	                          tls_ctx->aead, tls_ctx->tx.key, tls_ctx->tx.iv))
 	    return -1;
 
 	*buf += QUIC_TLS_TAG_LEN;
 
-	if (!quic_apply_header_protection(beg, buf_pn, pn_len, type,
+	if (!quic_apply_header_protection(beg, buf_pn, pn_len, level,
 	                                  tls_ctx->hp, tls_ctx->tx.hp_key))
 		return -1;
 

@@ -815,7 +815,7 @@ OBJS = src/mux_h2.o src/stream.o src/mux_fcgi.o src/cfgparse-listen.o         \
        src/time.o src/hpack-enc.o src/fcgi.o src/arg.o src/base64.o           \
        src/protocol.o src/freq_ctr.o src/lru.o src/hpack-huff.o src/dict.o    \
        src/hash.o src/mailers.o src/version.o
-OBJS += src/proto_quic.o src/xprt_quic.o src/quic_conn.o src/quic_tls.o
+OBJS += src/proto_quic.o src/xprt_quic.o src/quic_conn.o src/quic_tls.o src/quic_frame.o
 
 EBTREE_OBJS = $(EBTREE_DIR)/ebtree.o $(EBTREE_DIR)/eb32sctree.o \
               $(EBTREE_DIR)/eb32tree.o $(EBTREE_DIR)/eb64tree.o \
