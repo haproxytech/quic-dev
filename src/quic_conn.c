@@ -341,12 +341,10 @@ static int quic_parse_packet_frames(struct quic_conn *conn, struct quic_packet *
 			fprintf(stderr, "%s CRYPTO frame\n", __func__);
 			cf = &conn->icfs[conn->curr_icf];
 
-			cf->offset = quic_dec_int(&pos, end);
-			if (cf->offset == -1)
+			if (!quic_dec_int(&cf->offset, &pos, end))
 				return 0;
 
-			cf->datalen = quic_dec_int(&pos, end);
-			if (cf->datalen == -1 || cf->datalen > sizeof cf->data)
+			if (!quic_dec_int(&cf->datalen, &pos, end))
 				return 0;
 			fprintf(stderr, "%s frame length %zu\n", __func__, cf->datalen);
 
@@ -604,8 +602,7 @@ ssize_t quic_packet_read_header(struct quic_packet *qpkt,
 		uint64_t token_len;
 		struct quic_tls_ctx *ctx = &conn->tls_ctx[QUIC_TLS_ENC_LEVEL_INITIAL];
 
-		token_len = quic_dec_int((const unsigned char **)buf, end);
-		if (token_len == -1 || end - *buf < token_len)
+		if (!quic_dec_int(&token_len, (const unsigned char **)buf, end) || end - *buf < token_len)
 			goto err;
 
 		/* XXX TO DO XXX 0 value means "the token is not present".
@@ -620,8 +617,7 @@ ssize_t quic_packet_read_header(struct quic_packet *qpkt,
 	}
 
 	if (qpkt->type != QUIC_PACKET_TYPE_RETRY && qpkt->version) {
-		len = quic_dec_int((const unsigned char **)buf, end);
-		if (len == -1 || end - *buf < len)
+		if (!quic_dec_int(&len, (const unsigned char **)buf, end) || end - *buf < len)
 			goto err;
 
 		qpkt->len = len;

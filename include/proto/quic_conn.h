@@ -125,32 +125,35 @@ static inline size_t quic_int_getsize(uint64_t val)
 }
 
 /*
- * Decode a QUIC variable length integer.
+ * Decode a QUIC variable-length integer from <buf> buffer into <val>.
  * Note that the result is a 64-bits integer but with the less significant
  * 62 bits as relevant information. The most significant 2 remaining bits encode
- * the length of the integer. So, this function can return (uint64_t)-1 in case of any error.
- * Return the 64-bits decoded value when succeeded, -1 if not (i.e. <buf> provided buffer
- * was not big enough).
+ * the length of the integer.
+ * Returns 1 if succeed (there was enough data in <buf>), 0 if not.
  */
-static inline uint64_t quic_dec_int(const unsigned char **buf, const unsigned char *end)
+static inline int quic_dec_int(uint64_t *val, const unsigned char **buf, const unsigned char *end)
 {
-	uint64_t ret;
 	size_t len;
 
 	if (*buf >= end)
-		return -1;
+		return 0;
 
 	len = 1 << (**buf >> QUIC_VARINT_BYTE_0_SHIFT);
 	if (*buf + len > end)
-		return -1;
+		return 0;
 
-	ret = *(*buf)++ & QUIC_VARINT_BYTE_0_BITMASK;
+	*val = *(*buf)++ & QUIC_VARINT_BYTE_0_BITMASK;
 	while (--len)
-		ret = (ret << 8) | *(*buf)++;
+		*val = (*val << 8) | *(*buf)++;
 
-	return ret;
+	return 1;
 }
 
+/*
+ * Encode a QUIC variable-length integer from <val> into <buf> buffer with <end> as first
+ * byte address after the end of this buffer.
+ * Returns 1 if succeeded (there was enough room in buf), 0 if not.
+ */
 static inline int quic_enc_int(unsigned char **buf, const unsigned char *end, uint64_t val)
 {
 	size_t len;
@@ -550,54 +553,44 @@ static inline int quic_transport_params_decode(struct quic_transport_params *p, 
 			p->with_preferred_address = 1;
 			break;
 		case QUIC_TP_IDLE_TIMEOUT:
-			p->idle_timeout = quic_dec_int(&pos, end);
-			if ((int64_t)p->idle_timeout == -1)
+			if (!quic_dec_int(&p->idle_timeout, &pos, end))
 				return 0;
 			break;
 		case QUIC_TP_MAX_PACKET_SIZE:
-			p->max_packet_size = quic_dec_int(&pos, end);
-			if ((int64_t)p->max_packet_size == -1)
+			if (!quic_dec_int(&p->max_packet_size, &pos, end))
 				return 0;
 			break;
 		case QUIC_TP_INITIAL_MAX_DATA:
-			p->initial_max_data = quic_dec_int(&pos, end);
-			if ((int64_t)p->initial_max_data == -1)
+			if (!quic_dec_int(&p->initial_max_data, &pos, end))
 				return 0;
 			break;
 		case QUIC_TP_INITIAL_MAX_STREAM_DATA_BIDI_LOCAL:
-			p->initial_max_stream_data_bidi_local = quic_dec_int(&pos, end);
-			if ((int64_t)p->initial_max_stream_data_bidi_local == -1)
+			if (!quic_dec_int(&p->initial_max_stream_data_bidi_local, &pos, end))
 				return 0;
 			break;
 		case QUIC_TP_INITIAL_MAX_STREAM_DATA_BIDI_REMOTE:
-			p->initial_max_stream_data_bidi_remote = quic_dec_int(&pos, end);
-			if ((int64_t)p->initial_max_stream_data_bidi_remote == -1)
+			if (!quic_dec_int(&p->initial_max_stream_data_bidi_remote, &pos, end))
 				return 0;
 			break;
 		case QUIC_TP_INITIAL_MAX_STREAM_DATA_UNI:
-			p->initial_max_stream_data_uni = quic_dec_int(&pos, end);
-			if ((int64_t)p->initial_max_stream_data_uni == -1)
+			if (!quic_dec_int(&p->initial_max_stream_data_uni, &pos, end))
 				return 0;
 			break;
 		case QUIC_TP_INITIAL_MAX_STREAMS_BIDI:
-			p->initial_max_streams_bidi = quic_dec_int(&pos, end);
-			if ((int64_t)p->initial_max_streams_bidi == -1)
+			if (!quic_dec_int(&p->initial_max_streams_bidi, &pos, end))
 				return 0;
 			break;
 		case QUIC_TP_INITIAL_MAX_STREAMS_UNI:
-			p->initial_max_streams_uni = quic_dec_int(&pos, end);
-			if ((int64_t)p->initial_max_streams_uni == -1)
+			if (!quic_dec_int(&p->initial_max_streams_uni, &pos, end))
 				return 0;
 			break;
 		case QUIC_TP_ACK_DELAY_EXPONENT:
-			p->ack_delay_exponent = quic_dec_int(&pos, end);
-			if ((int64_t)p->ack_delay_exponent == -1 ||
+			if (!quic_dec_int(&p->ack_delay_exponent, &pos, end) ||
 			    p->ack_delay_exponent > QUIC_TP_ACK_DELAY_EXPONENT_LIMIT)
 				return 0;
 			break;
 		case QUIC_TP_MAX_ACK_DELAY:
-			p->max_ack_delay = quic_dec_int(&pos, end);
-			if ((int64_t)p->max_ack_delay == -1 ||
+			if (!quic_dec_int(&p->max_ack_delay, &pos, end) ||
 			    p->max_ack_delay > QUIC_TP_MAX_ACK_DELAY_LIMIT)
 				return 0;
 			break;
@@ -608,8 +601,7 @@ static inline int quic_transport_params_decode(struct quic_transport_params *p, 
 			p->disable_active_migration = 1;
 			break;
 		case QUIC_TP_ACTIVE_CONNECTION_ID_LIMIT:
-			p->active_connection_id_limit = quic_dec_int(&pos, end);
-			if ((int64_t)p->active_connection_id_limit == -1)
+			if (!quic_dec_int(&p->active_connection_id_limit, &pos, end))
 				return 0;
 			break;
 		default:
