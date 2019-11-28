@@ -163,8 +163,9 @@ ssize_t quic_tls_derive_packet_protection_keys(const EVP_CIPHER *aead, const EVP
 	const unsigned char     iv_label[] = "quic iv";
 	const unsigned char hp_key_label[] = "quic hp";
 
-	fprintf(stderr, "%s AEAD key len: %zu\n", __func__, aead_keylen);
-	fprintf(stderr, "%s AEAD IV len: %zu\n", __func__, aead_ivlen);
+	fprintf(stderr, "============================================\n%s ", __func__);
+	fprintf(stderr, "(AEAD key len: %zu ", aead_keylen);
+	fprintf(stderr, "AEAD IV len: %zu)\n", aead_ivlen);
 	if (aead_keylen > keylen || aead_ivlen > ivlen)
 		return 0;
 
@@ -176,9 +177,9 @@ ssize_t quic_tls_derive_packet_protection_keys(const EVP_CIPHER *aead, const EVP
 	                            hp_key_label, sizeof hp_key_label - 1))
 		return 0;
 
-	hexdump(key, keylen, "===> %s: key:\n", __func__);
-	hexdump(iv, ivlen, "===> %s: iv:\n", __func__);
-	hexdump(hp_key, hp_keylen, "===> %s: hp_key:\n", __func__);
+	hexdump(key, keylen, "KEY:\n");
+	hexdump(iv, ivlen, "IV :\n");
+	hexdump(hp_key, hp_keylen, "HP KEY:\n");
 
 	return 1;
 }
