@@ -28,38 +28,42 @@
 #include <types/quic_conn.h>
 
 /* QUIC frame types. */
-#define QUIC_FT_PADDING              0x00
-#define QUIC_FT_PING                 0x01
-#define QUIC_FT_ACK                  0x02
-#define QUIC_FT_ACK_ECN              0x03
-#define QUIC_FT_RESET_STREAM         0x04
-#define QUIC_FT_STOP_SENDING         0x05
-#define QUIC_FT_CRYPTO               0x06
-#define QUIC_FT_NEW_TOKEN            0x07
+enum quic_frame_type {
+	QUIC_FT_PADDING      = 0x00,
+	QUIC_FT_PING         = 0x01,
+	QUIC_FT_ACK          = 0x02,
+	QUIC_FT_ACK_ECN      = 0x03,
+	QUIC_FT_RESET_STREAM = 0x04,
+	QUIC_FT_STOP_SENDING = 0x05,
+	QUIC_FT_CRYPTO       = 0x06,
+	QUIC_FT_NEW_TOKEN    = 0x07,
 
-#define QUIC_FT_STREAM_8             0x08
-#define QUIC_FT_STREAM_9             0x09
-#define QUIC_FT_STREAM_A             0x0a
-#define QUIC_FT_STREAM_B             0x0b
-#define QUIC_FT_STREAM_C             0x0c
-#define QUIC_FT_STREAM_D             0x0d
-#define QUIC_FT_STREAM_E             0x0e
-#define QUIC_FT_STREAM_F             0x0f
+	QUIC_FT_STREAM_8     = 0x08,
+	QUIC_FT_STREAM_9     = 0x09,
+	QUIC_FT_STREAM_A     = 0x0a,
+	QUIC_FT_STREAM_B     = 0x0b,
+	QUIC_FT_STREAM_C     = 0x0c,
+	QUIC_FT_STREAM_D     = 0x0d,
+	QUIC_FT_STREAM_E     = 0x0e,
+	QUIC_FT_STREAM_F     = 0x0f,
 
-#define QUIC_FT_MAX_DATA             0x10
-#define QUIC_FT_MAX_STREAM_DATA      0x11
-#define QUIC_FT_MAX_STREAMS_BIDI     0x12
-#define QUIC_FT_MAX_STREAMS_UNI      0x13
-#define QUIC_FT_DATA_BLOCKED         0x14
-#define QUIC_FT_STREAM_DATA_BLOCKED  0x15
-#define QUIC_FT_STREAMS_BLOCKED_BIDI 0x16
-#define QUIC_FT_STREAMS_BLOCKED_UNI  0x17
-#define QUIC_FT_NEW_CONNECTION_ID    0x18
-#define QUIC_FT_RETIRE_CONNECTION_ID 0x19
-#define QUIC_FT_PATH_CHALLENGE       0x1a
-#define QUIC_FT_PATH_RESPONSE        0x1b
-#define QUIC_FT_CONNECTION_CLOSE     0x1c
-#define QUIC_FT_CONNECTION_CLOSE_APP 0x1d
+	QUIC_FT_MAX_DATA             = 0x10,
+	QUIC_FT_MAX_STREAM_DATA      = 0x11,
+	QUIC_FT_MAX_STREAMS_BIDI     = 0x12,
+	QUIC_FT_MAX_STREAMS_UNI      = 0x13,
+	QUIC_FT_DATA_BLOCKED         = 0x14,
+	QUIC_FT_STREAM_DATA_BLOCKED  = 0x15,
+	QUIC_FT_STREAMS_BLOCKED_BIDI = 0x16,
+	QUIC_FT_STREAMS_BLOCKED_UNI  = 0x17,
+	QUIC_FT_NEW_CONNECTION_ID    = 0x18,
+	QUIC_FT_RETIRE_CONNECTION_ID = 0x19,
+	QUIC_FT_PATH_CHALLENGE       = 0x1a,
+	QUIC_FT_PATH_RESPONSE        = 0x1b,
+	QUIC_FT_CONNECTION_CLOSE     = 0x1c,
+	QUIC_FT_CONNECTION_CLOSE_APP = 0x1d,
+	/* Do not insert enums after the following one. */
+	QUIC_FT_MAX
+};
 
 #define QUIC_STREAM_FRAME_FIN_BIT    0x01
 #define QUIC_STREAM_FRAME_LEN_BIT    0x02

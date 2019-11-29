@@ -26,6 +26,76 @@
 
 #include <proto/quic_conn.h>
 
+static inline const char *quic_frame_type_string(enum quic_frame_type ft)
+{
+	switch (ft) {
+	case QUIC_FT_PADDING:
+		return "PADDING";
+	case QUIC_FT_PING:
+		return "PING";
+	case QUIC_FT_ACK:
+		return "ACK";
+	case QUIC_FT_ACK_ECN:
+		return "ACK_ENC";
+	case QUIC_FT_RESET_STREAM:
+		return "RESET_STREAM";
+	case QUIC_FT_STOP_SENDING:
+		return "STOP_SENDING";
+	case QUIC_FT_CRYPTO:
+		return "CRYPTO";
+	case QUIC_FT_NEW_TOKEN:
+		return "NEW_TOKEN";
+
+	case QUIC_FT_STREAM_8:
+		return "STREAM_8";
+	case QUIC_FT_STREAM_9:
+		return "STREAM_9";
+	case QUIC_FT_STREAM_A:
+		return "STREAM_A";
+	case QUIC_FT_STREAM_B:
+		return "STREAM_B";
+	case QUIC_FT_STREAM_C:
+		return "STREAM_C";
+	case QUIC_FT_STREAM_D:
+		return "STREAM_D";
+	case QUIC_FT_STREAM_E:
+		return "STREAM_E";
+	case QUIC_FT_STREAM_F:
+		return "STREAM_F";
+
+	case QUIC_FT_MAX_DATA:
+		return "MAX_DATA";
+	case QUIC_FT_MAX_STREAM_DATA:
+		return "MAX_STREAM_DATA";
+	case QUIC_FT_MAX_STREAMS_BIDI:
+		return "MAX_STREAMS_BIDI";
+	case QUIC_FT_MAX_STREAMS_UNI:
+		return "MAX_STREAMS_UNI";
+	case QUIC_FT_DATA_BLOCKED:
+		return "DATA_BLOCKED";
+	case QUIC_FT_STREAM_DATA_BLOCKED:
+		return "STREAM_DATA_BLOCKED";
+	case QUIC_FT_STREAMS_BLOCKED_BIDI:
+		return "STREAMS_BLOCKED_BIDI";
+	case QUIC_FT_STREAMS_BLOCKED_UNI:
+		return "STREAMS_BLOCKED_UNI";
+	case QUIC_FT_NEW_CONNECTION_ID:
+		return "NEW_CONNECTION_ID";
+	case QUIC_FT_RETIRE_CONNECTION_ID:
+		return "RETIRE_CONNECTION_ID";
+	case QUIC_FT_PATH_CHALLENGE:
+		return "PATH_CHALLENGE";
+	case QUIC_FT_PATH_RESPONSE:
+		return "PATH_RESPONSE";
+	case QUIC_FT_CONNECTION_CLOSE:
+		return "CONNECTION_CLOSE";
+	case QUIC_FT_CONNECTION_CLOSE_APP:
+		return "CONNECTION_CLOSE_APP";
+	default:
+		return "UNKNOWN";
+	}
+}
+
 /*
  * Encode <frm> PADDING frame into <buf> buffer.
  * Returns 1 if succeded (enough room in <buf> to encode the frame), 0 if not.
@@ -56,7 +126,7 @@ static int inline quic_parse_padding_frame(struct quic_frame *frm,
 
 	beg = *buf;
 	padding->len = 1;
-	while (*buf != end && !**buf)
+	while (*buf < end && !**buf)
 		(*buf)++;
 	padding->len += *buf - beg;
 
@@ -779,6 +849,12 @@ static inline int quic_parse_frame(struct quic_frame *frm,
 		return 0;
 
 	frm->type = *(*buf)++;
+	if (frm->type > QUIC_FT_MAX) {
+		fprintf(stderr, "%s: wrong frame 0x%02x\n", __func__, frm->type);
+		return 0;
+	}
+
+	fprintf(stderr, "%s: %s frame\n", __func__, quic_frame_type_string(frm->type));
 
 	return quic_parse_frame_funcs[frm->type](frm, buf, end);
 }
