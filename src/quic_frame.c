@@ -52,7 +52,6 @@ int (*quic_parse_frame_funcs[])(struct quic_frame *frm,
 	[QUIC_FT_ACK]          = quic_parse_ack_frame,
 	[QUIC_FT_ACK_ECN]      = quic_parse_ack_ecn_frame,
 	[QUIC_FT_RESET_STREAM] = quic_parse_reset_stream_frame,
-#if 0
 	[QUIC_FT_STOP_SENDING] = quic_parse_stop_sending_frame,
 	[QUIC_FT_CRYPTO]       = quic_parse_crypto_frame,
 	[QUIC_FT_NEW_TOKEN]    = quic_parse_new_token_frame,
@@ -78,6 +77,5 @@ int (*quic_parse_frame_funcs[])(struct quic_frame *frm,
 	[QUIC_FT_PATH_RESPONSE]        = quic_parse_path_response_frame,
 	[QUIC_FT_CONNECTION_CLOSE]     = quic_parse_connection_close_frame,
 	[QUIC_FT_CONNECTION_CLOSE_APP] = quic_parse_connection_close_app_frame,
-#endif
 };
 

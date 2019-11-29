@@ -83,12 +83,6 @@ struct quic_ack {
 	uint64_t first_ack_range;
 };
 
-struct quic_crypto {
-	uint64_t offset;
-	uint64_t len;
-	const unsigned char *data;
-};
-
 struct quic_reset_stream {
 	uint64_t id;
 	uint64_t app_error_code;
@@ -98,6 +92,12 @@ struct quic_reset_stream {
 struct quic_stop_sending_frame {
 	uint64_t id;
 	uint64_t app_error_code;
+};
+
+struct quic_crypto {
+	uint64_t offset;
+	uint64_t len;
+	const unsigned char *data;
 };
 
 struct quic_new_token {
@@ -164,6 +164,12 @@ struct quic_connection_close {
 	unsigned char *reason_phrase;
 };
 
+struct quic_connection_close_app {
+	uint64_t error_code;
+	size_t reason_phrase_len;
+	unsigned char *reason_phrase;
+};
+
 struct quic_frame {
 	unsigned char type;
 	union {
@@ -187,7 +193,7 @@ struct quic_frame {
 		struct quic_path_challenge path_challenge;
 		struct quic_path_challenge_response path_challenge_response;
 		struct quic_connection_close connection_close;
-		struct quic_connection_close connection_close_app;
+		struct quic_connection_close_app connection_close_app;
 	};
 };
 
