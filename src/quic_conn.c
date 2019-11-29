@@ -235,7 +235,7 @@ static void quic_aead_iv_build(struct quic_conn *conn, uint64_t pn, uint32_t pnl
  */
 static int quic_decrypt_payload(int type, unsigned char *payload, size_t payload_len,
                                 const EVP_CIPHER *aead, const unsigned char *key, const unsigned char *iv,
-                                unsigned char **buf, const unsigned char *end)
+                                unsigned char **buf, const unsigned char **end)
 {
 	int ret, outlen, aad_len;
 	uint32_t algo;
@@ -266,6 +266,7 @@ static int quic_decrypt_payload(int type, unsigned char *payload, size_t payload
 
 			off += outlen;
 			*buf = payload;
+			*end = *buf + off;
 
 			hexdump(payload, off, "Decrypted payload(%zu):\n", off);
 			break;
@@ -286,6 +287,7 @@ static int quic_encrypt_payload(int type, const unsigned char *aad, size_t aad_l
 	int ret, outlen;
 #ifdef QUIC_DEBUG
 	unsigned char dec_buf[2048], *dec_bufp = dec_buf;
+	const unsigned char *end_dec_buf = dec_bufp + sizeof dec_buf;
 #endif
 
 	ret = 0;
@@ -314,7 +316,7 @@ static int quic_encrypt_payload(int type, const unsigned char *aad, size_t aad_l
 	/* Make a copy of this encrypted packet. */
 	memcpy(dec_buf, aad, aad_len + payload_len + QUIC_TLS_TAG_LEN);
 	if (!quic_decrypt_payload(type, dec_buf + aad_len, payload_len + QUIC_TLS_TAG_LEN,
-	                          aead, key, iv, &dec_bufp, dec_bufp + 2048))
+	                          aead, key, iv, &dec_bufp, &end_dec_buf))
 		goto out;
 #endif
 	ret = 1;
@@ -328,38 +330,38 @@ static int quic_encrypt_payload(int type, const unsigned char *aad, size_t aad_l
 static int quic_parse_packet_frames(struct quic_conn *conn, struct quic_packet *pkt,
                                     unsigned char *pn, unsigned char *buf, const unsigned char *end)
 {
+	struct quic_frame frm;
 	const unsigned char *pos;
 
 	pos = buf;
 
 	while (pos < end) {
-		switch (*pos++) {
+
+		if (!quic_parse_frame(&frm, &pos, end))
+			return 0;
+
+		switch (frm.type) {
 		case QUIC_FT_CRYPTO:
 		{
 			struct crypto_frame *cf;
 
-			fprintf(stderr, "%s CRYPTO frame\n", __func__);
 			cf = &conn->icfs[conn->curr_icf];
-
-			if (!quic_dec_int(&cf->offset, &pos, end))
+			if (frm.crypto.len > sizeof cf->data)
 				return 0;
 
-			if (!quic_dec_int(&cf->datalen, &pos, end))
-				return 0;
-			fprintf(stderr, "%s frame length %zu\n", __func__, cf->datalen);
-
-			if (end - pos < cf->datalen)
-				return 0;
-
-			memcpy(cf->data, pos, cf->datalen);
+			cf->offset = frm.crypto.offset;
+			cf->datalen = frm.crypto.len;
+			memcpy(cf->data, frm.crypto.data, frm.crypto.len);
 			conn->curr_icf++;
 			conn->curr_icf &= sizeof conn->icfs / sizeof *conn->icfs - 1;
 			break;
 		}
 
 		case QUIC_FT_PADDING:
-			fprintf(stderr, "%s PADDING frame\n", __func__);
-			pos = end;
+			if (pos != end) {
+				fprintf(stderr, "Wrong frame! (%ld len: %lu)\n", end - pos, frm.padding.len);
+				return 0;
+			}
 			break;
 
 		default:
@@ -639,7 +641,7 @@ ssize_t quic_packet_read_header(struct quic_packet *qpkt,
 			quic_aead_iv_build(conn, qpkt->pn, qpkt->pnl);
 			/* The payload is just after the packet number field */
 			if (!quic_decrypt_payload(qpkt->type, pn + qpkt->pnl, qpkt->len - qpkt->pnl,
-			                          tls_ctx->aead, tls_ctx->rx.key, tls_ctx->rx.iv, &beg, end)) {
+			                          tls_ctx->aead, tls_ctx->rx.key, tls_ctx->rx.iv, &beg, &end)) {
 				fprintf(stderr, "Could not decrypt the payload\n");
 				goto err;
 			}
