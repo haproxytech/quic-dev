@@ -26,6 +26,12 @@
 
 #define QUIC_PACKET_MAXLEN      1252 /* (bytes) for IPv4, 1232 for IPv6 */
 
+/*
+ * QUIC CID lengths. This the length of the connection IDs for this QUIC
+ * implementation.
+ */
+#define QUIC_CID_LEN               8
+
 /* Common definitions for short and long QUIC packet headers. */
 /* QUIC connection ID maximum length for version 1. */
 #define QUIC_CID_MAXLEN               20 /* bytes */

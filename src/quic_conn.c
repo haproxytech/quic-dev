@@ -481,17 +481,29 @@ static int quic_conn_derive_initial_secrets(struct quic_tls_ctx *ctx,
 }
 
 static int quic_conn_init(struct listener *l, struct quic_conn *conn, uint32_t version,
-                          unsigned char *cid, size_t cid_len)
+                          unsigned char *dcid, size_t dcid_len, unsigned char *scid, size_t scid_len)
 {
 	int i;
 
 	conn->version = version;
-	/* Copy the connection ID. */
-	conn->dcid.len = conn->scid.len = cid_len;
-	memcpy(conn->dcid.data, cid, cid_len);
-	memset(conn->scid.data, 0, cid_len);
-	/* Store this connection in the QUIC clients tree of this <l> listener. */
-	ebpt_insert(&l->quic_clients, &conn->cid);
+	/* Copy the initial DCID. */
+	conn->idcid.len = dcid_len;
+	memcpy(conn->idcid.data, dcid, dcid_len);
+
+	/* Copy the SCID as our DCID for this connection. */
+	memcpy(conn->dcid.data, scid, scid_len);
+	conn->dcid.len = scid_len;
+
+	/* Select our SCID which is the connection ID use to match the client connections. */
+	conn->scid.len = QUIC_CID_LEN;
+	RAND_bytes(conn->scid.data, conn->scid.len);
+
+	/* Insert the DCIC the client has choosen. */
+	ebmb_insert(&l->quic_initial_clients, &conn->idcid_node, conn->idcid.len);
+
+	/* Insert our SCID, the connection ID for the client. */
+	ebmb_insert(&l->quic_clients, &conn->scid_node, conn->scid.len);
+
 	/* Initialize the Initial level TLS encryption context. */
 	quic_initial_tls_ctx_init(&conn->tls_ctx[QUIC_TLS_ENC_LEVEL_INITIAL]);
 	/* Packet number spaces initialization. */
@@ -522,6 +534,7 @@ ssize_t quic_packet_read_header(struct quic_packet *qpkt,
 		/* XXX TO BE DISCARDED */
 		goto err;
 
+	dcid_len = 0;
 	beg = *buf;
 	/* Header form */
 	qpkt->long_header = **buf & QUIC_PACKET_LONG_HEADER_BIT;
@@ -529,13 +542,15 @@ ssize_t quic_packet_read_header(struct quic_packet *qpkt,
 	qpkt->type = (*(*buf)++ >> QUIC_PACKET_TYPE_SHIFT) & QUIC_PACKET_TYPE_BITMASK;
 	/* Version */
 	if (qpkt->long_header) {
+		struct eb_root *quic_clients;
+		struct ebmb_node *node;
+		size_t cid_lookup_len;
+
 	    if (!quic_read_uint32(&qpkt->version, (const unsigned char **)buf, end))
 			goto err;
 
 	    if (!qpkt->version) { /* XXX TO DO XXX Version negotiation packet */ };
-	}
 
-	if (qpkt->long_header) {
 		/* Destination Connection ID Length */
 		dcid_len = *(*buf)++;
 		/* We want to be sure we can read <dcid_len> bytes and one more for <scid_len> value */
@@ -543,10 +558,28 @@ ssize_t quic_packet_read_header(struct quic_packet *qpkt,
 			/* XXX MUST BE DROPPED */
 			goto err;
 
-		if (dcid_len)
+		if (dcid_len) {
+			/*
+			 * Check that the length of this received DCID matches the CID lengths
+			 * of our implementation for non Initials packets only.
+			 */
+			if (qpkt->type != QUIC_PACKET_TYPE_INITIAL && dcid_len != QUIC_CID_LEN)
+				goto err;
+
 			memcpy(qpkt->dcid.data, *buf, dcid_len);
+		}
+
 		qpkt->dcid.len = dcid_len;
 		*buf += dcid_len;
+
+		/*
+		 * DCIDs of first packets coming from clients may have the same values.
+		 * Let's distinguish them concatenating the socket addresses to the DCIDs.
+		 */
+		if (qpkt->type == QUIC_PACKET_TYPE_INITIAL) {
+			memcpy(qpkt->dcid.data + qpkt->dcid.len, saddr, sizeof *saddr);
+			qpkt->dcid.len += sizeof *saddr;
+		}
 
 		/* Source Connection ID Length */
 		scid_len = *(*buf)++;
@@ -559,25 +592,64 @@ ssize_t quic_packet_read_header(struct quic_packet *qpkt,
 		qpkt->scid.len = scid_len;
 		*buf += scid_len;
 
-		if (qpkt->dcid.len) {
-			struct ebmb_node *node;
+		if (qpkt->type == QUIC_PACKET_TYPE_INITIAL) {
+			quic_clients = &l->quic_initial_clients;
+			cid_lookup_len = qpkt->dcid.len;
+		}
+		else {
+			quic_clients = &l->quic_clients;
+			cid_lookup_len = QUIC_CID_LEN;
+		}
 
-			node = ebmb_lookup(&l->quic_clients, qpkt->dcid.data, qpkt->dcid.len);
-			if (!node) {
-				int ret;
+		node = ebmb_lookup(quic_clients, qpkt->dcid.data, cid_lookup_len);
+		if (!node) {
+			int ret;
 
-				conn = pool_alloc(pool_head_quic_conn);
-				memset(conn, 0, sizeof *conn);
-				ret = quic_new_conn(conn, l, saddr);
-
-				if (!conn || ret == -1)
-					goto err;
-
-				if (!quic_conn_init(l, conn, qpkt->version, qpkt->scid.data, qpkt->scid.len))
-					goto err;
+			if (qpkt->type != QUIC_PACKET_TYPE_INITIAL) {
+				fprintf(stderr, "Connection not found.\n");
+				goto err;
 			}
-			else {
-				conn = ebmb_entry(node, struct quic_conn, cid);
+
+			conn = pool_alloc(pool_head_quic_conn);
+			memset(conn, 0, sizeof *conn);
+			ret = quic_new_conn(conn, l, saddr);
+
+			if (!conn || ret == -1)
+				goto err;
+
+			if (!quic_conn_init(l, conn, qpkt->version,
+			                    qpkt->dcid.data, cid_lookup_len, qpkt->scid.data, qpkt->scid.len))
+				goto err;
+		}
+		else {
+			if (qpkt->type == QUIC_PACKET_TYPE_INITIAL)
+				conn = ebmb_entry(node, struct quic_conn, idcid_node);
+			else
+				conn = ebmb_entry(node, struct quic_conn, scid_node);
+		}
+
+		if (qpkt->type == QUIC_PACKET_TYPE_INITIAL) {
+			uint64_t token_len;
+			struct quic_tls_ctx *ctx = &conn->tls_ctx[QUIC_TLS_ENC_LEVEL_INITIAL];
+
+			if (!quic_dec_int(&token_len, (const unsigned char **)buf, end) || end - *buf < token_len)
+				goto err;
+
+			/* XXX TO DO XXX 0 value means "the token is not present".
+			 * A server which sends an Initial packet must not set the token.
+			 * So, a client which receives an Initial packet with a token
+			 * MUST discard the packet or generate a connection error with
+			 * PROTOCOL_VIOLATION as type.
+			 * The token must be provided in a Retry packet or NEW_TOKEN frame.
+			 */
+			qpkt->token_len = token_len;
+			/*
+			 * NOTE: the socket address it concatenated to the destination ID choosen by the client
+			 * for Initial packets.
+			 */
+			if (!quic_conn_derive_initial_secrets(ctx, qpkt->dcid.data, qpkt->dcid.len - sizeof *saddr, 1)) {
+				fprintf(stderr, "Could not derive initial secrets\n");
+				goto err;
 			}
 		}
 	}
@@ -585,23 +657,6 @@ ssize_t quic_packet_read_header(struct quic_packet *qpkt,
 		/* XXX TO DO: Short header XXX */
 	}
 
-	if (qpkt->type == QUIC_PACKET_TYPE_INITIAL) {
-		uint64_t token_len;
-		struct quic_tls_ctx *ctx = &conn->tls_ctx[QUIC_TLS_ENC_LEVEL_INITIAL];
-
-		if (!quic_dec_int(&token_len, (const unsigned char **)buf, end) || end - *buf < token_len)
-			goto err;
-
-		/* XXX TO DO XXX 0 value means "the token is not present".
-		 * A server which sends an Initial packet must not set the token.
-		 * So, a client which receives an Initial packet with a token
-		 * MUST discard the packet or generate a connection error with
-		 * PROTOCOL_VIOLATION as type.
-		 * The token must be provided in a Retry packet or NEW_TOKEN frame.
-		 */
-		qpkt->token_len = token_len;
-		quic_conn_derive_initial_secrets(ctx, qpkt->dcid.data, qpkt->dcid.len, 1);
-	}
 
 	if (qpkt->type != QUIC_PACKET_TYPE_RETRY && qpkt->version) {
 		if (!quic_dec_int(&len, (const unsigned char **)buf, end) || end - *buf < len)

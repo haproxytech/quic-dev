@@ -22,19 +22,26 @@
 #ifndef _TYPES_QUIC_CONN_H
 #define _TYPES_QUIC_CONN_H
 
+#include <sys/socket.h>
+
 #include <types/quic.h>
 #include <types/quic_tls.h>
 
-#include <ebpttree.h>
+#include <ebmbtree.h>
 
 /* The maximum number of QUIC packets stored by the fd I/O handler by QUIC
  * connection. Must be a power of two.
  */
 #define QUIC_CONN_MAX_PACKET  64
 
+/*
+ * This struct is used by ebmb_node structs as last member of flexible array.
+ * So do not change the order of the member of quic_cid struct.
+ * <data> member must be the first one.
+ */
 struct quic_cid {
+	unsigned char data[QUIC_CID_MAXLEN + sizeof(struct sockaddr_storage)];
 	unsigned char len;
-	unsigned char data[QUIC_CID_MAXLEN];
 };
 
 #define QUIC_STATELESS_RESET_TOKEN_LEN 16
@@ -116,6 +123,7 @@ struct quic_packet {
 	int long_header;
 	unsigned char type;
 	uint32_t version;
+	/* Initial desctination connection ID. */
 	struct quic_cid dcid;
 	struct quic_cid scid;
 	/* Packet number */
@@ -136,8 +144,15 @@ struct crypto_frame {
 
 struct quic_conn {
 	uint32_t version;
+
+	/* Initial DCID (comming with first Initial packets) */
+	struct ebmb_node idcid_node;
+	struct quic_cid idcid;
+
 	struct quic_cid dcid;
+	struct ebmb_node scid_node;
 	struct quic_cid scid;
+
 	struct quic_tls_ctx tls_ctx[QUIC_TLS_ENC_LEVEL_MAX];
 	struct quic_pktns tx_ns[QUIC_TLS_PKTNS_MAX];
 	struct quic_pktns rx_ns[QUIC_TLS_PKTNS_MAX];
@@ -152,7 +167,6 @@ struct quic_conn {
 	struct crypto_frame icfs[QUIC_CONN_MAX_PACKET];
 	int curr_icf;
 	int pend_icf;
-	struct ebpt_node cid;
 };
 
 #endif /* _TYPES_QUIC_CONN_H */
