@@ -162,7 +162,7 @@ static int quic_remove_header_protection(struct quic_conn *conn, struct quic_pac
 	    !EVP_DecryptFinal_ex(ctx, mask, &outlen))
 	    goto out;
 
-	*byte0 ^= mask[0] & (pkt->type == QUIC_PACKET_TYPE_INITIAL ? 0xf : 0x1f);
+	*byte0 ^= mask[0] & (*byte0 & QUIC_PACKET_LONG_HEADER_BIT ? 0xf : 0x1f);
 	pnlen = (*byte0 & QUIC_PACKET_PNL_BITMASK) + 1;
 	for (i = 0; i < pnlen; i++) {
 		pn[i] ^= mask[i + 1];
@@ -839,7 +839,7 @@ static int quic_apply_header_protection(unsigned char *buf, unsigned char *pn, s
 	    !EVP_EncryptFinal_ex(ctx, mask, &outlen))
 		goto out;
 
-	*buf ^= mask[0] & (type == QUIC_PACKET_TYPE_INITIAL ? 0xf: 0x1f);
+	*buf ^= mask[0] & (*buf & QUIC_PACKET_LONG_HEADER_BIT ? 0xf : 0x1f);
 	for (i = 0; i < pnlen; i++)
 		pn[i] ^= mask[i + 1];
 
