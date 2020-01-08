@@ -141,7 +141,7 @@ static int quic_remove_header_protection(struct quic_conn *conn, struct quic_pac
 	int ret, outlen, i, pnlen;
 	uint64_t *largest_pn, packet_number;
 	uint32_t truncated_pn = 0;
-	unsigned char mask[16] = {0};
+	unsigned char mask[5] = {0};
 	unsigned char *sample;
 	EVP_CIPHER_CTX *ctx;
 	struct quic_tls_ctx *tls_ctx;
