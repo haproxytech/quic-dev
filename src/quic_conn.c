@@ -136,6 +136,7 @@ uint64_t decode_packet_number(uint64_t largest_pn, uint32_t truncated_pn, unsign
 }
 
 static int quic_remove_header_protection(struct quic_conn *conn, struct quic_packet *pkt,
+                                         struct quic_tls_ctx *tls_ctx,
                                          unsigned char *pn, unsigned char *byte0, const unsigned char *end)
 {
 	int ret, outlen, i, pnlen;
@@ -144,8 +145,11 @@ static int quic_remove_header_protection(struct quic_conn *conn, struct quic_pac
 	unsigned char mask[5] = {0};
 	unsigned char *sample;
 	EVP_CIPHER_CTX *ctx;
-	struct quic_tls_ctx *tls_ctx;
 	unsigned char *hp_key;
+
+	/* Check there is enough data in this packet. */
+	if (end - pn < QUIC_PACKET_PN_MAXLEN + sizeof mask)
+		return 0;
 
 	ctx = EVP_CIPHER_CTX_new();
 	if (!ctx)
@@ -153,9 +157,9 @@ static int quic_remove_header_protection(struct quic_conn *conn, struct quic_pac
 
 	ret = 0;
 	sample = pn + QUIC_PACKET_PN_MAXLEN;
-	tls_ctx = &conn->tls_ctx[QUIC_TLS_ENC_LEVEL_INITIAL];
 
-	hexdump(sample, 16, "packet sample:\n");
+	hexdump(sample, sizeof mask, "packet sample:\n");
+
 	hp_key = tls_ctx->rx.hp_key;
 	if (!EVP_DecryptInit_ex(ctx, tls_ctx->hp, NULL, hp_key, sample) ||
 	    !EVP_DecryptUpdate(ctx, mask, &outlen, mask, sizeof mask) ||
@@ -174,7 +178,7 @@ static int quic_remove_header_protection(struct quic_conn *conn, struct quic_pac
 	/* Store remaining information for this unprotected header */
 	pkt->pn = packet_number;
 	pkt->pnl = pnlen;
-	fprintf(stderr, "%s packet_number: %lu\n", __func__, packet_number);
+
 	ret = 1;
 
  out:
@@ -183,23 +187,24 @@ static int quic_remove_header_protection(struct quic_conn *conn, struct quic_pac
 	return ret;
 }
 
-static void quic_aead_iv_build(struct quic_conn *conn, uint64_t pn, uint32_t pnl)
+static void quic_aead_iv_build(struct quic_tls_ctx *tls_ctx, uint64_t pn, uint32_t pnl)
 {
 	int i;
 	unsigned int shift;
-	struct quic_tls_ctx *ctx = &conn->tls_ctx[QUIC_TLS_ENC_LEVEL_INITIAL];
-	unsigned char *iv = ctx->rx.iv;
-	unsigned char *aead_iv = ctx->aead_iv;
-	size_t iv_size = sizeof ctx->rx.iv;
+	unsigned char *iv = tls_ctx->rx.iv;
+	unsigned char *aead_iv = tls_ctx->aead_iv;
+	size_t iv_size = sizeof tls_ctx->rx.iv;
 
 	hexdump(iv, iv_size, "%s: IV:\n", __func__);
+
 	for (i = 0; i < iv_size - sizeof pn; i++)
 		*aead_iv++ = *iv++;
 
 	shift = 56;
 	for (i = iv_size - sizeof pn; i < iv_size; i++, shift -= 8)
 		*aead_iv++ = *iv++ ^ (pn >> shift);
-	hexdump(ctx->aead_iv, iv_size, "%s: BUILD IV:\n", __func__);
+
+	hexdump(tls_ctx->aead_iv, iv_size, "%s: BUILD IV:\n", __func__);
 }
 
 /*
@@ -485,6 +490,7 @@ static int quic_conn_init(struct listener *l, struct quic_conn *conn, uint32_t v
 {
 	int i;
 
+	fprintf(stderr, "%s: new conn @%p\n", __func__, conn);
 	conn->version = version;
 	/* Copy the initial DCID. */
 	conn->idcid.len = dcid_len;
@@ -525,6 +531,8 @@ ssize_t quic_packet_read_header(struct quic_packet *qpkt,
 	uint64_t len;
 	unsigned char *pn = NULL; /* Packet number */
 	struct quic_conn *conn;
+	struct ebmb_node *node;
+	struct quic_tls_ctx *tls_ctx;
 
 	if (end <= *buf)
 		goto err;
@@ -538,14 +546,13 @@ ssize_t quic_packet_read_header(struct quic_packet *qpkt,
 	beg = *buf;
 	/* Header form */
 	qpkt->long_header = **buf & QUIC_PACKET_LONG_HEADER_BIT;
-	/* Packet type */
+	/* Packet type XXX does not exist for short headers XXX */
 	qpkt->type = (*(*buf)++ >> QUIC_PACKET_TYPE_SHIFT) & QUIC_PACKET_TYPE_BITMASK;
-	/* Version */
 	if (qpkt->long_header) {
 		struct eb_root *quic_clients;
-		struct ebmb_node *node;
 		size_t cid_lookup_len;
 
+		/* Version */
 	    if (!quic_read_uint32(&qpkt->version, (const unsigned char **)buf, end))
 			goto err;
 
@@ -655,44 +662,68 @@ ssize_t quic_packet_read_header(struct quic_packet *qpkt,
 	}
 	else {
 		/* XXX TO DO: Short header XXX */
+		if (end - *buf < QUIC_CID_LEN) {
+			fprintf(stderr, "Too short short headder\n");
+			goto err;
+		}
+		node = ebmb_lookup(&l->quic_clients, *buf, QUIC_CID_LEN);
+		if (!node) {
+			fprintf(stderr, "Unknonw connection ID\n");
+			goto err;
+		}
+		conn = ebmb_entry(node, struct quic_conn, scid_node);
+		*buf += QUIC_CID_LEN;
 	}
 
-
-	if (qpkt->type != QUIC_PACKET_TYPE_RETRY && qpkt->version) {
-		if (!quic_dec_int(&len, (const unsigned char **)buf, end) || end - *buf < len)
+	/*
+	 * Only packets packets with long headers and not RETRY or VERSION as type
+	 * have a length field.
+	 */
+	if (qpkt->long_header && qpkt->type != QUIC_PACKET_TYPE_RETRY && qpkt->version) {
+		if (!quic_dec_int(&len, (const unsigned char **)buf, end) || end - *buf < len) {
+			fprintf(stderr, "Could not decode the packet length or too short packet (%zu, %zu)\n", len, end - *buf);
 			goto err;
-
-		qpkt->len = len;
-		/*
-		 * The packet number is here. This is also the start minus QUIC_PACKET_PN_MAXLEN
-		 * of the sample used to add/remove the header protection.
-		 */
-		pn = *buf;
-
-		if (qpkt->type == QUIC_PACKET_TYPE_INITIAL) {
-			struct quic_tls_ctx *tls_ctx;
-
-			tls_ctx = &conn->tls_ctx[qpkt->type];
-			if (!quic_remove_header_protection(conn, qpkt, pn, beg, end)) {
-				fprintf(stderr, "Could not remove packet header protection\n");
-				goto err;
-			}
-
-			quic_aead_iv_build(conn, qpkt->pn, qpkt->pnl);
-			/* The payload is just after the packet number field */
-			if (!quic_decrypt_payload(pn + qpkt->pnl, qpkt->len - qpkt->pnl,
-			                          tls_ctx->aead, tls_ctx->rx.key, tls_ctx->aead_iv, &beg, &end)) {
-				fprintf(stderr, "Could not decrypt the payload\n");
-				goto err;
-			}
-
-			memcpy(&conn->pkts[conn->curr_pkt++].data, beg, end - beg);
-			conn->curr_pkt &= sizeof conn->pkts / sizeof *conn->pkts - 1;
-
-			if (!quic_parse_packet_frames(conn, qpkt, pn, beg, end)) {
-				fprintf(stderr, "Could not parse the packet frames\n");
-			}
 		}
+		qpkt->len = len;
+	}
+	else if (!qpkt->long_header) {
+		/* A short packet is the last one of an UDP datagram. */
+		qpkt->len = end - *buf;
+	}
+	fprintf(stderr, "%s packet length: %zu version: %08x\n", __func__, qpkt->len, qpkt->version);
+
+	/*
+	 * The packet number is here. This is also the start minus QUIC_PACKET_PN_MAXLEN
+	 * of the sample used to add/remove the header protection.
+	 */
+	pn = *buf;
+
+	if (qpkt->long_header)
+		/* XXX Check the relation between the packet type and the encryption level. */
+		tls_ctx = &conn->tls_ctx[qpkt->type];
+	else
+		tls_ctx = &conn->tls_ctx[QUIC_TLS_ENC_LEVEL_APP];
+
+	if (!quic_remove_header_protection(conn, qpkt, tls_ctx, pn, beg, end)) {
+		fprintf(stderr, "Could not remove packet header protection\n");
+		goto err;
+	}
+	fprintf(stderr, "%s packet number: %lu\n", __func__, qpkt->pn);
+
+	/* Build the AEAD IV. */
+	quic_aead_iv_build(tls_ctx, qpkt->pn, qpkt->pnl);
+	/* The payload is just after the packet number field */
+	if (!quic_decrypt_payload(pn + qpkt->pnl, qpkt->len - qpkt->pnl,
+	                          tls_ctx->aead, tls_ctx->rx.key, tls_ctx->aead_iv, &beg, &end)) {
+		fprintf(stderr, "Could not decrypt the payload\n");
+		goto err;
+	}
+
+	memcpy(&conn->pkts[conn->curr_pkt++].data, beg, end - beg);
+	conn->curr_pkt &= sizeof conn->pkts / sizeof *conn->pkts - 1;
+
+	if (!quic_parse_packet_frames(conn, qpkt, pn, beg, end)) {
+		fprintf(stderr, "Could not parse the packet frames\n");
 	}
 
 	fprintf(stderr, "\ttoken_len: %lu len: %lu pnl: %u\n",
@@ -987,7 +1018,8 @@ size_t quic_conn_to_buf(int fd, void *ctx)
 			break;
 		}
 		else {
-			hexdump(buf->area, ret, "%s: recvfrom() (%ld)\n", __func__, ret);
+			hexdump(buf->area, ret, "------------------------------------------------------------\n"
+			        "%s: recvfrom() (%ld)\n", __func__, ret);
 			done = buf->data = ret;
 			/*
 			 * Senders MUST NOT coalesce QUIC packets for different connections into a single
