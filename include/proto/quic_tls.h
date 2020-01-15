@@ -116,6 +116,26 @@ static inline int ssl_to_quic_enc_level(int level)
 	}
 }
 
+/*
+ * Return the TLS encryption level to be used for <packet_type>
+ * QUIC packet type.
+ * Returns -1 if there is no TLS encryption level for <packet_type>
+ * packet type.
+ */
+static inline int quic_packet_type_enc_level(int packet_type)
+{
+	switch (packet_type) {
+	case QUIC_PACKET_TYPE_INITIAL:
+		return QUIC_TLS_ENC_LEVEL_INITIAL;
+	case QUIC_PACKET_TYPE_0RTT:
+		return QUIC_TLS_ENC_LEVEL_EARLY_DATA;
+	case QUIC_PACKET_TYPE_HANDSHAKE:
+		return QUIC_TLS_ENC_LEVEL_HANDSHAKE;
+	default:
+		return -1;
+	}
+}
+
 static inline int quic_to_ssl_enc_level(int level)
 {
 	switch (level) {

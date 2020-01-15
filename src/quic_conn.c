@@ -700,7 +700,7 @@ ssize_t quic_packet_read_header(struct quic_packet *qpkt,
 
 	if (qpkt->long_header)
 		/* XXX Check the relation between the packet type and the encryption level. */
-		tls_ctx = &conn->tls_ctx[qpkt->type];
+		tls_ctx = &conn->tls_ctx[quic_packet_type_enc_level(qpkt->type)];
 	else
 		tls_ctx = &conn->tls_ctx[QUIC_TLS_ENC_LEVEL_APP];
 
