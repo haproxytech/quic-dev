@@ -521,10 +521,9 @@ static int quic_conn_init(struct listener *l, struct quic_conn *conn, uint32_t v
 	return 1;
 }
 
-ssize_t quic_packet_read_header(struct quic_packet *qpkt,
-                                 unsigned char **buf, const unsigned char *end,
-                                 struct listener *l,
-                                 struct sockaddr_storage *saddr, socklen_t *saddrlen)
+ssize_t quic_packet_read(unsigned char **buf, const unsigned char *end,
+                         struct quic_packet *qpkt, struct listener *l,
+                         struct sockaddr_storage *saddr, socklen_t *saddrlen)
 {
 	unsigned char *beg;
 	unsigned char dcid_len, scid_len;
@@ -726,10 +725,12 @@ ssize_t quic_packet_read_header(struct quic_packet *qpkt,
 		fprintf(stderr, "Could not parse the packet frames\n");
 	}
 
+	*buf = pn + qpkt->len;
+
 	fprintf(stderr, "\ttoken_len: %lu len: %lu pnl: %u\n",
 	        qpkt->token_len, qpkt->len, qpkt->pnl);
 
-	return *buf - beg;
+	return qpkt->len;
 
  err:
 	return -1;
@@ -745,24 +746,26 @@ ssize_t quic_packets_read(char *buf, size_t len, struct listener *l,
 	pos = (unsigned char *)buf;
 	end = pos + len;
 
-	if (quic_packet_read_header(&qpkt, &pos, end, l, saddr, saddrlen) == -1)
-		goto err;
+	do {
+		if (quic_packet_read(&pos, end, &qpkt, l, saddr, saddrlen) == -1)
+			goto err;
 
-	/* XXX Servers SHOULD be able to read longer (than QUIC_CID_MAXLEN)
-	 * connection IDs from other QUIC versions in order to properly form a
-	 * version negotiation packet.
-	 */
+		/* XXX Servers SHOULD be able to read longer (than QUIC_CID_MAXLEN)
+		 * connection IDs from other QUIC versions in order to properly form a
+		 * version negotiation packet.
+		 */
 
-    /* https://tools.ietf.org/pdf/draft-ietf-quic-transport-22.pdf#53:
-     *
-	 * Valid packets sent to clients always include a Destination Connection
-     * ID that matches a value the client selects.  Clients that choose to
-     * receive zero-length connection IDs can use the address/port tuple to
-     * identify a connection.  Packets that don’t match an existing
-     * connection are discarded.
-     */
-	fprintf(stderr, "long header? %d packet type: 0x%02x version: 0x%08x\n",
-	        !!qpkt.long_header, qpkt.type, qpkt.version);
+		/* https://tools.ietf.org/pdf/draft-ietf-quic-transport-22.pdf#53:
+		 *
+		 * Valid packets sent to clients always include a Destination Connection
+		 * ID that matches a value the client selects.  Clients that choose to
+		 * receive zero-length connection IDs can use the address/port tuple to
+		 * identify a connection.  Packets that don’t match an existing
+		 * connection are discarded.
+		 */
+		fprintf(stderr, "long header? %d packet type: 0x%02x version: 0x%08x\n",
+				!!qpkt.long_header, qpkt.type, qpkt.version);
+	} while (pos < end);
 
 	return pos - (unsigned char *)buf;
 
