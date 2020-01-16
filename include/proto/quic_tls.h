@@ -29,7 +29,8 @@ int quic_tls_derive_initial_secrets(const EVP_MD *md,
                                     const unsigned char *secret, size_t secret_sz,
                                     int server);
 
-int quic_tls_derive_packet_protection_keys(const EVP_CIPHER *aead, const EVP_MD *md,
+int quic_tls_derive_packet_protection_keys(const EVP_CIPHER *aead, const EVP_CIPHER *hp,
+                                           const EVP_MD *md,
                                            unsigned char *key, size_t keylen,
                                            unsigned char *iv, size_t ivlen,
                                            unsigned char *hp_key, size_t hp_keylen,

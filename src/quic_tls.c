@@ -151,7 +151,8 @@ int quic_hkdf_expand_label(const EVP_MD *md,
  * ->hp_key is the key to be derived for header protection.
  * Obviouly these keys have the same size becaused derived with the same TLS cryptographic context.
  */
-ssize_t quic_tls_derive_packet_protection_keys(const EVP_CIPHER *aead, const EVP_MD *md,
+ssize_t quic_tls_derive_packet_protection_keys(const EVP_CIPHER *aead, const EVP_CIPHER *hp,
+                                               const EVP_MD *md,
                                                unsigned char *key, size_t keylen,
                                                unsigned char *iv, size_t ivlen,
                                                unsigned char *hp_key, size_t hp_keylen,
@@ -159,6 +160,7 @@ ssize_t quic_tls_derive_packet_protection_keys(const EVP_CIPHER *aead, const EVP
 {
 	size_t aead_keylen = (size_t)EVP_CIPHER_key_length(aead);
 	size_t aead_ivlen = (size_t)EVP_CIPHER_iv_length(aead);
+	size_t hp_len = (size_t)EVP_CIPHER_key_length(hp);
 	const unsigned char    key_label[] = "quic key";
 	const unsigned char     iv_label[] = "quic iv";
 	const unsigned char hp_key_label[] = "quic hp";
@@ -166,14 +168,14 @@ ssize_t quic_tls_derive_packet_protection_keys(const EVP_CIPHER *aead, const EVP
 	fprintf(stderr, "============================================\n%s ", __func__);
 	fprintf(stderr, "(AEAD key len: %zu ", aead_keylen);
 	fprintf(stderr, "AEAD IV len: %zu)\n", aead_ivlen);
-	if (aead_keylen > keylen || aead_ivlen > ivlen)
+	if (aead_keylen > keylen || aead_ivlen > ivlen || hp_len > hp_keylen)
 		return 0;
 
 	if (!quic_hkdf_expand_label(md, key, aead_keylen, secret, secretlen,
 	                            key_label, sizeof key_label - 1) ||
 	    !quic_hkdf_expand_label(md, iv, aead_ivlen, secret, secretlen,
 	                            iv_label, sizeof iv_label - 1) ||
-	    !quic_hkdf_expand_label(md, hp_key, hp_keylen, secret, secretlen,
+	    !quic_hkdf_expand_label(md, hp_key, hp_len, secret, secretlen,
 	                            hp_key_label, sizeof hp_key_label - 1))
 		return 0;
 

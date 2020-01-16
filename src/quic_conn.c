@@ -470,13 +470,13 @@ static int quic_conn_derive_initial_secrets(struct quic_tls_ctx *ctx,
 		rx_ctx = &ctx->tx;
 		tx_ctx = &ctx->rx;
 	}
-	if (!quic_tls_derive_packet_protection_keys(ctx->aead, ctx->md,
+	if (!quic_tls_derive_packet_protection_keys(ctx->aead, ctx->hp, ctx->md,
 	                                            rx_ctx->key, sizeof rx_ctx->key,
 	                                            rx_ctx->iv, sizeof rx_ctx->iv,
 	                                            rx_ctx->hp_key, sizeof rx_ctx->hp_key,
 	                                            rx_init_sec, sizeof rx_init_sec))
 		return 0;
-	if (!quic_tls_derive_packet_protection_keys(ctx->aead, ctx->md,
+	if (!quic_tls_derive_packet_protection_keys(ctx->aead, ctx->hp, ctx->md,
 	                                            tx_ctx->key, sizeof tx_ctx->key,
 	                                            tx_ctx->iv, sizeof tx_ctx->iv,
 	                                            tx_ctx->hp_key, sizeof tx_ctx->hp_key,

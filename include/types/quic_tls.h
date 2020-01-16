@@ -69,7 +69,7 @@ struct quic_tls_secrets {
 	* As the header belong to the data, its protection must be removed before removing
 	* the packet protection.
 	*/
-	unsigned char hp_key[16];
+	unsigned char hp_key[32];
 };
 
 /* QUIC packet number space */
