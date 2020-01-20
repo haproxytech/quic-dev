@@ -78,6 +78,7 @@ void hexdump(const void *buf, size_t buflen, const char *title_fmt, ...) {}
 
 DECLARE_POOL(pool_head_quic_conn, "quic_conn",
              sizeof(struct quic_conn) + QUIC_CID_MAXLEN);
+DECLARE_STATIC_POOL(pool_head_quic_packet, "quic_packet", sizeof(struct quic_packet));
 
 
 uint64_t *quic_max_pn(struct quic_conn *conn, int server, int long_header, int packet_type)
@@ -689,7 +690,7 @@ ssize_t quic_packet_read(unsigned char **buf, const unsigned char *end,
 		/* A short packet is the last one of an UDP datagram. */
 		qpkt->len = end - *buf;
 	}
-	fprintf(stderr, "%s packet length: %zu version: %08x\n", __func__, qpkt->len, qpkt->version);
+	fprintf(stderr, "%s packet length: %zu\n", __func__, qpkt->len);
 
 	/*
 	 * The packet number is here. This is also the start minus QUIC_PACKET_PN_MAXLEN
@@ -727,9 +728,6 @@ ssize_t quic_packet_read(unsigned char **buf, const unsigned char *end,
 
 	*buf = pn + qpkt->len;
 
-	fprintf(stderr, "\ttoken_len: %lu len: %lu pnl: %u\n",
-	        qpkt->token_len, qpkt->len, qpkt->pnl);
-
 	return qpkt->len;
 
  err:
@@ -741,14 +739,25 @@ ssize_t quic_packets_read(char *buf, size_t len, struct listener *l,
 {
 	unsigned char *pos;
 	const unsigned char *end;
-	struct quic_packet qpkt = {0};
 
 	pos = (unsigned char *)buf;
 	end = pos + len;
 
 	do {
-		if (quic_packet_read(&pos, end, &qpkt, l, saddr, saddrlen) == -1)
+		int ret;
+		struct quic_packet *qpkt;
+
+		qpkt = pool_alloc(pool_head_quic_packet);
+		if (!qpkt) {
+			fprintf(stderr, "Not enough memory to allocate a new packet\n");
 			goto err;
+		}
+
+		ret = quic_packet_read(&pos, end, qpkt, l, saddr, saddrlen);
+		if (ret == -1) {
+			pool_free(pool_head_quic_packet, qpkt);
+			goto err;
+		}
 
 		/* XXX Servers SHOULD be able to read longer (than QUIC_CID_MAXLEN)
 		 * connection IDs from other QUIC versions in order to properly form a
@@ -763,8 +772,7 @@ ssize_t quic_packets_read(char *buf, size_t len, struct listener *l,
 		 * identify a connection.  Packets that don’t match an existing
 		 * connection are discarded.
 		 */
-		fprintf(stderr, "long header? %d packet type: 0x%02x version: 0x%08x\n",
-				!!qpkt.long_header, qpkt.type, qpkt.version);
+		fprintf(stderr, "long header? %d packet type: 0x%02x \n", !!qpkt->long_header, qpkt->type);
 	} while (pos < end);
 
 	return pos - (unsigned char *)buf;
