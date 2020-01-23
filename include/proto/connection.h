@@ -836,6 +836,8 @@ static inline void list_mux_proto(FILE *out)
 			mode = "TCP";
 		else if (item->mode == PROTO_MODE_HTTP)
 			mode = "HTTP";
+		else if (item->mode == PROTO_MODE_QUIC)
+			mode = "QUIC";
 		else
 			mode = "NONE";
 
@@ -947,6 +949,8 @@ static inline int conn_install_mux_fe(struct connection *conn, void *ctx)
 
 		if (bind_conf->frontend->mode == PR_MODE_HTTP)
 			mode = PROTO_MODE_HTTP;
+		else if (bind_conf->frontend->mode == PR_MODE_QUIC)
+			mode = PROTO_MODE_QUIC;
 		else
 			mode = PROTO_MODE_TCP;
 

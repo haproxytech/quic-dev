@@ -682,6 +682,7 @@ int cfg_parse_listen(const char *file, int linenum, char **args, int kwm)
 
 		if (!strcmp(args[1], "http")) curproxy->mode = PR_MODE_HTTP;
 		else if (!strcmp(args[1], "tcp")) curproxy->mode = PR_MODE_TCP;
+		else if (!strcmp(args[1], "quic")) curproxy->mode = PR_MODE_QUIC;
 		else if (!strcmp(args[1], "health")) curproxy->mode = PR_MODE_HEALTH;
 		else {
 			ha_alert("parsing [%s:%d] : unknown proxy mode '%s'.\n", file, linenum, args[1]);

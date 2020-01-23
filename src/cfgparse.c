@@ -2450,6 +2450,7 @@ int check_config_validity()
 			break;
 
 		case PR_MODE_TCP:
+		case PR_MODE_QUIC:
 			cfgerr += proxy_cfg_ensure_no_http(curproxy);
 			break;
 

@@ -482,6 +482,7 @@ enum proto_proxy_mode {
 	PROTO_MODE_NONE = 0,
 	PROTO_MODE_TCP  = 1 << 0, // must not be changed!
 	PROTO_MODE_HTTP = 1 << 1, // must not be changed!
+	PROTO_MODE_QUIC = 1 << 2,
 	PROTO_MODE_ANY  = PROTO_MODE_TCP | PROTO_MODE_HTTP,
 };
 
