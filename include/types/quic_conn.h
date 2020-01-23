@@ -27,7 +27,9 @@
 #include <types/quic.h>
 #include <types/quic_tls.h>
 
+#include <eb64tree.h>
 #include <ebmbtree.h>
+
 
 /* The maximum number of QUIC packets stored by the fd I/O handler by QUIC
  * connection. Must be a power of two.
@@ -134,6 +136,7 @@ struct quic_packet {
 	/* Packet length */
 	uint64_t len;
 	unsigned char data[QUIC_PACKET_MAXLEN];
+	struct eb64_node pn_node;
 };
 
 struct crypto_frame {
@@ -154,6 +157,7 @@ struct quic_conn {
 	struct quic_cid scid;
 
 	struct quic_tls_ctx tls_ctx[QUIC_TLS_ENC_LEVEL_MAX];
+	struct eb_root iqpkts[QUIC_TLS_ENC_LEVEL_MAX];
 	struct quic_pktns tx_ns[QUIC_TLS_PKTNS_MAX];
 	struct quic_pktns rx_ns[QUIC_TLS_PKTNS_MAX];
 	/* One largest packet number by client/server by number space */

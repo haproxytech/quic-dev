@@ -518,6 +518,8 @@ static int quic_conn_init(struct listener *l, struct quic_conn *conn, uint32_t v
 		quic_tls_ctx_pktns_init(&conn->tx_ns[i]);
 		quic_tls_ctx_pktns_init(&conn->rx_ns[i]);
 	}
+	for (i = 0; i < QUIC_TLS_ENC_LEVEL_MAX; i++)
+		conn->iqpkts[i] = EB_ROOT;
 
 	return 1;
 }
@@ -533,6 +535,7 @@ ssize_t quic_packet_read(unsigned char **buf, const unsigned char *end,
 	struct quic_conn *conn;
 	struct ebmb_node *node;
 	struct quic_tls_ctx *tls_ctx;
+	enum quic_tls_enc_level qpkt_enc_level;
 
 	if (end <= *buf)
 		goto err;
@@ -699,17 +702,25 @@ ssize_t quic_packet_read(unsigned char **buf, const unsigned char *end,
 	pn = *buf;
 
 	if (qpkt->long_header)
-		/* XXX Check the relation between the packet type and the encryption level. */
-		tls_ctx = &conn->tls_ctx[quic_packet_type_enc_level(qpkt->type)];
+		qpkt_enc_level = quic_packet_type_enc_level(qpkt->type);
 	else
-		tls_ctx = &conn->tls_ctx[QUIC_TLS_ENC_LEVEL_APP];
+		qpkt_enc_level = QUIC_TLS_ENC_LEVEL_APP;
+	tls_ctx = &conn->tls_ctx[qpkt_enc_level];
 
 	if (!quic_remove_header_protection(conn, qpkt, tls_ctx, pn, beg, end)) {
 		fprintf(stderr, "Could not remove packet header protection\n");
 		goto err;
 	}
-	fprintf(stderr, "%s packet number: %lu\n", __func__, qpkt->pn);
+	fprintf(stderr, "%s packet number: %lu enc. level: %d\n", __func__, qpkt->pn, qpkt_enc_level);
 
+	if ((int)(qpkt->len - qpkt->pnl) < 0 || qpkt->len - qpkt->pnl > sizeof qpkt->data)
+		goto err;
+
+	/* Store the packet */
+	qpkt->pn_node.key = qpkt->pn;
+	eb64_insert(&conn->iqpkts[qpkt_enc_level], &qpkt->pn_node);
+
+	memcpy(qpkt->data, pn + qpkt->pnl, qpkt->len - qpkt->pnl);
 	/* Build the AEAD IV. */
 	quic_aead_iv_build(tls_ctx, qpkt->pn, qpkt->pnl);
 	/* The payload is just after the packet number field */
@@ -719,11 +730,9 @@ ssize_t quic_packet_read(unsigned char **buf, const unsigned char *end,
 		goto err;
 	}
 
-	memcpy(&conn->pkts[conn->curr_pkt++].data, beg, end - beg);
-	conn->curr_pkt &= sizeof conn->pkts / sizeof *conn->pkts - 1;
-
 	if (!quic_parse_packet_frames(conn, qpkt, pn, beg, end)) {
 		fprintf(stderr, "Could not parse the packet frames\n");
+		goto err;
 	}
 
 	*buf = pn + qpkt->len;
