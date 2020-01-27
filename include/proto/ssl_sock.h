@@ -66,6 +66,7 @@ int ssl_sock_prepare_bind_conf(struct bind_conf *bind_conf);
 int ssl_sock_prepare_srv_ctx(struct server *srv);
 void ssl_sock_free_srv_ctx(struct server *srv);
 void ssl_sock_free_all_ctx(struct bind_conf *bind_conf);
+void ssl_sock_destroy_bind_conf(struct bind_conf *bind_conf);
 int ssl_sock_load_ca(struct bind_conf *bind_conf);
 void ssl_sock_free_ca(struct bind_conf *bind_conf);
 const char *ssl_sock_get_sni(struct connection *conn);
@@ -135,6 +136,16 @@ SSL *ssl_sock_get_ssl_object(struct connection *conn);
 
 #endif /* USE_OPENSSL */
 #endif /* _PROTO_SSL_SOCK_H */
+
+#ifdef OPENSSL_IS_BORINGSSL
+int ssl_sock_switchctx_cbk(const struct ssl_early_callback_ctx *ctx);
+#else
+int ssl_sock_switchctx_cbk(SSL *ssl, int *al, void *arg);
+#endif
+
+#if ((HA_OPENSSL_VERSION_NUMBER >= 0x10101000L) || defined(OPENSSL_IS_BORINGSSL))
+int ssl_sock_switchctx_err_cbk(SSL *ssl, int *al, void *priv);
+#endif
 
 /*
  * Local variables:

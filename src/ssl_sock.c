@@ -2125,7 +2125,7 @@ static void ssl_sock_switchctx_set(SSL *ssl, SSL_CTX *ctx)
 
 #if ((HA_OPENSSL_VERSION_NUMBER >= 0x10101000L) || defined(OPENSSL_IS_BORINGSSL))
 
-static int ssl_sock_switchctx_err_cbk(SSL *ssl, int *al, void *priv)
+int ssl_sock_switchctx_err_cbk(SSL *ssl, int *al, void *priv)
 {
 	struct bind_conf *s = priv;
 	(void)al; /* shut gcc stupid warning */
@@ -2136,11 +2136,11 @@ static int ssl_sock_switchctx_err_cbk(SSL *ssl, int *al, void *priv)
 }
 
 #ifdef OPENSSL_IS_BORINGSSL
-static int ssl_sock_switchctx_cbk(const struct ssl_early_callback_ctx *ctx)
+int ssl_sock_switchctx_cbk(const struct ssl_early_callback_ctx *ctx)
 {
 	SSL *ssl = ctx->ssl;
 #else
-static int ssl_sock_switchctx_cbk(SSL *ssl, int *al, void *arg)
+int ssl_sock_switchctx_cbk(SSL *ssl, int *al, void *arg)
 {
 #endif
 	struct connection *conn;
