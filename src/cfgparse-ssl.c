@@ -996,7 +996,9 @@ static int bind_parse_alpn(char **args, int cur_arg, struct proxy *px, struct bi
 /* parse the "ssl" bind keyword */
 static int bind_parse_ssl(char **args, int cur_arg, struct proxy *px, struct bind_conf *conf, char **err)
 {
-	conf->xprt = &ssl_sock;
+        /* For QUIC listeners, we do not use an SSL sock. */
+        if (!conf->is_quic)
+		conf->xprt = &ssl_sock;
 	conf->is_ssl = 1;
 
 	if (global_ssl.listen_default_ciphers && !conf->ssl_conf.ciphers)

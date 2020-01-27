@@ -90,6 +90,7 @@
 #include <proto/stream.h>
 #include <proto/task.h>
 #include <proto/vars.h>
+#include <proto/xprt_quic.h>
 
 /* ***** READ THIS before adding code here! *****
  *
@@ -4620,6 +4621,19 @@ int ssl_sock_prepare_srv_ctx(struct server *srv)
 	return cfgerr;
 }
 
+/*
+ * Create an initial CTX used to start the SSL connections.
+ * May be used by QUIC xprt which makes usage of SSL sessions initialized from SSL_CTXs.
+ * Returns 0 if succeeded, or something >0 if not.
+ */
+static int ssl_initial_ctx(struct bind_conf *bind_conf)
+{
+	if (bind_conf->is_quic)
+		return ssl_quic_initial_ctx(bind_conf);
+	else
+		return ssl_sock_initial_ctx(bind_conf);
+}
+
 /* Walks down the two trees in bind_conf and prepares all certs. The pointer may
  * be NULL, in which case nothing is done. Returns the number of errors
  * encountered.
@@ -4642,10 +4656,10 @@ int ssl_sock_prepare_all_ctx(struct bind_conf *bind_conf)
 	}
 	/* Create initial_ctx used to start the ssl connection before do switchctx */
 	if (!bind_conf->initial_ctx) {
-		err += ssl_sock_initial_ctx(bind_conf);
+		err += ssl_initial_ctx(bind_conf);
 		/* It should not be necessary to call this function, but it's
 		   necessary first to check and move all initialisation related
-		   to initial_ctx in ssl_sock_initial_ctx. */
+		   to initial_ctx in ssl_initial_ctx. */
 		errcode |= ssl_sock_prepare_ctx(bind_conf, NULL, bind_conf->initial_ctx, &errmsg);
 	}
 	if (bind_conf->default_ctx)

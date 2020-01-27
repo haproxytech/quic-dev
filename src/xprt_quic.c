@@ -36,13 +36,19 @@
 #include <proto/log.h>
 #include <proto/pipe.h>
 #include <proto/quic_conn.h>
+#include <proto/ssl_sock.h>
 #include <proto/stream_interface.h>
 #include <proto/task.h>
 
 #include <types/global.h>
 
+__attribute__((format (printf, 3, 4)))
+void hexdump(const void *buf, size_t buflen, const char *title_fmt, ...);
+
 struct quic_sock_ctx {
 	struct connection *conn;
+	SSL *ssl;
+	BIO *bio;
 	const struct xprt_ops *xprt;
 	void *xprt_ctx;
 	struct wait_event wait_event;
@@ -51,6 +57,115 @@ struct quic_sock_ctx {
 };
 
 DECLARE_STATIC_POOL(quic_sock_ctx_pool, "quic_sock_ctx_pool", sizeof(struct quic_sock_ctx));
+
+int ha_quic_set_encryption_secrets(SSL *ssl, enum ssl_encryption_level_t level,
+                                   const uint8_t *read_secret,
+                                   const uint8_t *write_secret, size_t secret_len)
+{
+	fprintf(stderr, "%s\n", __func__);
+	hexdump(read_secret, secret_len, "read_secret:\n");
+	hexdump(write_secret, secret_len, "write_secret:\n");
+	return 1;
+}
+
+int ha_quic_add_handshake_data(SSL *ssl, enum ssl_encryption_level_t level,
+                               const uint8_t *data, size_t len)
+{
+	fprintf(stderr, "%s\n", __func__);
+	hexdump(data, len, "===> %s:\n", __func__);
+	return 1;
+}
+
+int ha_quic_flush_flight(SSL *ssl)
+{
+	fprintf(stderr, "%s\n", __func__);
+	return 1;
+}
+
+int ha_quic_send_alert(SSL *ssl, enum ssl_encryption_level_t level, uint8_t alert)
+{
+	fprintf(stderr, "%s\n", __func__);
+	return 1;
+}
+
+static SSL_QUIC_METHOD ha_quic_method = {
+	ha_quic_set_encryption_secrets,
+	ha_quic_add_handshake_data,
+	ha_quic_flush_flight,
+	ha_quic_send_alert,
+};
+
+static BIO_METHOD *ha_quic_meth;
+
+
+int ssl_quic_initial_ctx(struct bind_conf *bind_conf)
+{
+	struct proxy *curproxy = bind_conf->frontend;
+	struct ssl_bind_conf __maybe_unused *ssl_conf_cur;
+	int cfgerr = 0;
+
+#if 0
+	/* XXX Did not manage to use this. */
+	const char *ciphers =
+		"TLS_AES_128_GCM_SHA256:"
+		"TLS_AES_256_GCM_SHA384:"
+		"TLS_CHACHA20_POLY1305_SHA256:"
+		"TLS_AES_128_CCM_SHA256";
+#endif
+	const char *groups = "P-256:X25519:P-384:P-521";
+	long options =
+		(SSL_OP_ALL & ~SSL_OP_DONT_INSERT_EMPTY_FRAGMENTS) |
+		SSL_OP_SINGLE_ECDH_USE |
+		SSL_OP_CIPHER_SERVER_PREFERENCE;
+	SSL_CTX *ctx;
+
+	ctx = SSL_CTX_new(TLS_server_method());
+	bind_conf->initial_ctx = ctx;
+
+	SSL_CTX_set_options(ctx, options);
+#if 0
+	if (SSL_CTX_set_cipher_list(ctx, ciphers) != 1) {
+		ha_alert("Proxy '%s': unable to set TLS 1.3 cipher list to '%s' "
+		         "for bind '%s' at [%s:%d].\n",
+		         curproxy->id, ciphers,
+		         bind_conf->arg, bind_conf->file, bind_conf->line);
+		cfgerr++;
+	}
+#endif
+
+	if (SSL_CTX_set1_curves_list(ctx, groups) != 1) {
+		ha_alert("Proxy '%s': unable to set TLS 1.3 curves list to '%s' "
+		         "for bind '%s' at [%s:%d].\n",
+		         curproxy->id, groups,
+		         bind_conf->arg, bind_conf->file, bind_conf->line);
+		cfgerr++;
+	}
+
+	SSL_CTX_set_mode(ctx, SSL_MODE_RELEASE_BUFFERS);
+	SSL_CTX_set_min_proto_version(ctx, TLS1_3_VERSION);
+	SSL_CTX_set_max_proto_version(ctx, TLS1_3_VERSION);
+	SSL_CTX_set_default_verify_paths(ctx);
+
+#ifdef SSL_CTRL_SET_TLSEXT_HOSTNAME
+#ifdef OPENSSL_IS_BORINGSSL
+	SSL_CTX_set_select_certificate_cb(ctx, ssl_sock_switchctx_cbk);
+	SSL_CTX_set_tlsext_servername_callback(ctx, ssl_sock_switchctx_err_cbk);
+#elif (HA_OPENSSL_VERSION_NUMBER >= 0x10101000L)
+	if (bind_conf->ssl_conf.early_data) {
+		SSL_CTX_set_options(ctx, SSL_OP_NO_ANTI_REPLAY);
+		SSL_CTX_set_max_early_data(ctx, global.tune.bufsize - global.tune.maxrewrite);
+	}
+	SSL_CTX_set_client_hello_cb(ctx, ssl_sock_switchctx_cbk, NULL);
+	SSL_CTX_set_tlsext_servername_callback(ctx, ssl_sock_switchctx_err_cbk);
+#else
+	SSL_CTX_set_tlsext_servername_callback(ctx, ssl_sock_switchctx_cbk);
+#endif
+	SSL_CTX_set_tlsext_servername_arg(ctx, bind_conf);
+#endif
+	SSL_CTX_set_quic_method(ctx, &ha_quic_method);
+
+	return cfgerr;
+}
 
 /* Receive up to <count> bytes from connection <conn>'s socket and store them
  * into buffer <buf>. Only one call to recv() is performed, unless the
@@ -298,9 +413,28 @@ static int quic_sock_init(struct connection *conn, void **xprt_ctx)
 	ctx->send_wait = NULL;
 	ctx->recv_wait = NULL;
 
+
+	if (objt_server(conn->target)) {
+		/* Client */
+		/* XXX TO DO XXX */
+	}
+	else if (objt_listener(conn->target)) {
+		/* Listener */
+		struct bind_conf *bc = __objt_listener(conn->target)->bind_conf;
+
+		if (ssl_bio_and_sess_init(conn, bc->initial_ctx,
+		                          &ctx->ssl, &ctx->bio, ha_quic_meth, ctx) == -1)
+			goto err;
+	}
+
 	*xprt_ctx = ctx;
+	/* Start the handshake */
+	tasklet_wakeup(ctx->wait_event.tasklet);
 
 	return 0;
+
+ err:
+	return -1;
 }
 
 /* transport-layer operations for QUIC sockets */
@@ -314,6 +448,10 @@ static struct xprt_ops quic_sock = {
 	.shutw    = NULL,
 	.close    = NULL,
 	.init     = quic_sock_init,
+	.prepare_bind_conf = ssl_sock_prepare_bind_conf,
+	.destroy_bind_conf = ssl_sock_destroy_bind_conf,
+	.prepare_srv = ssl_sock_prepare_srv_ctx,
+	.destroy_srv = ssl_sock_free_srv_ctx,
 	.name     = "QUIC",
 };
 
@@ -321,7 +459,14 @@ static struct xprt_ops quic_sock = {
 __attribute__((constructor))
 static void __quic_sock_init(void)
 {
+	ha_quic_meth = BIO_meth_new(0x666, "ha QUIC methods");
 	xprt_register(XPRT_QUIC, &quic_sock);
+}
+
+__attribute__((destructor))
+static void __quic_sock_deinit(void)
+{
+	BIO_meth_free(ha_quic_meth);
 }
 
 /*
