@@ -208,116 +208,6 @@ static void quic_aead_iv_build(struct quic_tls_ctx *tls_ctx, uint64_t pn, uint32
 	hexdump(tls_ctx->aead_iv, iv_size, "%s: BUILD IV:\n", __func__);
 }
 
-/*
- * https://quicwg.org/base-drafts/draft-ietf-quic-tls.html#aead
- *
- * 5.3. AEAD Usage
- *
- * Packets are protected prior to applying header protection (Section 5.4).
- * The unprotected packet header is part of the associated data (A). When removing
- * packet protection, an endpoint first removes the header protection.
- * (...)
- * These ciphersuites have a 16-byte authentication tag and produce an output 16
- * bytes larger than their input.
- * The key and IV for the packet are computed as described in Section 5.1. The nonce,
- * N, is formed by combining the packet protection IV with the packet number. The 62
- * bits of the reconstructed QUIC packet number in network byte order are left-padded
- * with zeros to the size of the IV. The exclusive OR of the padded packet number and
- * the IV forms the AEAD nonce.
- *
- * The associated data, A, for the AEAD is the contents of the QUIC header, starting
- * from the flags byte in either the short or long header, up to and including the
- * unprotected packet number.
- *
- * The input plaintext, P, for the AEAD is the payload of the QUIC packet, as described
- * in [QUIC-TRANSPORT].
- *
- * The output ciphertext, C, of the AEAD is transmitted in place of P.
- *
- * Some AEAD functions have limits for how many packets can be encrypted under the same
- * key and IV (see for example [AEBounds]). This might be lower than the packet number limit.
- * An endpoint MUST initiate a key update (Section 6) prior to exceeding any limit set for
- * the AEAD that is in use.
- */
-static int quic_decrypt_payload(unsigned char *payload, size_t payload_len,
-                                const EVP_CIPHER *aead, const unsigned char *key, const unsigned char *iv,
-                                unsigned char **buf, const unsigned char **end)
-{
-	int ret, outlen, aad_len;
-	size_t off;
-	EVP_CIPHER_CTX *ctx;
-
-	ret = 0;
-	off = 0;
-	aad_len = payload - *buf;
-	ctx = EVP_CIPHER_CTX_new();
-	if (!ctx)
-		return 0;
-
-	if (!EVP_DecryptInit_ex(ctx, aead, NULL, key, iv) ||
-		!EVP_DecryptUpdate(ctx, NULL, &outlen, *buf, aad_len) ||
-		!EVP_DecryptUpdate(ctx, payload, &outlen, payload, payload_len - QUIC_TLS_TAG_LEN))
-		goto out;
-
-	off += outlen;
-
-	if (!EVP_CIPHER_CTX_ctrl(ctx, EVP_CTRL_AEAD_SET_TAG, QUIC_TLS_TAG_LEN,
-	                         payload + payload_len - QUIC_TLS_TAG_LEN) ||
-	    !EVP_DecryptFinal_ex(ctx, payload + off, &outlen))
-		goto out;
-
-	off += outlen;
-	*buf = payload;
-	*end = *buf + off;
-
-	hexdump(payload, off, "Decrypted payload(%zu):\n", off);
-	ret = 1;
- out:
-	EVP_CIPHER_CTX_free(ctx);
-
-	return ret;
-}
-
-static int quic_encrypt_payload(const unsigned char *aad, size_t aad_len,
-								unsigned char *payload, size_t payload_len,
-                                const EVP_CIPHER *aead, const unsigned char *key, const unsigned char *iv)
-{
-	EVP_CIPHER_CTX *ctx;
-	int ret, outlen;
-#ifdef QUIC_DEBUG
-	unsigned char dec_buf[2048], *dec_bufp = dec_buf;
-	const unsigned char *end_dec_buf = dec_bufp + sizeof dec_buf;
-#endif
-
-	ret = 0;
-	ctx = EVP_CIPHER_CTX_new();
-	if (!ctx)
-		return 0;
-
-	if (!EVP_EncryptInit_ex(ctx, aead, NULL, key, iv) ||
-		!EVP_EncryptUpdate(ctx, NULL, &outlen, aad, aad_len) ||
-		!EVP_EncryptUpdate(ctx, payload, &outlen, payload, payload_len) ||
-		!EVP_EncryptFinal_ex(ctx, payload + outlen, &outlen) ||
-		!EVP_CIPHER_CTX_ctrl(ctx, EVP_CTRL_AEAD_GET_TAG, QUIC_TLS_TAG_LEN, payload + payload_len))
-		goto out;
-
-#ifdef QUIC_DEBUG
-	hexdump(payload, payload_len + QUIC_TLS_TAG_LEN, "%s FINAL ENCRYPTED PAYLOAD\n", __func__);
-	hexdump(aad, aad_len + payload_len + QUIC_TLS_TAG_LEN, "%s FINAL ENCRYPTED PACKET\n", __func__);
-	/* Make a copy of this encrypted packet. */
-	memcpy(dec_buf, aad, aad_len + payload_len + QUIC_TLS_TAG_LEN);
-	if (!quic_decrypt_payload(dec_buf + aad_len, payload_len + QUIC_TLS_TAG_LEN,
-	                          aead, key, iv, &dec_bufp, &end_dec_buf))
-		goto out;
-#endif
-	ret = 1;
-
- out:
-	EVP_CIPHER_CTX_free(ctx);
-
-	return ret;
-}
-
 static int quic_parse_packet_frames(struct quic_conn *conn, struct quic_packet *pkt,
                                     unsigned char *pn, unsigned char *buf, const unsigned char *end)
 {
@@ -724,13 +614,13 @@ ssize_t quic_packet_read(unsigned char **buf, const unsigned char *end,
 	/* Build the AEAD IV. */
 	quic_aead_iv_build(tls_ctx, qpkt->pn, qpkt->pnl);
 	/* The payload is just after the packet number field */
-	if (!quic_decrypt_payload(pn + qpkt->pnl, qpkt->len - qpkt->pnl,
-	                          tls_ctx->aead, tls_ctx->rx.key, tls_ctx->aead_iv, &beg, &end)) {
+	if (!quic_tls_decrypt(pn + qpkt->pnl, qpkt->len - qpkt->pnl,
+	                      tls_ctx->aead, tls_ctx->rx.key, tls_ctx->aead_iv, beg, &end)) {
 		fprintf(stderr, "Could not decrypt the payload\n");
 		goto err;
 	}
 
-	if (!quic_parse_packet_frames(conn, qpkt, pn, beg, end)) {
+	if (!quic_parse_packet_frames(conn, qpkt, pn, pn + qpkt->pnl, end)) {
 		fprintf(stderr, "Could not parse the packet frames\n");
 		goto err;
 	}
@@ -982,8 +872,8 @@ ssize_t quic_build_handshake_packet(unsigned char **buf, const unsigned char *en
 	aad_len = payload - beg;
 
 	tls_ctx = &conn->tls_ctx[level];
-	if (!quic_encrypt_payload(beg, aad_len, payload, payload_len,
-	                          tls_ctx->aead, tls_ctx->tx.key, tls_ctx->tx.iv))
+	if (!quic_tls_encrypt(beg, aad_len, payload, payload_len,
+	                     tls_ctx->aead, tls_ctx->tx.key, tls_ctx->tx.iv))
 	    return -1;
 
 	*buf += QUIC_TLS_TAG_LEN;

@@ -29,6 +29,16 @@ int quic_tls_derive_initial_secrets(const EVP_MD *md,
                                     const unsigned char *secret, size_t secret_sz,
                                     int server);
 
+int quic_tls_encrypt(const unsigned char *aad, size_t aad_len,
+                     unsigned char *payload, size_t payload_len,
+                     const EVP_CIPHER *aead,
+                     const unsigned char *key, const unsigned char *iv);
+
+int quic_tls_decrypt(unsigned char *payload, size_t payload_len,
+                     const EVP_CIPHER *aead,
+                     const unsigned char *key, const unsigned char *iv,
+                     unsigned char *buf, const unsigned char **end);
+
 int quic_tls_derive_packet_protection_keys(const EVP_CIPHER *aead, const EVP_CIPHER *hp,
                                            const EVP_MD *md,
                                            unsigned char *key, size_t keylen,

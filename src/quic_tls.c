@@ -236,3 +236,100 @@ ssize_t quic_tls_derive_initial_secrets(const EVP_MD *md,
 
 	return 1;
 }
+
+/*
+ * https://quicwg.org/base-drafts/draft-ietf-quic-tls.html#aead
+ *
+ * 5.3. AEAD Usage
+ *
+ * Packets are protected prior to applying header protection (Section 5.4).
+ * The unprotected packet header is part of the associated data (A). When removing
+ * packet protection, an endpoint first removes the header protection.
+ * (...)
+ * These ciphersuites have a 16-byte authentication tag and produce an output 16
+ * bytes larger than their input.
+ * The key and IV for the packet are computed as described in Section 5.1. The nonce,
+ * N, is formed by combining the packet protection IV with the packet number. The 62
+ * bits of the reconstructed QUIC packet number in network byte order are left-padded
+ * with zeros to the size of the IV. The exclusive OR of the padded packet number and
+ * the IV forms the AEAD nonce.
+ *
+ * The associated data, A, for the AEAD is the contents of the QUIC header, starting
+ * from the flags byte in either the short or long header, up to and including the
+ * unprotected packet number.
+ *
+ * The input plaintext, P, for the AEAD is the payload of the QUIC packet, as described
+ * in [QUIC-TRANSPORT].
+ *
+ * The output ciphertext, C, of the AEAD is transmitted in place of P.
+ *
+ * Some AEAD functions have limits for how many packets can be encrypted under the same
+ * key and IV (see for example [AEBounds]). This might be lower than the packet number limit.
+ * An endpoint MUST initiate a key update (Section 6) prior to exceeding any limit set for
+ * the AEAD that is in use.
+ */
+
+int quic_tls_encrypt(const unsigned char *aad, size_t aad_len,
+                    unsigned char *payload, size_t payload_len,
+                    const EVP_CIPHER *aead, const unsigned char *key, const unsigned char *iv)
+{
+	EVP_CIPHER_CTX *ctx;
+	int ret, outlen;
+
+	ret = 0;
+	ctx = EVP_CIPHER_CTX_new();
+	if (!ctx)
+		return 0;
+
+	if (!EVP_EncryptInit_ex(ctx, aead, NULL, key, iv) ||
+		!EVP_EncryptUpdate(ctx, NULL, &outlen, aad, aad_len) ||
+		!EVP_EncryptUpdate(ctx, payload, &outlen, payload, payload_len) ||
+		!EVP_EncryptFinal_ex(ctx, payload + outlen, &outlen) ||
+		!EVP_CIPHER_CTX_ctrl(ctx, EVP_CTRL_AEAD_GET_TAG, QUIC_TLS_TAG_LEN, payload + payload_len))
+		goto out;
+
+	ret = 1;
+
+ out:
+	EVP_CIPHER_CTX_free(ctx);
+
+	return ret;
+}
+
+int quic_tls_decrypt(unsigned char *payload, size_t payload_len,
+                    const EVP_CIPHER *aead, const unsigned char *key, const unsigned char *iv,
+                    unsigned char *buf, const unsigned char **end)
+{
+	int ret, outlen, aad_len;
+	size_t off;
+	EVP_CIPHER_CTX *ctx;
+
+	ret = 0;
+	off = 0;
+	aad_len = payload - buf;
+	ctx = EVP_CIPHER_CTX_new();
+	if (!ctx)
+		return 0;
+
+	if (!EVP_DecryptInit_ex(ctx, aead, NULL, key, iv) ||
+		!EVP_DecryptUpdate(ctx, NULL, &outlen, buf, aad_len) ||
+		!EVP_DecryptUpdate(ctx, payload, &outlen, payload, payload_len - QUIC_TLS_TAG_LEN))
+		goto out;
+
+	off += outlen;
+
+	if (!EVP_CIPHER_CTX_ctrl(ctx, EVP_CTRL_AEAD_SET_TAG, QUIC_TLS_TAG_LEN,
+	                         payload + payload_len - QUIC_TLS_TAG_LEN) ||
+	    !EVP_DecryptFinal_ex(ctx, payload + off, &outlen))
+		goto out;
+
+	off += outlen;
+	*end = buf + off;
+
+	hexdump(payload, off, "Decrypted payload(%zu):\n", off);
+	ret = 1;
+
+ out:
+	EVP_CIPHER_CTX_free(ctx);
+	return ret;
+}
