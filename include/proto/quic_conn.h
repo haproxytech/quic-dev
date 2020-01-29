@@ -34,6 +34,8 @@ ssize_t quic_build_handshake_packet(unsigned char **buf, const unsigned char *en
                                     const unsigned char *data, size_t datalen,
                                     enum quic_tls_enc_level level, struct quic_conn *conn);
 
+int quic_parse_packet_frames(struct quic_conn *conn, struct quic_packet *pkt,
+                             unsigned char *pn, unsigned char *buf, const unsigned char *end);
 /*
  * Returns the required length in bytes to encode <cid> QUIC connection ID.
  */

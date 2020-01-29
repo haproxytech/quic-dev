@@ -269,9 +269,9 @@ ssize_t quic_tls_derive_initial_secrets(const EVP_MD *md,
  * the AEAD that is in use.
  */
 
-int quic_tls_encrypt(const unsigned char *aad, size_t aad_len,
-                    unsigned char *payload, size_t payload_len,
-                    const EVP_CIPHER *aead, const unsigned char *key, const unsigned char *iv)
+int quic_tls_encrypt(unsigned char *buf, size_t len,
+                     const unsigned char *aad, size_t aad_len,
+                     const EVP_CIPHER *aead, const unsigned char *key, const unsigned char *iv)
 {
 	EVP_CIPHER_CTX *ctx;
 	int ret, outlen;
@@ -283,9 +283,9 @@ int quic_tls_encrypt(const unsigned char *aad, size_t aad_len,
 
 	if (!EVP_EncryptInit_ex(ctx, aead, NULL, key, iv) ||
 		!EVP_EncryptUpdate(ctx, NULL, &outlen, aad, aad_len) ||
-		!EVP_EncryptUpdate(ctx, payload, &outlen, payload, payload_len) ||
-		!EVP_EncryptFinal_ex(ctx, payload + outlen, &outlen) ||
-		!EVP_CIPHER_CTX_ctrl(ctx, EVP_CTRL_AEAD_GET_TAG, QUIC_TLS_TAG_LEN, payload + payload_len))
+		!EVP_EncryptUpdate(ctx, buf, &outlen, buf, len) ||
+		!EVP_EncryptFinal_ex(ctx, buf + outlen, &outlen) ||
+		!EVP_CIPHER_CTX_ctrl(ctx, EVP_CTRL_AEAD_GET_TAG, QUIC_TLS_TAG_LEN, buf + len))
 		goto out;
 
 	ret = 1;
@@ -296,38 +296,36 @@ int quic_tls_encrypt(const unsigned char *aad, size_t aad_len,
 	return ret;
 }
 
-int quic_tls_decrypt(unsigned char *payload, size_t payload_len,
-                    const EVP_CIPHER *aead, const unsigned char *key, const unsigned char *iv,
-                    unsigned char *buf, const unsigned char **end)
+int quic_tls_decrypt(unsigned char *buf, size_t len,
+                     unsigned char *aad, size_t aad_len,
+                     const EVP_CIPHER *aead, const unsigned char *key, const unsigned char *iv)
 {
-	int ret, outlen, aad_len;
+	int ret, outlen;
 	size_t off;
 	EVP_CIPHER_CTX *ctx;
 
 	ret = 0;
 	off = 0;
-	aad_len = payload - buf;
 	ctx = EVP_CIPHER_CTX_new();
 	if (!ctx)
 		return 0;
 
 	if (!EVP_DecryptInit_ex(ctx, aead, NULL, key, iv) ||
-		!EVP_DecryptUpdate(ctx, NULL, &outlen, buf, aad_len) ||
-		!EVP_DecryptUpdate(ctx, payload, &outlen, payload, payload_len - QUIC_TLS_TAG_LEN))
+		!EVP_DecryptUpdate(ctx, NULL, &outlen, aad, aad_len) ||
+		!EVP_DecryptUpdate(ctx, buf, &outlen, buf, len - QUIC_TLS_TAG_LEN))
 		goto out;
 
 	off += outlen;
 
 	if (!EVP_CIPHER_CTX_ctrl(ctx, EVP_CTRL_AEAD_SET_TAG, QUIC_TLS_TAG_LEN,
-	                         payload + payload_len - QUIC_TLS_TAG_LEN) ||
-	    !EVP_DecryptFinal_ex(ctx, payload + off, &outlen))
+	                         buf + len - QUIC_TLS_TAG_LEN) ||
+	    !EVP_DecryptFinal_ex(ctx, buf + off, &outlen))
 		goto out;
 
 	off += outlen;
-	*end = buf + off;
 
-	hexdump(payload, off, "Decrypted payload(%zu):\n", off);
-	ret = 1;
+	hexdump(buf, off, "Decrypted buf(%zu):\n", off);
+	ret = off;
 
  out:
 	EVP_CIPHER_CTX_free(ctx);

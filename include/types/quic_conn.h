@@ -135,6 +135,7 @@ struct quic_packet {
 	uint64_t token_len;
 	/* Packet length */
 	uint64_t len;
+	size_t aad_len;
 	unsigned char data[QUIC_PACKET_MAXLEN];
 	struct eb64_node pn_node;
 };

@@ -208,8 +208,8 @@ static void quic_aead_iv_build(struct quic_tls_ctx *tls_ctx, uint64_t pn, uint32
 	hexdump(tls_ctx->aead_iv, iv_size, "%s: BUILD IV:\n", __func__);
 }
 
-static int quic_parse_packet_frames(struct quic_conn *conn, struct quic_packet *pkt,
-                                    unsigned char *pn, unsigned char *buf, const unsigned char *end)
+int quic_parse_packet_frames(struct quic_conn *conn, struct quic_packet *pkt,
+                             unsigned char *pn, unsigned char *buf, const unsigned char *end)
 {
 	struct quic_frame frm;
 	const unsigned char *pos;
@@ -603,29 +603,24 @@ ssize_t quic_packet_read(unsigned char **buf, const unsigned char *end,
 	}
 	fprintf(stderr, "%s packet number: %lu enc. level: %d\n", __func__, qpkt->pn, qpkt_enc_level);
 
-	if ((int)(qpkt->len - qpkt->pnl) < 0 || qpkt->len - qpkt->pnl > sizeof qpkt->data)
+	if (pn - beg + qpkt->len > sizeof qpkt->data) {
+		fprintf(stderr, "Too big packet %zu\n", pn - beg + qpkt->len);
 		goto err;
+	}
 
 	/* Store the packet */
 	qpkt->pn_node.key = qpkt->pn;
 	eb64_insert(&conn->iqpkts[qpkt_enc_level], &qpkt->pn_node);
 
-	memcpy(qpkt->data, pn + qpkt->pnl, qpkt->len - qpkt->pnl);
+	/* The length of the packet includes the packet number field. */
+	qpkt->len += pn - beg;
+	memcpy(qpkt->data, beg, qpkt->len);
 	/* Build the AEAD IV. */
 	quic_aead_iv_build(tls_ctx, qpkt->pn, qpkt->pnl);
-	/* The payload is just after the packet number field */
-	if (!quic_tls_decrypt(pn + qpkt->pnl, qpkt->len - qpkt->pnl,
-	                      tls_ctx->aead, tls_ctx->rx.key, tls_ctx->aead_iv, beg, &end)) {
-		fprintf(stderr, "Could not decrypt the payload\n");
-		goto err;
-	}
-
-	if (!quic_parse_packet_frames(conn, qpkt, pn, pn + qpkt->pnl, end)) {
-		fprintf(stderr, "Could not parse the packet frames\n");
-		goto err;
-	}
-
-	*buf = pn + qpkt->len;
+	/* The AAD includes the packet number field found at <pn>. */
+	qpkt->aad_len = pn - beg + qpkt->pnl;
+	/* Updtate the offset of <*buf> for the next QUIC packet. */
+	*buf = beg + qpkt->len;
 
 	return qpkt->len;
 
@@ -872,7 +867,7 @@ ssize_t quic_build_handshake_packet(unsigned char **buf, const unsigned char *en
 	aad_len = payload - beg;
 
 	tls_ctx = &conn->tls_ctx[level];
-	if (!quic_tls_encrypt(beg, aad_len, payload, payload_len,
+	if (!quic_tls_encrypt(payload, payload_len, beg, aad_len,
 	                     tls_ctx->aead, tls_ctx->tx.key, tls_ctx->tx.iv))
 	    return -1;
 
