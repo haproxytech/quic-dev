@@ -44,7 +44,7 @@
 
 #include <types/global.h>
 
-struct quic_sock_ctx {
+struct quic_conn_ctx {
 	struct connection *conn;
 	SSL *ssl;
 	BIO *bio;
@@ -107,7 +107,7 @@ DECLARE_POOL(pool_head_quic_conn, "quic_conn",
              sizeof(struct quic_conn) + QUIC_CID_MAXLEN);
 DECLARE_STATIC_POOL(pool_head_quic_packet, "quic_packet", sizeof(struct quic_packet));
 
-DECLARE_STATIC_POOL(quic_sock_ctx_pool, "quic_sock_ctx_pool", sizeof(struct quic_sock_ctx));
+DECLARE_STATIC_POOL(quic_conn_ctx_pool, "quic_conn_ctx_pool", sizeof(struct quic_conn_ctx));
 
 static BIO_METHOD *ha_quic_meth;
 
@@ -227,7 +227,7 @@ int ssl_quic_initial_ctx(struct bind_conf *bind_conf)
  * errno is cleared before starting so that the caller knows that if it spots an
  * error without errno, it's pending and can be retrieved via getsockopt(SO_ERROR).
  */
-static size_t quic_sock_to_buf(struct connection *conn, void *xprt_ctx, struct buffer *buf, size_t count, int flags)
+static size_t quic_conn_to_buf(struct connection *conn, void *xprt_ctx, struct buffer *buf, size_t count, int flags)
 {
 	ssize_t ret;
 	size_t try, done = 0;
@@ -338,7 +338,7 @@ static size_t quic_sock_to_buf(struct connection *conn, void *xprt_ctx, struct b
  * is responsible for this. It's up to the caller to update the buffer's contents
  * based on the return value.
  */
-static size_t quic_sock_from_buf(struct connection *conn, void *xprt_ctx, const struct buffer *buf, size_t count, int flags)
+static size_t quic_conn_from_buf(struct connection *conn, void *xprt_ctx, const struct buffer *buf, size_t count, int flags)
 {
 	ssize_t ret;
 	size_t try, done;
@@ -400,23 +400,23 @@ static size_t quic_sock_from_buf(struct connection *conn, void *xprt_ctx, const 
 	return done;
 }
 
-static int quic_sock_subscribe(struct connection *conn, void *xprt_ctx, int event_type, struct wait_event *es)
+static int quic_conn_subscribe(struct connection *conn, void *xprt_ctx, int event_type, struct wait_event *es)
 {
 	return conn_subscribe(conn, xprt_ctx, event_type, es);
 }
 
-static int quic_sock_unsubscribe(struct connection *conn, void *xprt_ctx, int event_type, struct wait_event *es)
+static int quic_conn_unsubscribe(struct connection *conn, void *xprt_ctx, int event_type, struct wait_event *es)
 {
 	return conn_unsubscribe(conn, xprt_ctx, event_type, es);
 }
 
-static struct task *quic_sock_io_cb(struct task *t, void *context, unsigned short state)
+static struct task *quic_conn_io_cb(struct task *t, void *context, unsigned short state)
 {
 	return NULL;
 }
 
 /* We can't have an underlying XPRT, so just return -1 to signify failure */
-static int quic_sock_remove_xprt(struct connection *conn, void *xprt_ctx, void *toremove_ctx, const struct xprt_ops *newops, void *newctx)
+static int quic_conn_remove_xprt(struct connection *conn, void *xprt_ctx, void *toremove_ctx, const struct xprt_ops *newops, void *newctx)
 {
 	/* This is the lowest xprt we can have, so if we get there we didn't
 	 * find the xprt we wanted to remove, that's a bug
@@ -425,9 +425,9 @@ static int quic_sock_remove_xprt(struct connection *conn, void *xprt_ctx, void *
 	return -1;
 }
 
-static int quic_sock_init(struct connection *conn, void **xprt_ctx)
+static int quic_conn_init(struct connection *conn, void **xprt_ctx)
 {
-	struct quic_sock_ctx *ctx;
+	struct quic_conn_ctx *ctx;
 
 	if (*xprt_ctx)
 		return 0;
@@ -435,7 +435,7 @@ static int quic_sock_init(struct connection *conn, void **xprt_ctx)
 	if (!conn_ctrl_ready(conn))
 		return 0;
 
-	ctx = pool_alloc(quic_sock_ctx_pool);
+	ctx = pool_alloc(quic_conn_ctx_pool);
 	if (!ctx) {
 		conn->err_code = CO_ER_SYS_MEMLIM;
 		return -1;
@@ -444,11 +444,11 @@ static int quic_sock_init(struct connection *conn, void **xprt_ctx)
 	ctx->wait_event.tasklet = tasklet_new();
 	if (!ctx->wait_event.tasklet) {
 		conn->err_code = CO_ER_SYS_MEMLIM;
-		pool_free(quic_sock_ctx_pool, ctx);
+		pool_free(quic_conn_ctx_pool, ctx);
 		return -1;
 	}
 
-	ctx->wait_event.tasklet->process = quic_sock_io_cb;
+	ctx->wait_event.tasklet->process = quic_conn_io_cb;
 	ctx->wait_event.tasklet->context = ctx;
 	ctx->wait_event.events = 0;
 	ctx->conn = conn;
@@ -480,16 +480,16 @@ static int quic_sock_init(struct connection *conn, void **xprt_ctx)
 }
 
 /* transport-layer operations for QUIC sockets */
-static struct xprt_ops quic_sock = {
-	.snd_buf  = quic_sock_from_buf,
-	.rcv_buf  = quic_sock_to_buf,
-	.subscribe = quic_sock_subscribe,
-	.unsubscribe = quic_sock_unsubscribe,
-	.remove_xprt = quic_sock_remove_xprt,
+static struct xprt_ops quic_conn = {
+	.snd_buf  = quic_conn_from_buf,
+	.rcv_buf  = quic_conn_to_buf,
+	.subscribe = quic_conn_subscribe,
+	.unsubscribe = quic_conn_unsubscribe,
+	.remove_xprt = quic_conn_remove_xprt,
 	.shutr    = NULL,
 	.shutw    = NULL,
 	.close    = NULL,
-	.init     = quic_sock_init,
+	.init     = quic_conn_init,
 	.prepare_bind_conf = ssl_sock_prepare_bind_conf,
 	.destroy_bind_conf = ssl_sock_destroy_bind_conf,
 	.prepare_srv = ssl_sock_prepare_srv_ctx,
@@ -499,14 +499,14 @@ static struct xprt_ops quic_sock = {
 
 
 __attribute__((constructor))
-static void __quic_sock_init(void)
+static void __quic_conn_init(void)
 {
 	ha_quic_meth = BIO_meth_new(0x666, "ha QUIC methods");
-	xprt_register(XPRT_QUIC, &quic_sock);
+	xprt_register(XPRT_QUIC, &quic_conn);
 }
 
 __attribute__((destructor))
-static void __quic_sock_deinit(void)
+static void __quic_conn_deinit(void)
 {
 	BIO_meth_free(ha_quic_meth);
 }
@@ -806,8 +806,8 @@ static int quic_conn_derive_initial_secrets(struct quic_tls_ctx *ctx,
 	return 1;
 }
 
-static int quic_conn_init(struct listener *l, struct quic_conn *conn, uint32_t version,
-                          unsigned char *dcid, size_t dcid_len, unsigned char *scid, size_t scid_len)
+static int quic_new_conn_init(struct listener *l, struct quic_conn *conn, uint32_t version,
+                              unsigned char *dcid, size_t dcid_len, unsigned char *scid, size_t scid_len)
 {
 	int i;
 
@@ -947,8 +947,8 @@ static ssize_t quic_packet_read(unsigned char **buf, const unsigned char *end,
 			if (!conn || ret == -1)
 				goto err;
 
-			if (!quic_conn_init(l, conn, qpkt->version,
-			                    qpkt->dcid.data, cid_lookup_len, qpkt->scid.data, qpkt->scid.len))
+			if (!quic_new_conn_init(l, conn, qpkt->version,
+			                        qpkt->dcid.data, cid_lookup_len, qpkt->scid.data, qpkt->scid.len))
 				goto err;
 		}
 		else {
@@ -1309,7 +1309,7 @@ static ssize_t quic_build_handshake_packet(unsigned char **buf, const unsigned c
 	return *buf - beg;
 }
 
-static size_t quic_conn_to_buf(int fd, void *ctx)
+static size_t quic_conn_handler(int fd, void *ctx)
 {
 	ssize_t ret;
 	size_t done = 0;
@@ -1357,7 +1357,7 @@ void quic_fd_handler(int fd)
 	struct listener *l = fdtab[fd].owner;
 
 	if (fdtab[fd].ev & FD_POLL_IN)
-		quic_conn_to_buf(fd, l);
+		quic_conn_handler(fd, l);
 }
 
 /*
