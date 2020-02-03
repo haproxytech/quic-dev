@@ -24,7 +24,7 @@
 
 #include <types/quic_frame.h>
 
-#include <proto/quic_conn.h>
+#include <proto/xprt_quic.h>
 
 static inline const char *quic_frame_type_string(enum quic_frame_type ft)
 {

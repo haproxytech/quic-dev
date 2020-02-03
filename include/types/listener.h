@@ -34,7 +34,7 @@
 #include <common/hathreads.h>
 
 #include <types/obj_type.h>
-#include <types/quic_conn.h>
+#include <types/xprt_quic.h>
 #include <eb32tree.h>
 
 /* Some pointer types reference below */

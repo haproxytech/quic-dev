@@ -1,8 +1,8 @@
 /*
- * include/proto/quic_conn.h
- * This file contains definitions for QUIC connections.
+ * include/proto/xprt_proto.h
+ * This file contains applet function prototypes
  *
- * Copyright 2019 HAProxy Technologies, Frédéric Lécaille <flecaille@haproxy.com>
+ * Copyright (C) 2000-2015 Willy Tarreau - w@1wt.eu
  *
  * This library is free software; you can redistribute it and/or
  * modify it under the terms of the GNU Lesser General Public
@@ -19,23 +19,19 @@
  * Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301  USA
  */
 
-#ifndef _PROTO_QUIC_CONN_H
-#define _PROTO_QUIC_CONN_H
+#ifndef _PROTO_XPRT_QUIC_H
+#define _PROTO_XPRT_QUIC_H
 
 #include <stdint.h>
 
 #include <common/net_helper.h>
 
-#include <types/quic_conn.h>
+#include <types/listener.h>
+#include <types/xprt_quic.h>
 
-size_t quic_conn_to_buf(int fd, void *ctx);
 
-ssize_t quic_build_handshake_packet(unsigned char **buf, const unsigned char *end,
-                                    const unsigned char *data, size_t datalen,
-                                    enum quic_tls_enc_level level, struct quic_conn *conn);
+int ssl_quic_initial_ctx(struct bind_conf *bind_conf);
 
-int quic_parse_packet_frames(struct quic_conn *conn, struct quic_packet *pkt,
-                             unsigned char *pn, unsigned char *buf, const unsigned char *end);
 /*
  * Returns the required length in bytes to encode <cid> QUIC connection ID.
  */
@@ -614,4 +610,5 @@ static inline int quic_transport_params_decode(struct quic_transport_params *p, 
 
 	return 1;
 }
-#endif /* _PROTO_QUIC_CONN_H */
+
+#endif /* _PROTO_XPRT_QUIC_H */

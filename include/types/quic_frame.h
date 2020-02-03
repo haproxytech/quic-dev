@@ -25,7 +25,7 @@
 #include <stdint.h>
 #include <stdlib.h>
 
-#include <types/quic_conn.h>
+#include <types/xprt_quic.h>
 
 /* QUIC frame types. */
 enum quic_frame_type {

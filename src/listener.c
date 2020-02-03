@@ -37,7 +37,7 @@
 #include <proto/listener.h>
 #include <proto/protocol.h>
 #include <proto/proto_sockpair.h>
-#include <proto/quic_conn.h>
+#include <proto/xprt_quic.h>
 #include <proto/sample.h>
 #include <proto/stream.h>
 #include <proto/task.h>

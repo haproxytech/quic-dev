@@ -1,6 +1,6 @@
 /*
- * include/types/quic_conn.h
- * This file contains QUIC connection definitions.
+ * include/types/xprt_quic.h
+ * This file contains applet function prototypes
  *
  * Copyright 2019 HAProxy Technologies, Frédéric Lécaille <flecaille@haproxy.com>
  *
@@ -19,8 +19,8 @@
  * Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301  USA
  */
 
-#ifndef _TYPES_QUIC_CONN_H
-#define _TYPES_QUIC_CONN_H
+#ifndef _TYPES_XPRT_QUIC_H
+#define _TYPES_XPRT_QUIC_H
 
 #include <sys/socket.h>
 
@@ -29,7 +29,6 @@
 
 #include <eb64tree.h>
 #include <ebmbtree.h>
-
 
 /* The maximum number of QUIC packets stored by the fd I/O handler by QUIC
  * connection. Must be a power of two.
@@ -174,4 +173,4 @@ struct quic_conn {
 	int pend_icf;
 };
 
-#endif /* _TYPES_QUIC_CONN_H */
+#endif /* _TYPES_XPRT_QUIC_H */
