@@ -40,6 +40,7 @@
 #include <proto/ssl_sock.h>
 #include <proto/stream_interface.h>
 #include <proto/task.h>
+#include <proto/trace.h>
 #include <proto/xprt_quic.h>
 
 #include <types/global.h>
@@ -60,6 +61,48 @@ struct quic_transport_params quid_dflt_transport_params = {
 	.ack_delay_exponent = QUIC_DFLT_ACK_DELAY_COMPONENT,
 	.max_ack_delay      = QUIC_DFLT_MAX_ACK_DELAY,
 };
+
+/* trace source and events */
+static void quic_trace(enum trace_level level, uint64_t mask, \
+                       const struct trace_source *src,
+                       const struct ist where, const struct ist func,
+                       const void *a1, const void *a2, const void *a3, const void *a4);
+
+static const struct trace_event quic_trace_events[] = {
+#define           QUIC_EV_CONN_NEW       (1ULL <<  0)
+	{ .mask = QUIC_EV_CONN_NEW,      .name = "quic_conn_new",     .desc = "new QUIC connection" },
+#define           QUIC_EV_CONN_ERR       (1ULL <<  10)
+	{ .mask = QUIC_EV_CONN_ERR,      .name = "quic_conn_err",     .desc = "error on QUIC connection" },
+	{ /* end */ }
+};
+
+static const struct name_desc quic_trace_lockon_args[4] = {
+	/* arg1 */ { /* already used by the connection */ },
+	/* arg2 */ { .name="quic", .desc="QUIC transport" },
+	/* arg3 */ { },
+	/* arg4 */ { }
+};
+
+static const struct name_desc quic_trace_decoding[] = {
+#define QUIC_VERB_CLEAN    1
+	{ .name="clean",    .desc="only user-friendly stuff, generally suitable for level \"user\"" },
+	{ /* end */ }
+};
+
+
+static struct trace_source trace_quic = {
+	.name = IST("quic"),
+	.desc = "QUIC xprt",
+	.arg_def = TRC_ARG1_CONN,  /* TRACE()'s first argument is always a connection */
+	.default_cb = quic_trace,
+	.known_events = quic_trace_events,
+	.lockon_args = quic_trace_lockon_args,
+	.decoding = quic_trace_decoding,
+	.report_events = ~0,  /* report everything by default */
+};
+
+#define TRACE_SOURCE &trace_quic
+INITCALL1(STG_REGISTER, trace_register_source, TRACE_SOURCE);
 
 #if 1
 __attribute__((format (printf, 3, 4)))
@@ -110,6 +153,18 @@ DECLARE_STATIC_POOL(pool_head_quic_packet, "quic_packet", sizeof(struct quic_pac
 DECLARE_STATIC_POOL(quic_conn_ctx_pool, "quic_conn_ctx_pool", sizeof(struct quic_conn_ctx));
 
 static BIO_METHOD *ha_quic_meth;
+
+/*
+ * the QUIC traces always expect that arg1, if non-null, is of type connection.
+ */
+static void quic_trace(enum trace_level level, uint64_t mask, const struct trace_source *src,
+                       const struct ist where, const struct ist func,
+                       const void *a1, const void *a2, const void *a3, const void *a4)
+{
+	const struct connection *conn = a1;
+
+	chunk_appendf(&trace_buf, " : conn=%p %p %p %p", conn, a2, a3, a4);
+}
 
 int ha_quic_set_encryption_secrets(SSL *ssl, enum ssl_encryption_level_t level,
                                    const uint8_t *read_secret,
@@ -429,6 +484,8 @@ static int quic_conn_init(struct connection *conn, void **xprt_ctx)
 {
 	struct quic_conn_ctx *ctx;
 
+	TRACE_ENTER(QUIC_EV_CONN_NEW);
+
 	if (*xprt_ctx)
 		return 0;
 
@@ -438,14 +495,13 @@ static int quic_conn_init(struct connection *conn, void **xprt_ctx)
 	ctx = pool_alloc(quic_conn_ctx_pool);
 	if (!ctx) {
 		conn->err_code = CO_ER_SYS_MEMLIM;
-		return -1;
+		goto err;
 	}
 
 	ctx->wait_event.tasklet = tasklet_new();
 	if (!ctx->wait_event.tasklet) {
 		conn->err_code = CO_ER_SYS_MEMLIM;
-		pool_free(quic_conn_ctx_pool, ctx);
-		return -1;
+		goto err;
 	}
 
 	ctx->wait_event.tasklet->process = quic_conn_io_cb;
@@ -473,9 +529,15 @@ static int quic_conn_init(struct connection *conn, void **xprt_ctx)
 	/* Start the handshake */
 	tasklet_wakeup(ctx->wait_event.tasklet);
 
+	TRACE_LEAVE(QUIC_EV_CONN_NEW, conn);
+
 	return 0;
 
  err:
+	if (ctx->wait_event.tasklet)
+		tasklet_free(ctx->wait_event.tasklet);
+	pool_free(quic_conn_ctx_pool, ctx);
+	TRACE_DEVEL("leaving in error", QUIC_EV_CONN_NEW|QUIC_EV_CONN_ERR, conn);
 	return -1;
 }
 
