@@ -443,7 +443,7 @@ static STACK_OF(X509_NAME)* ssl_get_client_ca_file(char *path)
 
 struct pool_head *pool_head_ssl_capture = NULL;
 int ssl_capture_ptr_index = -1;
-static int ssl_app_data_index = -1;
+int ssl_app_data_index = -1;
 
 #if (defined SSL_CTRL_SET_TLSEXT_TICKET_KEY_CB && TLS_TICKETS_NO > 0)
 struct list tlskeys_reference = LIST_HEAD_INIT(tlskeys_reference);

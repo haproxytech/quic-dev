@@ -116,6 +116,9 @@ enum {
 	SSL_SOCK_VERIFY_NONE     = 3,
 };
 
+/* Note that this variable is shared with xprt_quic module. */
+extern int ssl_app_data_index;
+
 struct pkey_info {
 	uint8_t sig;          /* TLSEXT_signature_[rsa,ecdsa,...] */
 	uint16_t bits;        /* key size in bits */
