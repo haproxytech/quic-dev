@@ -282,7 +282,7 @@ static int inline quic_build_crypto_frame(unsigned char **buf, const unsigned ch
 	    !quic_enc_int(buf, end, crypto->len) || end - *buf < crypto->len)
 		return 0;
 
-	memcpy(*buf, crypto->data, crypto->len);
+	crypto->data = *buf;
 	*buf += crypto->len;
 
 	return 1;
