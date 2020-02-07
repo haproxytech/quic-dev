@@ -111,7 +111,7 @@ static inline const EVP_CIPHER *tls_hp(const SSL_CIPHER *cipher)
 }
 
 /* These two following functions map TLS implementation encryption level to ours */
-static inline int ssl_to_quic_enc_level(int level)
+static inline enum quic_tls_enc_level ssl_to_quic_enc_level(int level)
 {
 	switch (level) {
 	case ssl_encryption_initial:
@@ -133,7 +133,7 @@ static inline int ssl_to_quic_enc_level(int level)
  * Returns -1 if there is no TLS encryption level for <packet_type>
  * packet type.
  */
-static inline int quic_packet_type_enc_level(int packet_type)
+static inline enum quic_tls_enc_level quic_packet_type_enc_level(int packet_type)
 {
 	switch (packet_type) {
 	case QUIC_PACKET_TYPE_INITIAL:
