@@ -37,6 +37,17 @@
 /* The TLS extension (enum) for QUIC transport parameters */
 #define TLS_EXTENSION_QUIC_TRANSPORT_PARAMETERS 0xffa5
 
+/* QUIC handshake states for both clients and servers. */
+enum quic_handshake_state {
+	QUIC_HS_ST_CLIENT_INITIAL,
+	QUIC_HS_ST_CLIENT_HANSHAKE,
+	QUIC_HS_ST_CLIENT_HANSHAKE_FAILED,
+
+	QUIC_HS_ST_SERVER_INITIAL,
+	QUIC_HS_ST_SERVER_HANSHAKE,
+	QUIC_HS_ST_SERVER_HANSHAKE_FAILED,
+};
+
 /* QUIC TLS level encryption */
 enum quic_tls_enc_level {
 	QUIC_TLS_ENC_LEVEL_INITIAL,

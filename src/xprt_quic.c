@@ -49,6 +49,7 @@ struct quic_conn_ctx {
 	struct connection *conn;
 	SSL *ssl;
 	BIO *bio;
+	int state;
 	const struct xprt_ops *xprt;
 	void *xprt_ctx;
 	struct wait_event wait_event;
@@ -541,17 +542,26 @@ static int quic_conn_init(struct connection *conn, void **xprt_ctx)
 	if (objt_server(conn->target)) {
 		/* Client */
 		/* XXX TO DO XXX */
+		ctx->state = QUIC_HS_ST_CLIENT_INITIAL;
+		SSL_set_connect_state(ctx->ssl);
 	}
 	else if (objt_listener(conn->target)) {
 		/* Listener */
 		struct bind_conf *bc = __objt_listener(conn->target)->bind_conf;
 
+		ctx->state = QUIC_HS_ST_SERVER_INITIAL;
+
 		if (ssl_bio_and_sess_init(conn, bc->initial_ctx,
 		                          &ctx->ssl, &ctx->bio, ha_quic_meth, ctx) == -1)
 			goto err;
+		SSL_set_quic_transport_params(ctx->ssl, bc->enc_quic_params, bc->enc_quic_params_len);
+		SSL_set_accept_state(ctx->ssl);
 	}
 
 	*xprt_ctx = ctx;
+
+	/* Leave init state and start handshake */
+	conn->flags |= CO_FL_SSL_WAIT_HS | CO_FL_WAIT_L6_CONN;
 	/* Start the handshake */
 	tasklet_wakeup(ctx->wait_event.tasklet);
 
