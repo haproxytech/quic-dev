@@ -736,51 +736,6 @@ static void quic_aead_iv_build(struct quic_tls_ctx *tls_ctx, uint64_t pn, uint32
 	hexdump(tls_ctx->aead_iv, iv_size, "%s: BUILD IV:\n", __func__);
 }
 
-static int quic_parse_packet_frames(struct quic_conn *conn, struct quic_packet *pkt,
-                                    unsigned char *pn, unsigned char *buf, const unsigned char *end)
-{
-	struct quic_frame frm;
-	const unsigned char *pos;
-
-	pos = buf;
-
-	while (pos < end) {
-
-		if (!quic_parse_frame(&frm, &pos, end))
-			return 0;
-
-		switch (frm.type) {
-		case QUIC_FT_CRYPTO:
-		{
-			struct crypto_frame *cf;
-
-			cf = &conn->icfs[conn->curr_icf];
-			if (frm.crypto.len > sizeof cf->data)
-				return 0;
-
-			cf->offset = frm.crypto.offset;
-			cf->datalen = frm.crypto.len;
-			memcpy(cf->data, frm.crypto.data, frm.crypto.len);
-			conn->curr_icf++;
-			conn->curr_icf &= sizeof conn->icfs / sizeof *conn->icfs - 1;
-			break;
-		}
-
-		case QUIC_FT_PADDING:
-			if (pos != end) {
-				fprintf(stderr, "Wrong frame! (%ld len: %lu)\n", end - pos, frm.padding.len);
-				return 0;
-			}
-			break;
-
-		default:
-			break;
-		}
-	}
-
-	return 1;
-}
-
 /*
  * Inspired from session_accept_fd().
  */

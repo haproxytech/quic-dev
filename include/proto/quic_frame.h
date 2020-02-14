@@ -26,6 +26,9 @@
 
 #include <proto/xprt_quic.h>
 
+int quic_parse_packet_frames(struct quic_conn *conn, struct quic_packet *pkt,
+                             unsigned char *pn, unsigned char *buf, const unsigned char *end);
+
 static inline const char *quic_frame_type_string(enum quic_frame_type ft)
 {
 	switch (ft) {
