@@ -40,6 +40,17 @@ static inline size_t sizeof_quic_cid(struct quic_cid *cid)
 	return sizeof cid->len + cid->len;
 }
 
+/* The maximum size of a variable-length QUIC integer encoded with 1 byte */
+#define QUIC_VARINT_1_BYTE_MAX       ((1UL <<  6) - 1)
+/* The maximum size of a variable-length QUIC integer encoded with 2 bytes */
+#define QUIC_VARINT_2_BYTE_MAX       ((1UL <<  14) - 1)
+/* The maximum size of a variable-length QUIC integer encoded with 4 bytes */
+#define QUIC_VARINT_4_BYTE_MAX       ((1UL <<  30) - 1)
+/* The maximum size of a variable-length QUIC integer encoded with 8 bytes */
+#define QUIC_VARINT_8_BYTE_MAX       ((1UL <<  62) - 1)
+
+/* The maximum size of a variable-length QUIC integer */
+#define QUIC_VARINT_MAX_SIZE       8
 /*
  * The two most significant bits of byte #0 gives the 2 logarithm of the encoded length
  * of a variable length integer for QUIC
@@ -109,13 +120,13 @@ static inline int my_log2(unsigned int val)
 static inline size_t quic_int_getsize(uint64_t val)
 {
 	switch (val) {
-	case 0 ... (1UL <<  6) - 1:
+	case 0 ... QUIC_VARINT_1_BYTE_MAX:
 		return 1;
-	case (1UL <<  6) ... (1UL << 14) - 1:
+	case QUIC_VARINT_1_BYTE_MAX + 1 ... QUIC_VARINT_2_BYTE_MAX:
 		return 2;
-	case (1UL << 14) ... (1UL << 30) - 1:
+	case QUIC_VARINT_2_BYTE_MAX + 1 ... QUIC_VARINT_4_BYTE_MAX:
 		return 4;
-	case (1UL << 30) ... (1UL << 62) - 1:
+	case QUIC_VARINT_4_BYTE_MAX + 1 ... QUIC_VARINT_8_BYTE_MAX:
 		return 8;
 	default:
 		return 0;
