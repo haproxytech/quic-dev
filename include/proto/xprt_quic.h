@@ -134,6 +134,71 @@ static inline size_t quic_int_getsize(uint64_t val)
 }
 
 /*
+ * Returns the maximum value of a QUIC variable-length integer with <sz> as size */
+static inline size_t quic_max_int(size_t sz)
+{
+	switch (sz) {
+	case 1:
+		return QUIC_VARINT_1_BYTE_MAX;
+	case 2:
+		return QUIC_VARINT_2_BYTE_MAX;
+	case 4:
+		return QUIC_VARINT_4_BYTE_MAX;
+	case 8:
+		return QUIC_VARINT_8_BYTE_MAX;
+	}
+
+	return -1;
+}
+
+/*
+ * Return the maximum number of bytes we must use to completely fill a
+ * buffer with <sz> as size for a data field of bytes prefixed by its QUIC
+ * variable-length. Also put in <*len_sz> the size of this QUIC variable-length.
+ * So after returning from this function we have : <*len_sz> + <ret> = <sz>.
+ */
+static inline size_t max_available_room(size_t sz, size_t *len_sz)
+{
+	size_t ret;
+	ssize_t diff;
+
+	ret = sz - quic_int_getsize(sz);
+	*len_sz = quic_int_getsize(ret);
+	diff = sz - ret - *len_sz;
+	if (unlikely(diff > 0))
+		ret += diff;
+
+	return ret;
+}
+
+/*
+ * This function computes the maximum data we can put into a buffer with <sz> as size
+ * prefixed with a variable-length field "Length" whose value is the remaining data length, already filled
+ * of <len> bytes which must be taken into an account by "Length" field, and finally followed
+ * by the data we want to put in this buffer prefixed again by a variable-length field.
+ * <sz> the size of the buffer to fill.
+ * <len> the number of bytes already put after the "Length" field.
+ * <dlen> the number of bytes we want to at most put in the buffer.
+ * Also set <*dlen_sz> to the size of the data variable-length we want to put in the buffer.
+ * This is typically this function which must be used to fill as much as possible a QUIC packet
+ * made of only one CRYPTO or STREAM frames.
+ */
+static inline size_t max_stream_data_size(size_t sz, size_t len, size_t dlen)
+{
+	size_t ret, len_sz, dlen_sz;
+
+	/* The length of variable-length QUIC integers are powers of two. */
+	for (len_sz = 1; len_sz <= QUIC_VARINT_MAX_SIZE; len_sz <<= 1) {
+		ret = max_available_room(sz - len_sz - len, &dlen_sz);
+		/* Check that <*len_sz> matches <ret> value */
+		if (len_sz + len + dlen_sz + ret <= quic_max_int(len_sz))
+			return ret < dlen ? ret : dlen;
+	}
+
+	return -1;
+}
+
+/*
  * Decode a QUIC variable-length integer from <buf> buffer into <val>.
  * Note that the result is a 64-bits integer but with the less significant
  * 62 bits as relevant information. The most significant 2 remaining bits encode
