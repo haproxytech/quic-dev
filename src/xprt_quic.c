@@ -53,8 +53,7 @@ struct quic_conn_ctx {
 	const struct xprt_ops *xprt;
 	void *xprt_ctx;
 	struct wait_event wait_event;
-	struct wait_event *recv_wait;
-	struct wait_event *send_wait;
+	struct wait_event *subs;
 };
 
 struct quic_transport_params quid_dflt_transport_params = {
@@ -155,6 +154,10 @@ DECLARE_STATIC_POOL(quic_conn_ctx_pool, "quic_conn_ctx_pool", sizeof(struct quic
 
 static BIO_METHOD *ha_quic_meth;
 
+static ssize_t quic_build_handshake_packet(unsigned char **buf, const unsigned char *end,
+                                           const unsigned char **data, const unsigned char *end_data,
+                                           enum quic_tls_enc_level level, struct quic_conn *conn);
+
 /*
  * the QUIC traces always expect that arg1, if non-null, is of type connection.
  */
@@ -173,7 +176,7 @@ int ha_quic_set_encryption_secrets(SSL *ssl, enum ssl_encryption_level_t level,
 {
 	struct connection *conn = SSL_get_ex_data(ssl, ssl_app_data_index);
 	struct quic_tls_ctx *tls_ctx =
-		&conn->quic_conn->tls_ctx[ssl_to_quic_enc_level(level)];
+		&conn->quic_conn->enc_levels[ssl_to_quic_enc_level(level)].tls_ctx;
 	const SSL_CIPHER *cipher = SSL_get_current_cipher(ssl);
 
 	tls_ctx->aead = tls_aead(cipher);
@@ -206,8 +209,37 @@ int ha_quic_set_encryption_secrets(SSL *ssl, enum ssl_encryption_level_t level,
 int ha_quic_add_handshake_data(SSL *ssl, enum ssl_encryption_level_t level,
                                const uint8_t *data, size_t len)
 {
+	unsigned char buf[QUIC_PACKET_MAXLEN];
+
+	const unsigned char *pos = data;
+	const unsigned char *end = data + len;
+	struct connection *conn = SSL_get_ex_data(ssl, ssl_app_data_index);
+	struct quic_conn_ctx *ctx = conn->xprt_ctx;
+	enum quic_tls_enc_level enc_level = ssl_to_quic_enc_level(level);
+
+	struct buffer tmpbuf = {
+		.area = (void *)buf,
+		.size = sizeof buf,
+	};
+
 	fprintf(stderr, "%s\n", __func__);
 	hexdump(data, len, "===> %s:\n", __func__);
+
+	while (pos < end) {
+		ssize_t ret;
+		unsigned char *bufp = buf;
+		const unsigned char *bufendp = buf + sizeof buf;
+
+		ret = quic_build_handshake_packet(&bufp, bufendp,  &pos, end, enc_level, conn->quic_conn);
+		if (ret == -1) {
+			fprintf(stderr, "%s could not build a handshake packet\n", __func__);
+			continue;
+		}
+		tmpbuf.data = ret;
+		ctx->xprt->snd_buf(conn, conn->xprt_ctx, &tmpbuf, ret, 0);
+
+	}
+
 	return 1;
 }
 
@@ -492,14 +524,111 @@ static int quic_conn_unsubscribe(struct connection *conn, void *xprt_ctx, int ev
 	return conn_unsubscribe(conn, xprt_ctx, event_type, es);
 }
 
+static int quic_parse_handshake_packet(struct quic_packet *qpkt, struct quic_conn_ctx *ctx,
+                                       struct quic_enc_level *enc_level)
+{
+	struct quic_frame frm;
+	const unsigned char *pos, *end;
+
+	/* Skip the AAD */
+	pos = qpkt->data + qpkt->aad_len;
+	end = qpkt->data + qpkt->len;
+
+	while (pos < end) {
+		if (!quic_parse_frame(&frm, &pos, end))
+			return 0;
+
+		switch (frm.type) {
+		case QUIC_FT_CRYPTO:
+			if (frm.crypto.offset == enc_level->rx.crypto.offset) {
+				fprintf(stderr, "crypto frame as expected\n");
+				hexdump(frm.crypto.data, frm.crypto.len, "CRYPTO frame:\n");
+				if (SSL_provide_quic_data(ctx->ssl, SSL_quic_read_level(ctx->ssl), frm.crypto.data, frm.crypto.len) != 1)
+					fprintf(stderr, "%s SSL providing QUIC data error\n", __func__);
+			}
+			break;
+		case QUIC_FT_PADDING:
+			if (pos != end) {
+				fprintf(stderr, "Wrong frame (remainging: %ld padding len: %lu)\n", end - pos, frm.padding.len);
+			}
+			break;
+		default:
+			return 0;
+		}
+	}
+
+	return 1;
+}
+
+static int quic_conn_do_handshake(struct quic_conn_ctx *ctx)
+{
+	struct quic_conn *quic_conn;
+	struct quic_enc_level *enc_level;
+	struct quic_packet *qpkt;
+	struct eb64_node *qpkt_node;
+	struct quic_tls_ctx *tls_ctx;
+	struct eb_root *rx_qpkts;
+	int ret;
+
+	fprintf(stderr, "%s\n", __func__);
+	quic_conn = ctx->conn->quic_conn;
+	if (ctx->state == QUIC_HS_ST_SERVER_INITIAL) {
+		enc_level = &quic_conn->enc_levels[QUIC_TLS_ENC_LEVEL_INITIAL];
+		tls_ctx = &enc_level->tls_ctx;
+		rx_qpkts = &enc_level->rx.qpkts;
+	}
+
+	for (qpkt_node = eb64_first(rx_qpkts); qpkt_node; qpkt_node = eb64_next(qpkt_node)) {
+		int ret;
+		unsigned char iv[12];
+
+		qpkt = eb64_entry(&qpkt_node->node, struct quic_packet, pn_node);
+		if (!quic_aead_iv_build(iv, sizeof iv, tls_ctx->rx.iv, sizeof tls_ctx->rx.iv, qpkt->pn)) {
+			fprintf(stderr, "%s AEAD IV building failed\n", __func__);
+			return 0;
+		}
+
+		ret = quic_tls_decrypt(qpkt->data + qpkt->aad_len, qpkt->len - qpkt->aad_len,
+		                       qpkt->data, qpkt->aad_len,
+		                       tls_ctx->aead, tls_ctx->rx.key, iv);
+		if (!ret) {
+			fprintf(stderr, "%s: qpkt %lu decryption failed\n", __func__, qpkt->pn);
+			return 0;
+		}
+
+		qpkt->len = qpkt->aad_len + ret;
+		if (!quic_parse_handshake_packet(qpkt, ctx, enc_level)) {
+			fprintf(stderr,  "Could not parse the packet frames\n");
+			return 0;
+		}
+	}
+
+	ret = SSL_do_handshake(ctx->ssl);
+	if (ret != 1) {
+		ret = SSL_get_error(ctx->ssl, ret);
+		fprintf(stderr, "SSL_do_handshake error: %d\n", ret);
+		return 0;
+	}
+
+	return 1;
+}
+
 static struct task *quic_conn_io_cb(struct task *t, void *context, unsigned short state)
 {
+	struct quic_conn_ctx *ctx = context;
+
+	fprintf(stderr, "%s\n", __func__);
+	if (ctx->conn->flags & CO_FL_SSL_WAIT_HS)
+		if (!quic_conn_do_handshake(ctx))
+			fprintf(stderr, "%s SSL handshake error\n", __func__);
+
 	return NULL;
 }
 
 /* We can't have an underlying XPRT, so just return -1 to signify failure */
 static int quic_conn_remove_xprt(struct connection *conn, void *xprt_ctx, void *toremove_ctx, const struct xprt_ops *newops, void *newctx)
 {
+	fprintf(stderr, "%s\n", __func__);
 	/* This is the lowest xprt we can have, so if we get there we didn't
 	 * find the xprt we wanted to remove, that's a bug
 	 */
@@ -535,10 +664,10 @@ static int quic_conn_init(struct connection *conn, void **xprt_ctx)
 	ctx->wait_event.tasklet->context = ctx;
 	ctx->wait_event.events = 0;
 	ctx->conn = conn;
-	ctx->send_wait = NULL;
-	ctx->recv_wait = NULL;
+	ctx->subs = NULL;
+	ctx->xprt_ctx = NULL;
 
-
+	ctx->xprt = xprt_get(XPRT_QUIC);
 	if (objt_server(conn->target)) {
 		/* Client */
 		/* XXX TO DO XXX */
@@ -716,26 +845,6 @@ static int quic_remove_header_protection(struct quic_conn *conn, struct quic_pac
 	return ret;
 }
 
-static void quic_aead_iv_build(struct quic_tls_ctx *tls_ctx, uint64_t pn, uint32_t pnl)
-{
-	int i;
-	unsigned int shift;
-	unsigned char *iv = tls_ctx->rx.iv;
-	unsigned char *aead_iv = tls_ctx->aead_iv;
-	size_t iv_size = sizeof tls_ctx->rx.iv;
-
-	hexdump(iv, iv_size, "%s: IV:\n", __func__);
-
-	for (i = 0; i < iv_size - sizeof pn; i++)
-		*aead_iv++ = *iv++;
-
-	shift = 56;
-	for (i = iv_size - sizeof pn; i < iv_size; i++, shift -= 8)
-		*aead_iv++ = *iv++ ^ (pn >> shift);
-
-	hexdump(tls_ctx->aead_iv, iv_size, "%s: BUILD IV:\n", __func__);
-}
-
 /*
  * Inspired from session_accept_fd().
  */
@@ -864,7 +973,7 @@ static int quic_new_conn_init(struct listener *l, struct quic_conn *conn, uint32
 {
 	int i;
 
-	fprintf(stderr, "%s: new conn @%p\n", __func__, conn);
+	fprintf(stderr, "%s: new quic_conn @%p\n", __func__, conn);
 	conn->version = version;
 	/* Copy the initial DCID. */
 	conn->idcid.len = dcid_len;
@@ -885,14 +994,14 @@ static int quic_new_conn_init(struct listener *l, struct quic_conn *conn, uint32
 	ebmb_insert(&l->quic_clients, &conn->scid_node, conn->scid.len);
 
 	/* Initialize the Initial level TLS encryption context. */
-	quic_initial_tls_ctx_init(&conn->tls_ctx[QUIC_TLS_ENC_LEVEL_INITIAL]);
+	quic_initial_tls_ctx_init(&conn->enc_levels[QUIC_TLS_ENC_LEVEL_INITIAL].tls_ctx);
 	/* Packet number spaces initialization. */
 	for (i = 0; i < QUIC_TLS_PKTNS_MAX; i++) {
 		quic_tls_ctx_pktns_init(&conn->tx_ns[i]);
 		quic_tls_ctx_pktns_init(&conn->rx_ns[i]);
 	}
 	for (i = 0; i < QUIC_TLS_ENC_LEVEL_MAX; i++)
-		conn->iqpkts[i] = EB_ROOT;
+		conn->enc_levels[i].rx.qpkts = EB_ROOT;
 
 	return 1;
 }
@@ -1013,7 +1122,7 @@ static ssize_t quic_packet_read(unsigned char **buf, const unsigned char *end,
 
 		if (qpkt->type == QUIC_PACKET_TYPE_INITIAL) {
 			uint64_t token_len;
-			struct quic_tls_ctx *ctx = &conn->tls_ctx[QUIC_TLS_ENC_LEVEL_INITIAL];
+			struct quic_tls_ctx *ctx = &conn->enc_levels[QUIC_TLS_ENC_LEVEL_INITIAL].tls_ctx;
 
 			if (!quic_dec_int(&token_len, (const unsigned char **)buf, end) || end - *buf < token_len)
 				goto err;
@@ -1078,7 +1187,7 @@ static ssize_t quic_packet_read(unsigned char **buf, const unsigned char *end,
 		qpkt_enc_level = quic_packet_type_enc_level(qpkt->type);
 	else
 		qpkt_enc_level = QUIC_TLS_ENC_LEVEL_APP;
-	tls_ctx = &conn->tls_ctx[qpkt_enc_level];
+	tls_ctx = &conn->enc_levels[qpkt_enc_level].tls_ctx;
 
 	if (!quic_remove_header_protection(conn, qpkt, tls_ctx, pn, beg, end)) {
 		fprintf(stderr, "Could not remove packet header protection\n");
@@ -1093,13 +1202,11 @@ static ssize_t quic_packet_read(unsigned char **buf, const unsigned char *end,
 
 	/* Store the packet */
 	qpkt->pn_node.key = qpkt->pn;
-	eb64_insert(&conn->iqpkts[qpkt_enc_level], &qpkt->pn_node);
+	eb64_insert(&conn->enc_levels[qpkt_enc_level].rx.qpkts, &qpkt->pn_node);
 
 	/* The length of the packet includes the packet number field. */
 	qpkt->len += pn - beg;
 	memcpy(qpkt->data, beg, qpkt->len);
-	/* Build the AEAD IV. */
-	quic_aead_iv_build(tls_ctx, qpkt->pn, qpkt->pnl);
 	/* The AAD includes the packet number field found at <pn>. */
 	qpkt->aad_len = pn - beg + qpkt->pnl;
 	/* Updtate the offset of <*buf> for the next QUIC packet. */
@@ -1159,9 +1266,9 @@ static ssize_t quic_packets_read(char *buf, size_t len, struct listener *l,
 }
 
 /*
- * This function builds a QUIC long packet header whose size may be computed
- * in advance in <buf> buffer. This is the reponsability of the caller to check
- * there is enought room in this buffer to build a long header.
+ * This function builds into <buf> buffer a QUIC long packet header whose size may be computed
+ * in advance. This is the reponsability of the caller to check there is enough room in this
+ * buffer to build a long header.
  * Returns 0 if <type> QUIC packet type is not supported by long header, or 1 if succeeded.
  */
 static int quic_build_packet_long_header(unsigned char **buf, const unsigned char *end,
@@ -1207,6 +1314,7 @@ static int quic_apply_header_protection(unsigned char *buf, unsigned char *pn, s
 	if (!ctx)
 		return 0;
 
+	hexdump(pn + QUIC_PACKET_PN_MAXLEN, 16, "%s sample:\n", __func__);
 	if (!EVP_EncryptInit_ex(ctx, aead, NULL, key, pn + QUIC_PACKET_PN_MAXLEN) ||
 	    !EVP_EncryptUpdate(ctx, mask, &outlen, mask, sizeof mask) ||
 	    !EVP_EncryptFinal_ex(ctx, mask, &outlen))
@@ -1233,74 +1341,77 @@ static int quic_apply_header_protection(unsigned char *buf, unsigned char *pn, s
  * So, the <buf> address will point after the last byte of the payload after having built the handshake
  * with the confidence there is at least QUIC_TLS_TAG_LEN bytes available packet to encrypt it.
  */
-static ssize_t __quic_build_handshake_packet(unsigned char **buf, const unsigned char *end,
-                                             unsigned char **buf_pn, size_t *buf_pn_len,
-                                             const unsigned char *data, size_t datalen,
-                                             enum quic_tls_enc_level level, struct quic_conn *conn)
+static ssize_t quic_do_build_handshake_packet(unsigned char **buf, const unsigned char *end,
+                                              unsigned char **buf_pn, size_t *pn_len,
+                                              const unsigned char **data, const unsigned char *end_data,
+                                              enum quic_tls_enc_level level, struct quic_conn *conn)
 {
 	unsigned char *beg;
 	struct quic_pktns *rx_pktns, *tx_pktns;
+	/* This packet type. */
 	int packet_type;
-	int64_t pn, last_acked_pn;
+	/* Packet number. */
+	int64_t pn;
+	/* The Length QUIC packet field value which is the length
+	 * of the remaining data after this field after encryption.
+	 */
 	size_t len;
 	size_t token_fields_len;
-	size_t frm_sz;
+	/* The size of the CRYPTO frame heaeder (without the data). */
+	size_t frm_header_sz;
 	struct quic_frame frm = { .type = QUIC_FT_CRYPTO, };
 	struct quic_crypto *crypto = &frm.crypto;
-
-	if ((level != QUIC_TLS_ENC_LEVEL_INITIAL && level != QUIC_TLS_ENC_LEVEL_HANDSHAKE))
-		return -1;
-
+	struct quic_enc_level *enc_level;
+	enum quic_tls_pktns pktns = quic_tls_pktns(level);
 
 	beg = *buf;
-	tx_pktns = &conn->tx_ns[quic_tls_pktns(level)];
-	crypto->len = datalen;
-	crypto->data = data;
-	crypto->offset = tx_pktns->offset;
-	rx_pktns = &conn->rx_ns[quic_tls_pktns(level)];
+	enc_level = &conn->enc_levels[level];
+	tx_pktns = &conn->tx_ns[pktns];
+	rx_pktns = &conn->rx_ns[pktns];
 	packet_type = quic_tls_level_pkt_type(level);
 
-	/* Crypto frame information */
-	frm_sz = sizeof frm.type + quic_int_getsize(crypto->offset) +
-		quic_int_getsize(crypto->len) + datalen;
+	crypto->data = *data;
+	crypto->offset = enc_level->tx.crypto.offset;
+
+	/* For a server, the token field of an Initial packet is empty. */
+	token_fields_len = packet_type == QUIC_PACKET_TYPE_INITIAL ? 1 : 0;
+
+	/* Check there is enough room to build the header followed by a token. */
+	if (end - *buf < QUIC_LONG_PACKET_MINLEN + conn->dcid.len +
+	    conn->scid.len + token_fields_len)
+		return -1;
 
 	/* packet number */
 	pn = tx_pktns->last_pn + 1;
-	last_acked_pn = rx_pktns->last_acked_pn;
 
 	/* packet number length */
-	*buf_pn_len = quic_packet_number_length(pn, last_acked_pn);
-	/* packet length (after encryption) */
-	len = *buf_pn_len + frm_sz + QUIC_TLS_TAG_LEN;
+	*pn_len = quic_packet_number_length(pn, rx_pktns->last_acked_pn);
 
-	if (packet_type == QUIC_PACKET_TYPE_INITIAL) {
-		/* Zero-length token field */
-		token_fields_len = 1;
-	}
-	else {
-		token_fields_len = 1; /* plus something XXX TO DO XXX */
-	}
-
-	if (end - *buf < QUIC_LONG_PACKET_MINLEN + conn->dcid.len + conn->scid.len +
-	    token_fields_len + quic_int_getsize(len) + len)
-		return -1;
-
-	quic_build_packet_long_header(buf, end, packet_type, *buf_pn_len, conn);
+	quic_build_packet_long_header(buf, end, packet_type, *pn_len, conn);
 
 	/* Token */
 	if (packet_type == QUIC_PACKET_TYPE_INITIAL) {
-		/* Encode the token length which is zero for a client or for an
-		 * Initial packet of a server.
-		 */
+		/* Encode the token length (0) for an Initial packet of a server */
 		*(*buf)++ = 0;
 	}
 
-	/* Length (of the remaining data) */
+	/* Crypto frame header size (without data) */
+	frm_header_sz = sizeof frm.type + quic_int_getsize(crypto->offset);
+
+	crypto->len = max_stream_data_size(end - *buf,
+	                                   *pn_len + frm_header_sz + QUIC_TLS_TAG_LEN,
+	                                   end_data - *data);
+	frm_header_sz += quic_int_getsize(crypto->len);
+	/* packet length (after encryption) */
+	len = *pn_len + frm_header_sz + crypto->len + QUIC_TLS_TAG_LEN;
+	/* Length (of the remaining data). Must not fail because, buffer size checked above. */
 	quic_enc_int(buf, end, len);
 
-	/* Packet number */
+	/* Packet number field address. */
 	*buf_pn = *buf;
-	switch (*buf_pn_len) {
+
+	/* Encode the packet number. */
+	switch (*pn_len) {
 	case 1:
 		**buf = pn;
 		break;
@@ -1309,23 +1420,29 @@ static ssize_t __quic_build_handshake_packet(unsigned char **buf, const unsigned
 		break;
 	case 3:
 		pn = htonl(pn);
-		memcpy(*buf, &pn, *buf_pn_len);
+		memcpy(*buf, &pn, *pn_len);
 		break;
 	case 4:
 		write_n32(*buf, pn);
 		break;
 	}
-	*buf += *buf_pn_len;
+	*buf += *pn_len;
 
 	/* Crypto frame */
 	if (!quic_build_frame(buf, end, &frm))
 		return -1;
 
+	*data += crypto->len;
+	/* Increment the packet number. */
+	tx_pktns->last_pn++;
+	/* Increment the offset of this crypto data stream */
+	enc_level->tx.crypto.offset += crypto->len;
+
 	return *buf - beg;
 }
 
 static ssize_t quic_build_handshake_packet(unsigned char **buf, const unsigned char *end,
-                                           const unsigned char *data, size_t datalen,
+                                           const unsigned char **data, const unsigned char *end_data,
                                            enum quic_tls_enc_level level, struct quic_conn *conn)
 {
 	/* A pointer to the packet number fiel in <buf> */
@@ -1335,11 +1452,22 @@ static ssize_t quic_build_handshake_packet(unsigned char **buf, const unsigned c
 	ssize_t pkt_len;
 	int payload_len;
 	struct quic_tls_ctx *tls_ctx;
+	struct quic_enc_level *enc_level;
+	enum quic_tls_pktns pktns = quic_tls_pktns(level);
+	struct quic_pktns *tx_pktns = &conn->tx_ns[pktns];
+	unsigned char iv[12];
+	uint64_t pn;
+
+	if ((level != QUIC_TLS_ENC_LEVEL_INITIAL && level != QUIC_TLS_ENC_LEVEL_HANDSHAKE))
+		return -1;
 
 	beg = *buf;
+	enc_level = &conn->enc_levels[level];
+	pn = tx_pktns->last_pn + 1;
+
 	/* <pkt_len> is the length of this packet before encryption. */
-	pkt_len = __quic_build_handshake_packet(buf, end, &buf_pn, &pn_len,
-	                                        data, datalen, level, conn);
+	pkt_len = quic_do_build_handshake_packet(buf, end, &buf_pn, &pn_len,
+	                                         data, end_data, level, conn);
 	if (pkt_len == -1)
 		return -1;
 
@@ -1348,16 +1476,25 @@ static ssize_t quic_build_handshake_packet(unsigned char **buf, const unsigned c
 	payload_len = *buf - payload;
 	aad_len = payload - beg;
 
-	tls_ctx = &conn->tls_ctx[level];
+	tls_ctx = &enc_level->tls_ctx;
+	if (!quic_aead_iv_build(iv, sizeof iv, tls_ctx->tx.iv, sizeof tls_ctx->tx.iv, pn)) {
+		fprintf(stderr, "%s AEAD IV building failed\n", __func__);
+		return 0;
+	}
+
 	if (!quic_tls_encrypt(payload, payload_len, beg, aad_len,
-	                     tls_ctx->aead, tls_ctx->tx.key, tls_ctx->tx.iv))
+	                     tls_ctx->aead, tls_ctx->tx.key, iv)) {
+		fprintf(stderr, "QUIC packet encryption failed\n");
 	    return -1;
+	}
 
 	*buf += QUIC_TLS_TAG_LEN;
 
 	if (!quic_apply_header_protection(beg, buf_pn, pn_len, level,
-	                                  tls_ctx->hp, tls_ctx->tx.hp_key))
+	                                  tls_ctx->hp, tls_ctx->tx.hp_key)) {
+		fprintf(stderr, "Could not apply the header protection\n");
 		return -1;
+	}
 
 	return *buf - beg;
 }

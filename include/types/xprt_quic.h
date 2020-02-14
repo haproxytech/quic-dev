@@ -139,10 +139,22 @@ struct quic_packet {
 	struct eb64_node pn_node;
 };
 
-struct crypto_frame {
-	unsigned char data[QUIC_PACKET_MAXLEN];
-	size_t datalen;
-	size_t offset;
+struct quic_enc_level {
+	struct quic_tls_ctx tls_ctx;
+	struct {
+		struct eb_root qpkts;
+		/* Crypto frames */
+		struct {
+			uint64_t offset;
+			struct eb_root frms;
+		} crypto;
+	} rx;
+	struct {
+		struct eb_root qpkts;
+		struct {
+			uint64_t offset;
+		} crypto;
+	} tx;
 };
 
 struct quic_conn {
@@ -156,8 +168,8 @@ struct quic_conn {
 	struct ebmb_node scid_node;
 	struct quic_cid scid;
 
-	struct quic_tls_ctx tls_ctx[QUIC_TLS_ENC_LEVEL_MAX];
-	struct eb_root iqpkts[QUIC_TLS_ENC_LEVEL_MAX];
+	struct quic_enc_level enc_levels[QUIC_TLS_ENC_LEVEL_MAX];
+
 	struct quic_pktns tx_ns[QUIC_TLS_PKTNS_MAX];
 	struct quic_pktns rx_ns[QUIC_TLS_PKTNS_MAX];
 	/* One largest packet number by client/server by number space */
@@ -165,12 +177,6 @@ struct quic_conn {
 	uint64_t server_max_pn[3];
 	/* Last QUIC_CONN_MAX_PACKET QUIC received packets */
 	struct quic_packet pkts[QUIC_CONN_MAX_PACKET];
-	/* The packet used among ->pkts to store the current QUIC received packet */
-	int curr_pkt;
-
-	struct crypto_frame icfs[QUIC_CONN_MAX_PACKET];
-	int curr_icf;
-	int pend_icf;
 };
 
 #endif /* _TYPES_XPRT_QUIC_H */

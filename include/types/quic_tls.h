@@ -89,8 +89,6 @@ struct quic_pktns {
 	int64_t last_pn;
 	/* Last acked packet number */
 	int64_t last_acked_pn;
-	/* Offset of the CRYPTO stream of data */
-	int64_t offset;
 };
 
 struct quic_tls_ctx {

@@ -46,6 +46,9 @@ int quic_tls_derive_packet_protection_keys(const EVP_CIPHER *aead, const EVP_CIP
                                            unsigned char *hp_key, size_t hp_keylen,
                                            const unsigned char *secret, size_t secretlen);
 
+int quic_aead_iv_build(unsigned char *iv, size_t ivlen,
+                       unsigned char *aead_iv, size_t aead_ivlen, uint64_t pn);
+
 static inline const EVP_CIPHER *tls_aead(const SSL_CIPHER *cipher)
 {
 	switch (SSL_CIPHER_get_id(cipher)) {
@@ -196,7 +199,6 @@ static inline void quic_tls_ctx_pktns_init(struct quic_pktns *pktns)
 {
 	pktns->last_pn = -1;
 	pktns->last_acked_pn = -1;
-	pktns->offset = 0;
 }
 
 static inline int quic_tls_level_pkt_type(enum quic_tls_enc_level level)

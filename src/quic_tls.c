@@ -238,6 +238,34 @@ ssize_t quic_tls_derive_initial_secrets(const EVP_MD *md,
 }
 
 /*
+ * Build an IV into <iv> buffer with <ivlen> as size from <aead_iv> with
+ * <aead_ivlen> as size depending on <pn> packet number.
+ * This is the function which must be called to build an AEAD IV for the AEAD cryptographic algorithm
+ * used to encrypt/decrypt the QUIC packet payloads depending on the packet number <pn>.
+ * This function fails and return 0 only if the two buffer lengths are different, 1 if not.
+ */
+int quic_aead_iv_build(unsigned char *iv, size_t ivlen,
+                       unsigned char *aead_iv, size_t aead_ivlen, uint64_t pn)
+{
+	int i;
+	unsigned int shift;
+	unsigned char *pos = iv;
+
+	if (ivlen != aead_ivlen)
+		return 0;
+
+	for (i = 0; i < ivlen - sizeof pn; i++)
+		*pos++ = *aead_iv++;
+
+	/* Only the remaining (sizeof pn) bytes are XOR'ed. */
+	shift = 56;
+	for (i = aead_ivlen - sizeof pn; i < aead_ivlen ; i++, shift -= 8)
+		*pos++ = *aead_iv++ ^ (pn >> shift);
+
+	return 1;
+}
+
+/*
  * https://quicwg.org/base-drafts/draft-ietf-quic-tls.html#aead
  *
  * 5.3. AEAD Usage
