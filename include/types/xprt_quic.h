@@ -173,10 +173,12 @@ struct quic_conn {
 	struct quic_pktns tx_ns[QUIC_TLS_PKTNS_MAX];
 	struct quic_pktns rx_ns[QUIC_TLS_PKTNS_MAX];
 	/* One largest packet number by client/server by number space */
-	uint64_t client_max_pn[3];
-	uint64_t server_max_pn[3];
+	uint64_t client_max_pn[QUIC_TLS_PKTNS_MAX];
+	uint64_t server_max_pn[QUIC_TLS_PKTNS_MAX];
 	/* Last QUIC_CONN_MAX_PACKET QUIC received packets */
 	struct quic_packet pkts[QUIC_CONN_MAX_PACKET];
+	/* Used only to reach the tasklet for the I/O handler from this quic_conn object. */
+	struct connection *conn;
 };
 
 #endif /* _TYPES_XPRT_QUIC_H */

@@ -223,7 +223,7 @@ int ha_quic_add_handshake_data(SSL *ssl, enum ssl_encryption_level_t level,
 	};
 
 	fprintf(stderr, "%s\n", __func__);
-	hexdump(data, len, "===> %s:\n", __func__);
+	hexdump(data, len, "===> %s (level %d)\n", __func__, level);
 
 	while (pos < end) {
 		ssize_t ret;
@@ -236,7 +236,16 @@ int ha_quic_add_handshake_data(SSL *ssl, enum ssl_encryption_level_t level,
 			continue;
 		}
 		tmpbuf.data = ret;
-		ctx->xprt->snd_buf(conn, conn->xprt_ctx, &tmpbuf, ret, 0);
+		ret = ctx->xprt->snd_buf(conn, conn->xprt_ctx, &tmpbuf, ret, 0);
+		if (ret > 0) {
+			switch (ctx->state) {
+			case QUIC_HS_ST_SERVER_INITIAL:
+				ctx->state = QUIC_HS_ST_SERVER_HANSHAKE;
+				break;
+			default:
+				break;
+			}
+		}
 
 	}
 
@@ -543,14 +552,22 @@ static int quic_parse_handshake_packet(struct quic_packet *qpkt, struct quic_con
 			if (frm.crypto.offset == enc_level->rx.crypto.offset) {
 				fprintf(stderr, "crypto frame as expected\n");
 				hexdump(frm.crypto.data, frm.crypto.len, "CRYPTO frame:\n");
-				if (SSL_provide_quic_data(ctx->ssl, SSL_quic_read_level(ctx->ssl), frm.crypto.data, frm.crypto.len) != 1)
+				if (SSL_provide_quic_data(ctx->ssl, SSL_quic_read_level(ctx->ssl), frm.crypto.data, frm.crypto.len) != 1) {
 					fprintf(stderr, "%s SSL providing QUIC data error\n", __func__);
+				}
+				else {
+					fprintf(stderr, "SSL_provide_quic_data() succeded \n");
+				}
 			}
 			break;
 		case QUIC_FT_PADDING:
 			if (pos != end) {
 				fprintf(stderr, "Wrong frame (remainging: %ld padding len: %lu)\n", end - pos, frm.padding.len);
 			}
+			break;
+		case QUIC_FT_ACK:
+			break;
+		case QUIC_FT_PING:
 			break;
 		default:
 			return 0;
@@ -570,15 +587,25 @@ static int quic_conn_do_handshake(struct quic_conn_ctx *ctx)
 	struct eb_root *rx_qpkts;
 	int ret;
 
-	fprintf(stderr, "%s\n", __func__);
+	fprintf(stderr, "%s ctx state: %d\n", __func__, ctx->state);
 	quic_conn = ctx->conn->quic_conn;
-	if (ctx->state == QUIC_HS_ST_SERVER_INITIAL) {
+
+	switch (ctx->state) {
+	case QUIC_HS_ST_SERVER_INITIAL:
 		enc_level = &quic_conn->enc_levels[QUIC_TLS_ENC_LEVEL_INITIAL];
-		tls_ctx = &enc_level->tls_ctx;
-		rx_qpkts = &enc_level->rx.qpkts;
+		break;
+	case QUIC_HS_ST_SERVER_HANSHAKE:
+		enc_level = &quic_conn->enc_levels[QUIC_TLS_ENC_LEVEL_HANDSHAKE];
+		break;
+	default:
+		return 0;
 	}
 
-	for (qpkt_node = eb64_first(rx_qpkts); qpkt_node; qpkt_node = eb64_next(qpkt_node)) {
+	tls_ctx = &enc_level->tls_ctx;
+	rx_qpkts = &enc_level->rx.qpkts;
+
+	qpkt_node = eb64_first(rx_qpkts);
+	while (qpkt_node) {
 		int ret;
 		unsigned char iv[12];
 
@@ -596,31 +623,53 @@ static int quic_conn_do_handshake(struct quic_conn_ctx *ctx)
 			return 0;
 		}
 
+		fprintf(stderr, "QUIC packet #%lu decryption succeeded\n", qpkt->pn);
+
 		qpkt->len = qpkt->aad_len + ret;
 		if (!quic_parse_handshake_packet(qpkt, ctx, enc_level)) {
 			fprintf(stderr,  "Could not parse the packet frames\n");
 			return 0;
 		}
+		qpkt_node = eb64_next(qpkt_node);
+		eb64_delete(&qpkt->pn_node);
+		pool_free(pool_head_quic_packet, qpkt);
 	}
 
 	ret = SSL_do_handshake(ctx->ssl);
 	if (ret != 1) {
 		ret = SSL_get_error(ctx->ssl, ret);
-		fprintf(stderr, "SSL_do_handshake error: %d\n", ret);
+		fprintf(stderr, "SSL_do_handshake() error: %d\n", ret);
 		return 0;
 	}
+
+	fprintf(stderr, "SSL_do_handhake() succeeded\n");
+
+	if (ctx->state == QUIC_HS_ST_SERVER_HANSHAKE)
+		ctx->conn->flags &= ~CO_FL_SSL_WAIT_HS;
+
+	ret = SSL_process_quic_post_handshake(ctx->ssl);
+	if (ret != 1) {
+		fprintf(stderr, "SSL_process_quic_post_handshake() error: %d\n", ret);
+		return 0;
+	}
+
+	fprintf(stderr, "SSL_process_quic_post_handshake() succeeded\n");
 
 	return 1;
 }
 
+/* QUIC connection packet handler. */
 static struct task *quic_conn_io_cb(struct task *t, void *context, unsigned short state)
 {
 	struct quic_conn_ctx *ctx = context;
 
 	fprintf(stderr, "%s\n", __func__);
-	if (ctx->conn->flags & CO_FL_SSL_WAIT_HS)
+	if (ctx->conn->flags & CO_FL_SSL_WAIT_HS) {
 		if (!quic_conn_do_handshake(ctx))
 			fprintf(stderr, "%s SSL handshake error\n", __func__);
+	}
+	else {
+	}
 
 	return NULL;
 }
@@ -744,11 +793,11 @@ static uint64_t *quic_max_pn(struct quic_conn *conn, int server, int long_header
     int pn_space;
 
     if (long_header && packet_type == QUIC_PACKET_TYPE_INITIAL) {
-        pn_space = 0;
+        pn_space = QUIC_TLS_PKTNS_INITIAL;
     } else if (long_header && packet_type == QUIC_PACKET_TYPE_HANDSHAKE) {
-        pn_space = 1;
+        pn_space = QUIC_TLS_PKTNS_HANDSHAKE;
     } else {
-        pn_space = 2;
+        pn_space = QUIC_TLS_PKTNS_01RTT;
     }
 
     if (server) {
@@ -816,8 +865,6 @@ static int quic_remove_header_protection(struct quic_conn *conn, struct quic_pac
 	ret = 0;
 	sample = pn + QUIC_PACKET_PN_MAXLEN;
 
-	hexdump(sample, sizeof mask, "packet sample:\n");
-
 	hp_key = tls_ctx->rx.hp_key;
 	if (!EVP_DecryptInit_ex(ctx, tls_ctx->hp, NULL, hp_key, sample) ||
 	    !EVP_DecryptUpdate(ctx, mask, &outlen, mask, sizeof mask) ||
@@ -861,6 +908,8 @@ static int quic_new_conn(struct quic_conn *quic_conn,
 	if (!sockaddr_alloc(&cli_conn->src))
 		goto out_free_conn;
 
+	fprintf(stderr, "%s conn: @%p\n", __func__, cli_conn);
+	quic_conn->conn = cli_conn;
 	cli_conn->quic_conn = quic_conn;
 
 	/* XXX Not sure it is safe to keep this statement. */
@@ -1211,10 +1260,14 @@ static ssize_t quic_packet_read(unsigned char **buf, const unsigned char *end,
 	qpkt->aad_len = pn - beg + qpkt->pnl;
 	/* Updtate the offset of <*buf> for the next QUIC packet. */
 	*buf = beg + qpkt->len;
+	/* Wake the tasklet of the QUIC connection packet handler. */
+	if (conn->conn && conn->conn->xprt_ctx)
+		tasklet_wakeup(((struct quic_conn_ctx *)conn->conn->xprt_ctx)->wait_event.tasklet);
 
 	return qpkt->len;
 
  err:
+	fprintf(stderr, "%s failed\n", __func__);
 	return -1;
 }
 
