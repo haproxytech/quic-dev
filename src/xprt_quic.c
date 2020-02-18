@@ -533,6 +533,35 @@ static int quic_conn_unsubscribe(struct connection *conn, void *xprt_ctx, int ev
 	return conn_unsubscribe(conn, xprt_ctx, event_type, es);
 }
 
+static int quic_packet_decrypt(struct quic_packet *qpkt, struct quic_tls_ctx *tls_ctx)
+{
+	int ret;
+	unsigned char iv[12];
+	unsigned char *rx_iv = tls_ctx->rx.iv;
+	size_t rx_iv_sz = sizeof tls_ctx->rx.iv;
+
+	if (!quic_aead_iv_build(iv, sizeof iv, rx_iv, rx_iv_sz, qpkt->pn)) {
+		fprintf(stderr, "%s AEAD IV building failed\n", __func__);
+		return 0;
+	}
+
+	ret = quic_tls_decrypt(qpkt->data + qpkt->aad_len, qpkt->len - qpkt->aad_len,
+	                       qpkt->data, qpkt->aad_len,
+	                       tls_ctx->aead, tls_ctx->rx.key, iv);
+	if (!ret) {
+		fprintf(stderr, "%s: qpkt #%lu long %d decryption failed\n",
+		        __func__, qpkt->pn, qpkt->long_header);
+		return 0;
+	}
+
+	/* Update the packet length (required to parse the frames). */
+	qpkt->len = qpkt->aad_len + ret;
+	fprintf(stderr, "QUIC packet #%lu long header? %d decryption done\n",
+	        qpkt->pn, qpkt->long_header);
+
+	return 1;
+}
+
 static int quic_parse_handshake_packet(struct quic_packet *qpkt, struct quic_conn_ctx *ctx,
                                        struct quic_enc_level *enc_level)
 {
@@ -552,7 +581,8 @@ static int quic_parse_handshake_packet(struct quic_packet *qpkt, struct quic_con
 			if (frm.crypto.offset == enc_level->rx.crypto.offset) {
 				fprintf(stderr, "crypto frame as expected\n");
 				hexdump(frm.crypto.data, frm.crypto.len, "CRYPTO frame:\n");
-				if (SSL_provide_quic_data(ctx->ssl, SSL_quic_read_level(ctx->ssl), frm.crypto.data, frm.crypto.len) != 1) {
+				if (SSL_provide_quic_data(ctx->ssl, SSL_quic_read_level(ctx->ssl),
+				                          frm.crypto.data, frm.crypto.len) != 1) {
 					fprintf(stderr, "%s SSL providing QUIC data error\n", __func__);
 				}
 				else {
@@ -562,7 +592,8 @@ static int quic_parse_handshake_packet(struct quic_packet *qpkt, struct quic_con
 			break;
 		case QUIC_FT_PADDING:
 			if (pos != end) {
-				fprintf(stderr, "Wrong frame (remainging: %ld padding len: %lu)\n", end - pos, frm.padding.len);
+				fprintf(stderr, "Wrong frame (remainging: %ld padding len: %lu)\n",
+				        end - pos, frm.padding.len);
 			}
 			break;
 		case QUIC_FT_ACK:
@@ -606,30 +637,15 @@ static int quic_conn_do_handshake(struct quic_conn_ctx *ctx)
 
 	qpkt_node = eb64_first(rx_qpkts);
 	while (qpkt_node) {
-		int ret;
-		unsigned char iv[12];
-
 		qpkt = eb64_entry(&qpkt_node->node, struct quic_packet, pn_node);
-		if (!quic_aead_iv_build(iv, sizeof iv, tls_ctx->rx.iv, sizeof tls_ctx->rx.iv, qpkt->pn)) {
-			fprintf(stderr, "%s AEAD IV building failed\n", __func__);
+		if (!quic_packet_decrypt(qpkt, tls_ctx))
 			return 0;
-		}
 
-		ret = quic_tls_decrypt(qpkt->data + qpkt->aad_len, qpkt->len - qpkt->aad_len,
-		                       qpkt->data, qpkt->aad_len,
-		                       tls_ctx->aead, tls_ctx->rx.key, iv);
-		if (!ret) {
-			fprintf(stderr, "%s: qpkt %lu decryption failed\n", __func__, qpkt->pn);
-			return 0;
-		}
-
-		fprintf(stderr, "QUIC packet #%lu decryption succeeded\n", qpkt->pn);
-
-		qpkt->len = qpkt->aad_len + ret;
 		if (!quic_parse_handshake_packet(qpkt, ctx, enc_level)) {
 			fprintf(stderr,  "Could not parse the packet frames\n");
 			return 0;
 		}
+
 		qpkt_node = eb64_next(qpkt_node);
 		eb64_delete(&qpkt->pn_node);
 		pool_free(pool_head_quic_packet, qpkt);
@@ -658,6 +674,42 @@ static int quic_conn_do_handshake(struct quic_conn_ctx *ctx)
 	return 1;
 }
 
+static int quic_treat_packets(struct quic_conn_ctx *ctx)
+{
+	struct quic_conn *quic_conn;
+	struct quic_enc_level *enc_level;
+	struct quic_tls_ctx *tls_ctx;
+	struct eb_root *rx_qpkts;
+	struct quic_packet *qpkt;
+	struct eb64_node *qpkt_node;
+
+	quic_conn = ctx->conn->quic_conn;
+	enc_level = &quic_conn->enc_levels[QUIC_TLS_ENC_LEVEL_APP];
+	if (eb_is_empty(&enc_level->rx.qpkts)) {
+		fprintf(stderr, "empty tree for APP level encryption\n");
+		enc_level = &quic_conn->enc_levels[QUIC_TLS_ENC_LEVEL_HANDSHAKE];
+	}
+	tls_ctx = &enc_level->tls_ctx;
+	rx_qpkts = &enc_level->rx.qpkts;
+
+	qpkt_node = eb64_first(rx_qpkts);
+	while (qpkt_node) {
+		qpkt = eb64_entry(&qpkt_node->node, struct quic_packet, pn_node);
+		if (!quic_packet_decrypt(qpkt, tls_ctx))
+			return 0;
+
+		if (!quic_parse_packet_frames(qpkt)) {
+			fprintf(stderr,  "Could not parse the packet frames\n");
+			return 0;
+		}
+		qpkt_node = eb64_next(qpkt_node);
+		eb64_delete(&qpkt->pn_node);
+		pool_free(pool_head_quic_packet, qpkt);
+	}
+
+	return 1;
+}
+
 /* QUIC connection packet handler. */
 static struct task *quic_conn_io_cb(struct task *t, void *context, unsigned short state)
 {
@@ -669,6 +721,7 @@ static struct task *quic_conn_io_cb(struct task *t, void *context, unsigned shor
 			fprintf(stderr, "%s SSL handshake error\n", __func__);
 	}
 	else {
+		quic_treat_packets(ctx);
 	}
 
 	return NULL;

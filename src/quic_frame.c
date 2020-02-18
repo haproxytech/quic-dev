@@ -11,13 +11,14 @@
 
 #include <proto/quic_frame.h>
 
-int quic_parse_packet_frames(struct quic_conn *conn, struct quic_packet *pkt,
-                             unsigned char *pn, unsigned char *buf, const unsigned char *end)
+int quic_parse_packet_frames(struct quic_packet *qpkt)
 {
 	struct quic_frame frm;
-	const unsigned char *pos;
+	const unsigned char *pos, *end;
 
-	pos = buf;
+	/* Skip the AAD */
+	pos = qpkt->data + qpkt->aad_len;
+	end = qpkt->data + qpkt->len;
 
 	while (pos < end) {
 		if (!quic_parse_frame(&frm, &pos, end))
@@ -25,9 +26,7 @@ int quic_parse_packet_frames(struct quic_conn *conn, struct quic_packet *pkt,
 
 		switch (frm.type) {
 			case QUIC_FT_CRYPTO:
-			{
 				break;
-			}
 
 			case QUIC_FT_PADDING:
 				/* This frame must be the last found in the packet. */
@@ -35,6 +34,12 @@ int quic_parse_packet_frames(struct quic_conn *conn, struct quic_packet *pkt,
 					fprintf(stderr, "Wrong frame! (%ld len: %lu)\n", end - pos, frm.padding.len);
 					return 0;
 				}
+				break;
+
+			case QUIC_FT_ACK:
+				break;
+
+			case QUIC_FT_PING:
 				break;
 
 			default:
