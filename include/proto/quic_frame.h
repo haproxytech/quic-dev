@@ -775,8 +775,10 @@ static inline int quic_parse_connection_close_frame(struct quic_frame *frm,
 	    end - *buf < connection_close->reason_phrase_len)
 		return 0;
 
-	memcpy(connection_close->reason_phrase, *buf, connection_close->reason_phrase_len);
-	*buf += connection_close->reason_phrase_len;
+	if (connection_close->reason_phrase_len) {
+		memcpy(connection_close->reason_phrase, *buf, connection_close->reason_phrase_len);
+		*buf += connection_close->reason_phrase_len;
+	}
 
 	return 1;
 }
@@ -797,8 +799,10 @@ static inline int quic_build_connection_close_app_frame(unsigned char **buf, con
 	    end - *buf < connection_close_app->reason_phrase_len)
 		return 0;
 
-	memcpy(*buf, connection_close_app->reason_phrase, connection_close_app->reason_phrase_len);
-	*buf += connection_close_app->reason_phrase_len;
+	if (connection_close_app->reason_phrase_len) {
+		memcpy(*buf, connection_close_app->reason_phrase, connection_close_app->reason_phrase_len);
+		*buf += connection_close_app->reason_phrase_len;
+	}
 
 	return 1;
 }
