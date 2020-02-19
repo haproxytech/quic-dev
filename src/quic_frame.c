@@ -42,8 +42,11 @@ int quic_parse_packet_frames(struct quic_packet *qpkt)
 			case QUIC_FT_PING:
 				break;
 
-			default:
+			case QUIC_FT_CONNECTION_CLOSE:
+			case QUIC_FT_CONNECTION_CLOSE_APP:
 				break;
+			default:
+				return 0;
 		}
 	}
 

@@ -600,6 +600,8 @@ static int quic_parse_handshake_packet(struct quic_packet *qpkt, struct quic_con
 			break;
 		case QUIC_FT_PING:
 			break;
+		case QUIC_FT_CONNECTION_CLOSE:
+			break;
 		default:
 			return 0;
 		}
