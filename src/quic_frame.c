@@ -85,6 +85,7 @@ int (*quic_build_frame_funcs[])(unsigned char **, const unsigned char *,
 	[QUIC_FT_PATH_RESPONSE]        = quic_build_path_response_frame,
 	[QUIC_FT_CONNECTION_CLOSE]     = quic_build_connection_close_frame,
 	[QUIC_FT_CONNECTION_CLOSE_APP] = quic_build_connection_close_app_frame,
+	[QUIC_FT_HANDSHAKE_DONE]       = quic_build_handshake_done_frame,
 };
 
 int (*quic_parse_frame_funcs[])(struct quic_frame *frm,
@@ -119,5 +120,6 @@ int (*quic_parse_frame_funcs[])(struct quic_frame *frm,
 	[QUIC_FT_PATH_RESPONSE]        = quic_parse_path_response_frame,
 	[QUIC_FT_CONNECTION_CLOSE]     = quic_parse_connection_close_frame,
 	[QUIC_FT_CONNECTION_CLOSE_APP] = quic_parse_connection_close_app_frame,
+	[QUIC_FT_HANDSHAKE_DONE]       = quic_parse_handshake_done_frame,
 };
 

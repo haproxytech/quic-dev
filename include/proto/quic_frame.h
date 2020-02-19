@@ -830,6 +830,28 @@ static inline int quic_parse_connection_close_app_frame(struct quic_frame *frm,
 }
 
 /*
+ * Encode a HANDSHAKE_DONE frame into <buf> buffer.
+ * Always succeeds.
+ */
+static int inline quic_build_handshake_done_frame(unsigned char **buf, const unsigned char *end,
+                                                  struct quic_frame *frm)
+{
+	/* No field */
+	return 1;
+}
+
+/*
+ * Parse a HANDSHAKE_DONE frame at QUIC layer from <buf> buffer with <end> as end into <frm> frame.
+ * Always succeed.
+ */
+static inline int quic_parse_handshake_done_frame(struct quic_frame *frm,
+                                                  const unsigned char **buf, const unsigned char *end)
+{
+	/* No field */
+	return 1;
+}
+
+/*
  * Encode <frm> QUIC frame into <buf> buffer.
  * Returns 1 if succeded (enough room in <buf> to encode the frame), 0 if not.
  */

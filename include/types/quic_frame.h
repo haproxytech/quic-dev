@@ -61,6 +61,7 @@ enum quic_frame_type {
 	QUIC_FT_PATH_RESPONSE        = 0x1b,
 	QUIC_FT_CONNECTION_CLOSE     = 0x1c,
 	QUIC_FT_CONNECTION_CLOSE_APP = 0x1d,
+	QUIC_FT_HANDSHAKE_DONE       = 0x1e,
 	/* Do not insert enums after the following one. */
 	QUIC_FT_MAX
 };
