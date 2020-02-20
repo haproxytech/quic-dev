@@ -146,11 +146,15 @@ __attribute__((format (printf, 3, 4)))
 void hexdump(const void *buf, size_t buflen, const char *title_fmt, ...) {}
 #endif
 
-DECLARE_POOL(pool_head_quic_conn, "quic_conn",
-             sizeof(struct quic_conn) + QUIC_CID_MAXLEN);
+DECLARE_STATIC_POOL(pool_head_quic_conn, "quic_conn",
+                    sizeof(struct quic_conn) + QUIC_CID_MAXLEN);
 DECLARE_STATIC_POOL(pool_head_quic_packet, "quic_packet", sizeof(struct quic_packet));
 
-DECLARE_STATIC_POOL(quic_conn_ctx_pool, "quic_conn_ctx_pool", sizeof(struct quic_conn_ctx));
+DECLARE_STATIC_POOL(pool_head_quic_conn_ctx, "quic_conn_ctx_pool", sizeof(struct quic_conn_ctx));
+
+DECLARE_STATIC_POOL(pool_head_quic_crypto_frm_pool, "quic_crypto_frm_pool", sizeof(struct quic_crypto_frm));
+
+DECLARE_STATIC_POOL(pool_head_quic_crypto_buf, "quic_crypto_buf_pool", sizeof(struct quic_crypto_buf));
 
 static BIO_METHOD *ha_quic_meth;
 
@@ -206,31 +210,96 @@ int ha_quic_set_encryption_secrets(SSL *ssl, enum ssl_encryption_level_t level,
 	return 1;
 }
 
+/*
+ * This function copies the CRYPTO data provided by the TLS stack found at <data>
+ * with <len> as size in CRYPTO buffers dedicated to store the information about outgoing
+ * CRYPTO frames so that to be able to replay the CRYPTO data streams.
+ * It fails only if it could not managed to allocate enough CRYPTO buffers to store all the data.
+ * Note that CRYPTO data may exist at any encryption level except at 0-RTT.
+ */
+static int quic_crypto_data_cpy(struct quic_enc_level *qel,
+                                const unsigned char *data, size_t len)
+{
+	struct quic_crypto_buf **qcb;
+	/* The remaining byte to store in CRYPTO buffers. */
+	size_t left, *nb_buf;
+
+	nb_buf = &qel->tx.crypto.nb_buf;
+	qcb = &qel->tx.crypto.bufs[*nb_buf];
+	left = len;
+
+	while (left > 0 && *nb_buf < QUIC_CRYPTO_BUF_MAX) {
+		size_t to_copy;
+
+		if (!*qcb) {
+			*qcb = pool_alloc(pool_head_quic_crypto_buf);
+			if (!*qcb) {
+				fprintf(stderr, "%s: crypto allocation failed\n", __func__);
+				return 0;
+			}
+			(*qcb)->sz = 0;
+		}
+		to_copy = left > QUIC_CRYPTO_BUF_SZ ? QUIC_CRYPTO_BUF_SZ : left;
+		to_copy -= (*qcb)->sz;
+		memcpy((*qcb)->data, data, to_copy);
+		/* Increment the total size of this CRYPTO buffers by <to_copy>. */
+		qel->tx.crypto.sz += (*qcb)->sz = to_copy;
+		left -= to_copy;
+		data += to_copy;
+		if ((*qcb)->sz >= QUIC_CRYPTO_BUF_MAX) {
+			++*nb_buf;
+			qcb++;
+		}
+	}
+
+	return left == 0;
+}
+
 int ha_quic_add_handshake_data(SSL *ssl, enum ssl_encryption_level_t level,
                                const uint8_t *data, size_t len)
 {
+#if 0
 	unsigned char buf[QUIC_PACKET_MAXLEN];
 
 	const unsigned char *pos = data;
 	const unsigned char *end = data + len;
-	struct connection *conn = SSL_get_ex_data(ssl, ssl_app_data_index);
 	struct quic_conn_ctx *ctx = conn->xprt_ctx;
-	enum quic_tls_enc_level enc_level = ssl_to_quic_enc_level(level);
+#endif
+	struct connection *conn;
+	enum quic_tls_enc_level tls_enc_level;
+	struct quic_enc_level *qel;
 
+#if 0
 	struct buffer tmpbuf = {
 		.area = (void *)buf,
 		.size = sizeof buf,
 	};
+#endif
+	fprintf(stderr, "%s tid: %u\n", __func__, tid);
+	conn = SSL_get_ex_data(ssl, ssl_app_data_index);
+	tls_enc_level = ssl_to_quic_enc_level(level);
+	qel = &conn->quic_conn->enc_levels[tls_enc_level];
 
-	fprintf(stderr, "%s\n", __func__);
 	hexdump(data, len, "===> %s (level %d)\n", __func__, level);
 
+	if (tls_enc_level != QUIC_TLS_ENC_LEVEL_INITIAL &&
+	    tls_enc_level != QUIC_TLS_ENC_LEVEL_HANDSHAKE)
+		return 0;
+
+	if (!quic_crypto_data_cpy(qel, data, len)) {
+		fprintf(stderr, "Too much crypto data (%zu bytes)\n", len);
+		return 0;
+	}
+	fprintf(stderr, "%s total CRYPTO buf size: %zu\n", __func__, qel->tx.crypto.sz);
+
+	tasklet_wakeup(((struct quic_conn_ctx *)conn->xprt_ctx)->wait_event.tasklet);
+#if 0
 	while (pos < end) {
 		ssize_t ret;
 		unsigned char *bufp = buf;
 		const unsigned char *bufendp = buf + sizeof buf;
 
-		ret = quic_build_handshake_packet(&bufp, bufendp,  &pos, end, enc_level, conn->quic_conn);
+		ret = quic_build_handshake_packet(&bufp, bufendp,  &pos, end, tls_enc_level, conn->quic_conn);
 		if (ret == -1) {
 			fprintf(stderr, "%s could not build a handshake packet\n", __func__);
 			continue;
@@ -248,6 +317,7 @@ int ha_quic_add_handshake_data(SSL *ssl, enum ssl_encryption_level_t level,
 		}
 
 	}
+#endif
 
 	return 1;
 }
@@ -657,7 +727,7 @@ static int quic_conn_do_handshake(struct quic_conn_ctx *ctx)
 	if (ret != 1) {
 		ret = SSL_get_error(ctx->ssl, ret);
 		fprintf(stderr, "SSL_do_handshake() error: %d\n", ret);
-		return 0;
+		return ret == SSL_ERROR_WANT_READ || ret == SSL_ERROR_WANT_WRITE;
 	}
 
 	fprintf(stderr, "SSL_do_handhake() succeeded\n");
@@ -717,7 +787,7 @@ static struct task *quic_conn_io_cb(struct task *t, void *context, unsigned shor
 {
 	struct quic_conn_ctx *ctx = context;
 
-	fprintf(stderr, "%s\n", __func__);
+	fprintf(stderr, "%s: tid: %u\n", __func__, tid);
 	if (ctx->conn->flags & CO_FL_SSL_WAIT_HS) {
 		if (!quic_conn_do_handshake(ctx))
 			fprintf(stderr, "%s SSL handshake error\n", __func__);
@@ -752,7 +822,7 @@ static int quic_conn_init(struct connection *conn, void **xprt_ctx)
 	if (!conn_ctrl_ready(conn))
 		return 0;
 
-	ctx = pool_alloc(quic_conn_ctx_pool);
+	ctx = pool_alloc(pool_head_quic_conn_ctx);
 	if (!ctx) {
 		conn->err_code = CO_ER_SYS_MEMLIM;
 		goto err;
@@ -805,7 +875,7 @@ static int quic_conn_init(struct connection *conn, void **xprt_ctx)
  err:
 	if (ctx->wait_event.tasklet)
 		tasklet_free(ctx->wait_event.tasklet);
-	pool_free(quic_conn_ctx_pool, ctx);
+	pool_free(pool_head_quic_conn_ctx, ctx);
 	TRACE_DEVEL("leaving in error", QUIC_EV_CONN_NEW|QUIC_EV_CONN_ERR, conn);
 	return -1;
 }
@@ -1104,8 +1174,14 @@ static int quic_new_conn_init(struct listener *l, struct quic_conn *conn, uint32
 		quic_tls_ctx_pktns_init(&conn->tx_ns[i]);
 		quic_tls_ctx_pktns_init(&conn->rx_ns[i]);
 	}
-	for (i = 0; i < QUIC_TLS_ENC_LEVEL_MAX; i++)
-		conn->enc_levels[i].rx.qpkts = EB_ROOT;
+	for (i = 0; i < QUIC_TLS_ENC_LEVEL_MAX; i++) {
+		struct quic_enc_level *qel= &conn->enc_levels[i];
+
+		qel->rx.qpkts = EB_ROOT;
+		qel->tx.crypto.offset = 0;
+		qel->tx.crypto.nb_buf = 0;
+		memset(qel->tx.crypto.bufs, 0, sizeof qel->tx.crypto.bufs);
+	}
 
 	return 1;
 }
@@ -1549,6 +1625,7 @@ static ssize_t quic_do_build_handshake_packet(unsigned char **buf, const unsigne
 	return *buf - beg;
 }
 
+__attribute__((unused))
 static ssize_t quic_build_handshake_packet(unsigned char **buf, const unsigned char *end,
                                            const unsigned char **data, const unsigned char *end_data,
                                            enum quic_tls_enc_level level, struct quic_conn *conn)
@@ -1565,9 +1642,6 @@ static ssize_t quic_build_handshake_packet(unsigned char **buf, const unsigned c
 	struct quic_pktns *tx_pktns = &conn->tx_ns[pktns];
 	unsigned char iv[12];
 	uint64_t pn;
-
-	if ((level != QUIC_TLS_ENC_LEVEL_INITIAL && level != QUIC_TLS_ENC_LEVEL_HANDSHAKE))
-		return -1;
 
 	beg = *buf;
 	enc_level = &conn->enc_levels[level];
@@ -1642,7 +1716,7 @@ static size_t quic_conn_handler(int fd, void *ctx)
 			 * Destination Connection ID than the first packet in the datagram.
 			 */
 			quic_packets_read(buf->area, buf->data, l, &saddr, &saddrlen);
-			fd_done_recv(fd);
+			//fd_done_recv(fd);
 		}
 	} while (0);
 
@@ -1654,6 +1728,7 @@ void quic_fd_handler(int fd)
 {
 	struct listener *l = fdtab[fd].owner;
 
+	fprintf(stderr, "%s: tid: %u\n", __func__, tid);
 	if (fdtab[fd].ev & FD_POLL_IN)
 		quic_conn_handler(fd, l);
 }

@@ -139,6 +139,37 @@ struct quic_packet {
 	struct eb64_node pn_node;
 };
 
+/*
+ * This structure is to store the CRYPTO frames information for outoing
+ * QUIC packets. We make the assumption there is only one CRYPTO frame
+ * by packet.
+ */
+struct quic_crypto_frm {
+	uint64_t offset;
+	size_t len;
+	/* Packet number this CRYPTO frame is attached to. */
+	struct eb64_node pn;
+};
+
+/* The maximum allowed size of CRYPTO data buffer provided by the TLS stack. */
+#define QUIC_CRYPTO_BUF_SHIFT  14
+#define QUIC_CRYPTO_BUF_SZ    (1UL << QUIC_CRYPTO_BUF_SHIFT) /* 16 KB */
+
+/*
+ * The maximum number of allowed buffers of QUIC_CRYPTO_BUF_SZ bytes used during
+ * the TLS handshakes.
+ */
+#define QUIC_CRYPTO_BUF_MAX   32
+
+/*
+ * CRYPTO buffer struct.
+ * Such buffers are used to send CRYPTO data.
+ */
+struct quic_crypto_buf {
+	unsigned char data[QUIC_CRYPTO_BUF_SZ];
+	size_t sz;
+};
+
 struct quic_enc_level {
 	struct quic_tls_ctx tls_ctx;
 	struct {
@@ -152,6 +183,12 @@ struct quic_enc_level {
 	struct {
 		struct eb_root qpkts;
 		struct {
+			struct quic_crypto_buf *bufs[QUIC_CRYPTO_BUF_MAX];
+			/* The number of element in use in the previous array. */
+			size_t nb_buf;
+			/* The total size of the CRYPTO data stored in the CRYPTO buffers. */
+			size_t sz;
+			/* The offset of the CRYPT0 data stream. */
 			uint64_t offset;
 		} crypto;
 	} tx;
