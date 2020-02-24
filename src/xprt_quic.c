@@ -281,7 +281,11 @@ int ha_quic_add_handshake_data(SSL *ssl, enum ssl_encryption_level_t level,
 
 int ha_quic_flush_flight(SSL *ssl)
 {
+	struct connection *conn = SSL_get_ex_data(ssl, ssl_app_data_index);
+
 	fprintf(stderr, "%s\n", __func__);
+	tasklet_wakeup(((struct quic_conn_ctx *)conn->xprt_ctx)->wait_event.tasklet);
+
 	return 1;
 }
 
