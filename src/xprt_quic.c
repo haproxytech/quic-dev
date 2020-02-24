@@ -255,32 +255,17 @@ static int quic_crypto_data_cpy(struct quic_enc_level *qel,
 	return left == 0;
 }
 
+
 int ha_quic_add_handshake_data(SSL *ssl, enum ssl_encryption_level_t level,
                                const uint8_t *data, size_t len)
 {
-#if 0
-	unsigned char buf[QUIC_PACKET_MAXLEN];
-
-	const unsigned char *pos = data;
-	const unsigned char *end = data + len;
-	struct quic_conn_ctx *ctx = conn->xprt_ctx;
-#endif
 	struct connection *conn;
 	enum quic_tls_enc_level tls_enc_level;
 	struct quic_enc_level *qel;
 
-#if 0
-	struct buffer tmpbuf = {
-		.area = (void *)buf,
-		.size = sizeof buf,
-	};
-#endif
-	fprintf(stderr, "%s tid: %u\n", __func__, tid);
 	conn = SSL_get_ex_data(ssl, ssl_app_data_index);
 	tls_enc_level = ssl_to_quic_enc_level(level);
 	qel = &conn->quic_conn->enc_levels[tls_enc_level];
-
-	hexdump(data, len, "===> %s (level %d)\n", __func__, level);
 
 	if (tls_enc_level != QUIC_TLS_ENC_LEVEL_INITIAL &&
 	    tls_enc_level != QUIC_TLS_ENC_LEVEL_HANDSHAKE)
@@ -290,34 +275,6 @@ int ha_quic_add_handshake_data(SSL *ssl, enum ssl_encryption_level_t level,
 		fprintf(stderr, "Too much crypto data (%zu bytes)\n", len);
 		return 0;
 	}
-	fprintf(stderr, "%s total CRYPTO buf size: %zu\n", __func__, qel->tx.crypto.sz);
-
-	tasklet_wakeup(((struct quic_conn_ctx *)conn->xprt_ctx)->wait_event.tasklet);
-#if 0
-	while (pos < end) {
-		ssize_t ret;
-		unsigned char *bufp = buf;
-		const unsigned char *bufendp = buf + sizeof buf;
-
-		ret = quic_build_handshake_packet(&bufp, bufendp,  &pos, end, tls_enc_level, conn->quic_conn);
-		if (ret == -1) {
-			fprintf(stderr, "%s could not build a handshake packet\n", __func__);
-			continue;
-		}
-		tmpbuf.data = ret;
-		ret = ctx->xprt->snd_buf(conn, conn->xprt_ctx, &tmpbuf, ret, 0);
-		if (ret > 0) {
-			switch (ctx->state) {
-			case QUIC_HS_ST_SERVER_INITIAL:
-				ctx->state = QUIC_HS_ST_SERVER_HANSHAKE;
-				break;
-			default:
-				break;
-			}
-		}
-
-	}
-#endif
 
 	return 1;
 }
