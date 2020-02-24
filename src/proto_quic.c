@@ -926,7 +926,7 @@ int quic_bind_listener(struct listener *listener, char *errmsg, int errlen)
 	listener->state = LI_LISTEN;
 
 	fd_insert(fd, listener, quic_fd_handler,
-	          1 << (my_flsl(thread_mask(listener->bind_conf->bind_thread)) - 1));
+	          thread_mask(listener->bind_conf->bind_thread) & all_threads_mask);
 
  quic_return:
 	if (msg && errlen) {
