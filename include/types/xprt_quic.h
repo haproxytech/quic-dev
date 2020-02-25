@@ -151,15 +151,16 @@ struct quic_crypto_frm {
 	struct eb64_node pn;
 };
 
-/* The maximum allowed size of CRYPTO data buffer provided by the TLS stack. */
 #define QUIC_CRYPTO_BUF_SHIFT  14
+#define QUIC_CRYPTO_BUF_MASK   ((1UL << QUIC_CRYPTO_BUF_SHIFT) - 1)
+/* The maximum allowed size of CRYPTO data buffer provided by the TLS stack. */
 #define QUIC_CRYPTO_BUF_SZ    (1UL << QUIC_CRYPTO_BUF_SHIFT) /* 16 KB */
 
 /*
  * The maximum number of allowed buffers of QUIC_CRYPTO_BUF_SZ bytes used during
  * the TLS handshakes.
  */
-#define QUIC_CRYPTO_BUF_MAX   32
+#define QUIC_CRYPTO_BUF_MAX   64
 
 /*
  * CRYPTO buffer struct.
@@ -216,6 +217,11 @@ struct quic_conn {
 	struct quic_packet pkts[QUIC_CONN_MAX_PACKET];
 	/* Used only to reach the tasklet for the I/O handler from this quic_conn object. */
 	struct connection *conn;
+	/* Output buffer used during the handshakes. */
+	struct {
+		unsigned char data[QUIC_PACKET_MAXLEN];
+		unsigned char *pos;
+	} obuf;
 };
 
 #endif /* _TYPES_XPRT_QUIC_H */

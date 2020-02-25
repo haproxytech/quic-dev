@@ -641,6 +641,101 @@ static int quic_parse_handshake_packet(struct quic_packet *qpkt, struct quic_con
 	return 1;
 }
 
+static int quic_send_handshake_packets(struct quic_conn_ctx *ctx)
+{
+	struct quic_conn *quic_conn;
+	unsigned char **obuf_pos;
+	const unsigned char *obuf_end;
+	enum quic_tls_enc_level tls_enc_level;
+	struct quic_enc_level *qel;
+	struct buffer tmpbuf = { };
+
+	const unsigned char *data, *pos, *end;
+	size_t datalen;
+	int idx;
+
+	quic_conn = ctx->conn->quic_conn;
+
+	/* Initialize the output buffer pointers. */
+	obuf_pos = &quic_conn->obuf.pos;
+	obuf_end = quic_conn->obuf.data + sizeof quic_conn->obuf.data;
+
+	tmpbuf.area = (char *)quic_conn->obuf.data;
+	tmpbuf.size = sizeof quic_conn->obuf.data;
+	tmpbuf.data = *obuf_pos - quic_conn->obuf.data;
+
+ next_level:
+	switch (ctx->state) {
+	case QUIC_HS_ST_SERVER_INITIAL:
+		tls_enc_level = QUIC_TLS_ENC_LEVEL_INITIAL;
+		break;
+	case QUIC_HS_ST_SERVER_HANSHAKE:
+		tls_enc_level = QUIC_TLS_ENC_LEVEL_HANDSHAKE;
+		break;
+	default:
+		return 0;
+	}
+
+	qel = &quic_conn->enc_levels[tls_enc_level];
+
+	/* Nothing to do? */
+	if (!qel->tx.crypto.sz || qel->tx.crypto.offset == qel->tx.crypto.sz)
+		return 1;
+
+	fprintf(stderr, "Remaining number of bytes to send: %zu\n",
+	        qel->tx.crypto.sz - qel->tx.crypto.offset);
+
+	idx = qel->tx.crypto.offset >> QUIC_CRYPTO_BUF_SHIFT;
+	data = (const unsigned char *)qel->tx.crypto.bufs[idx]->data;
+	datalen = qel->tx.crypto.bufs[idx]->sz;
+	pos = data + (qel->tx.crypto.offset & QUIC_CRYPTO_BUF_MASK);
+	end = data + datalen;
+
+	while (pos < end) {
+		ssize_t ret, to_send;
+
+		to_send = quic_build_handshake_packet(obuf_pos, obuf_end,  &pos, end, tls_enc_level, quic_conn);
+		fprintf(stderr, "%s: to send: %zd\n", __func__, to_send);
+		switch (to_send) {
+		case -2:
+			fprintf(stderr, "%s: Encryption error\n", __func__);
+			goto err;
+		case -1:
+			fprintf(stderr, "%s: Buffer full\n", __func__);
+			tmpbuf.data = 0;
+			*obuf_pos = quic_conn->obuf.data;
+			continue;
+		default:
+			tmpbuf.data += to_send;
+		}
+
+		if (qel->tx.crypto.offset == qel->tx.crypto.sz) {
+			/* If the data for this encryption level has been sent, select the next level. */
+			if (ctx->state == QUIC_HS_ST_SERVER_INITIAL) {
+				ctx->state = QUIC_HS_ST_SERVER_HANSHAKE;
+				goto next_level;
+			}
+		}
+
+		ret = ctx->xprt->snd_buf(quic_conn->conn, quic_conn->conn->xprt_ctx,
+		                         &tmpbuf, tmpbuf.data, 0);
+		if (ret <= 0)
+			goto out;
+
+		fprintf(stderr, "%s: sending %zu bytes\n", __func__, tmpbuf.data);
+		if (pos == end) {
+			tmpbuf.data = 0;
+			*obuf_pos = quic_conn->obuf.data;
+		}
+	}
+
+ out:
+	return 1;
+
+ err:
+	return 0;
+}
+
 static int quic_conn_do_handshake(struct quic_conn_ctx *ctx)
 {
 	struct quic_conn *quic_conn;
@@ -653,6 +748,8 @@ static int quic_conn_do_handshake(struct quic_conn_ctx *ctx)
 
 	fprintf(stderr, "%s ctx state: %d\n", __func__, ctx->state);
 	quic_conn = ctx->conn->quic_conn;
+
+	quic_send_handshake_packets(ctx);
 
 	switch (ctx->state) {
 	case QUIC_HS_ST_SERVER_INITIAL:
@@ -1118,6 +1215,9 @@ static int quic_new_conn_init(struct listener *l, struct quic_conn *conn, uint32
 	memcpy(conn->dcid.data, scid, scid_len);
 	conn->dcid.len = scid_len;
 
+	/* Initialize the output buffer */
+	conn->obuf.pos = conn->obuf.data;
+
 	/* Select our SCID which is the connection ID use to match the client connections. */
 	conn->scid.len = QUIC_CID_LEN;
 	RAND_bytes(conn->scid.data, conn->scid.len);
@@ -1578,22 +1678,18 @@ static ssize_t quic_do_build_handshake_packet(unsigned char **buf, const unsigne
 		return -1;
 
 	*data += crypto->len;
-	/* Increment the packet number. */
-	tx_pktns->last_pn++;
-	/* Increment the offset of this crypto data stream */
-	enc_level->tx.crypto.offset += crypto->len;
 
 	return *buf - beg;
 }
 
-__attribute__((unused))
 static ssize_t quic_build_handshake_packet(unsigned char **buf, const unsigned char *end,
                                            const unsigned char **data, const unsigned char *end_data,
                                            enum quic_tls_enc_level level, struct quic_conn *conn)
 {
 	/* A pointer to the packet number fiel in <buf> */
 	unsigned char *buf_pn;
-	unsigned char *beg, *payload;
+	unsigned char *beg, *pos, *payload;
+	const unsigned char *pdata;
 	size_t pn_len, aad_len;
 	ssize_t pkt_len;
 	int payload_len;
@@ -1604,40 +1700,50 @@ static ssize_t quic_build_handshake_packet(unsigned char **buf, const unsigned c
 	unsigned char iv[12];
 	uint64_t pn;
 
-	beg = *buf;
+	beg = pos = *buf;
+	pdata = *data;
 	enc_level = &conn->enc_levels[level];
 	pn = tx_pktns->last_pn + 1;
 
 	/* <pkt_len> is the length of this packet before encryption. */
-	pkt_len = quic_do_build_handshake_packet(buf, end, &buf_pn, &pn_len,
-	                                         data, end_data, level, conn);
+	pkt_len = quic_do_build_handshake_packet(&pos, end, &buf_pn, &pn_len,
+	                                         &pdata, end_data, level, conn);
 	if (pkt_len == -1)
 		return -1;
 
 	hexdump(beg, pkt_len, "%s PKT (%zd)\n", __func__, pkt_len);
 	payload = (unsigned char *)buf_pn + pn_len;
-	payload_len = *buf - payload;
+	payload_len = pos - payload;
 	aad_len = payload - beg;
 
 	tls_ctx = &enc_level->tls_ctx;
 	if (!quic_aead_iv_build(iv, sizeof iv, tls_ctx->tx.iv, sizeof tls_ctx->tx.iv, pn)) {
 		fprintf(stderr, "%s AEAD IV building failed\n", __func__);
-		return 0;
+		return -2;
 	}
 
 	if (!quic_tls_encrypt(payload, payload_len, beg, aad_len,
 	                     tls_ctx->aead, tls_ctx->tx.key, iv)) {
 		fprintf(stderr, "QUIC packet encryption failed\n");
-	    return -1;
+	    return -2;
 	}
 
-	*buf += QUIC_TLS_TAG_LEN;
+	pos += QUIC_TLS_TAG_LEN;
 
 	if (!quic_apply_header_protection(beg, buf_pn, pn_len, level,
 	                                  tls_ctx->hp, tls_ctx->tx.hp_key)) {
 		fprintf(stderr, "Could not apply the header protection\n");
-		return -1;
+		return -2;
 	}
+
+	/* Increment the packet number. */
+	tx_pktns->last_pn++;
+	/* Increment the offset of this crypto data stream */
+	enc_level->tx.crypto.offset += pdata - *data;
+	/* Update the CRYPTO data pointer. */
+	*data = pdata;
+
+	*buf = pos;
 
 	return *buf - beg;
 }
