@@ -179,12 +179,51 @@ static int inline quic_build_ack_frame(unsigned char **buf, const unsigned char 
 static int inline quic_parse_ack_frame(struct quic_frame *frm,
                                        const unsigned char **buf, const unsigned char *end)
 {
+	int i, ret;
 	struct quic_ack *ack = &frm->ack;
+	uint64_t smallest;
 
-	return quic_dec_int(&ack->largest_ack, buf, end) &&
-		quic_dec_int(&ack->ack_delay, buf, end) &&
-		quic_dec_int(&ack->first_ack_range, buf, end) &&
-		quic_dec_int(&ack->ack_range_num, buf, end);
+	ret = quic_dec_int(&ack->largest_ack, buf, end);
+	if (!ret)
+		return 0;
+
+	fprintf(stderr, "+++++++++++\nlargest_ack    : %lu\n", ack->largest_ack);
+	ret = quic_dec_int(&ack->ack_delay, buf, end);
+	if (!ret)
+		return 0;
+
+	fprintf(stderr, "ack_delay      : %lu\n", ack->ack_delay);
+	ret = quic_dec_int(&ack->ack_range_num, buf, end);
+	if (!ret)
+		return 0;
+
+	fprintf(stderr, "ack_range_num  : %lu\n", ack->ack_range_num);
+	ret = quic_dec_int(&ack->first_ack_range, buf, end);
+	if (!ret)
+		return 0;
+
+	fprintf(stderr, "first_ack_range: %lu\n", ack->first_ack_range);
+	smallest = ack->largest_ack - ack->first_ack_range;
+	fprintf(stderr, "acks from %lu -> %lu\n", smallest, ack->largest_ack);
+	for (i = 0; i < ack->ack_range_num; i++) {
+		uint64_t gap, ack_range;
+		uint64_t largest;
+
+		ret = quic_dec_int(&gap, buf, end);
+		if (!ret)
+			return 0;
+		ret = quic_dec_int(&ack_range, buf, end);
+		if (!ret)
+			return 0;
+
+		largest = smallest - gap - 2;
+		smallest = largest - ack_range;
+		fprintf(stderr, "acks from %lu -> %lu\n", smallest, largest);
+		fprintf(stderr, "ack range %d: gap: %lu ack_range: %lu\n", i, gap, ack_range);
+	}
+	fprintf(stderr, "+++++++++++\n");
+
+	return 1;
 }
 
 /*
