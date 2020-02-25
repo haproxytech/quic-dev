@@ -45,6 +45,10 @@ int quic_parse_packet_frames(struct quic_packet *qpkt)
 			case QUIC_FT_CONNECTION_CLOSE:
 			case QUIC_FT_CONNECTION_CLOSE_APP:
 				break;
+			case QUIC_FT_NEW_CONNECTION_ID:
+			case QUIC_FT_STREAM_A:
+			case QUIC_FT_STREAM_B:
+				break;
 			default:
 				return 0;
 		}
