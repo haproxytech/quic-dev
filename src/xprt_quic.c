@@ -650,8 +650,7 @@ static int quic_send_handshake_packets(struct quic_conn_ctx *ctx)
 	struct quic_enc_level *qel;
 	struct buffer tmpbuf = { };
 
-	const unsigned char *data, *pos, *end;
-	size_t datalen;
+	const unsigned char *ppos, *pos, *end;
 	int idx;
 
 	quic_conn = ctx->conn->quic_conn;
@@ -679,43 +678,62 @@ static int quic_send_handshake_packets(struct quic_conn_ctx *ctx)
 	qel = &quic_conn->enc_levels[tls_enc_level];
 
 	/* Nothing to do? */
-	if (!qel->tx.crypto.sz || qel->tx.crypto.offset == qel->tx.crypto.sz)
+	fprintf(stderr, "%s nothing to do? %lu %lu left: %zu\n",
+	        __func__, qel->tx.crypto.offset, qel->tx.crypto.sz, tmpbuf.data);
+
+	/* No CRYPTO data to send. */
+	if (!qel->tx.crypto.sz)
 		return 1;
 
-	fprintf(stderr, "Remaining number of bytes to send: %zu\n",
-	        qel->tx.crypto.sz - qel->tx.crypto.offset);
+	if (qel->tx.crypto.offset == qel->tx.crypto.sz && tmpbuf.data) {
+	    if (ctx->xprt->snd_buf(quic_conn->conn, quic_conn->conn->xprt_ctx,
+	                           &tmpbuf, tmpbuf.data, 0) <= 0)
+			goto out;
+		return 1;
+	}
 
 	idx = qel->tx.crypto.offset >> QUIC_CRYPTO_BUF_SHIFT;
-	data = (const unsigned char *)qel->tx.crypto.bufs[idx]->data;
-	datalen = qel->tx.crypto.bufs[idx]->sz;
-	pos = data + (qel->tx.crypto.offset & QUIC_CRYPTO_BUF_MASK);
-	end = data + datalen;
+	ppos = pos = (const unsigned char *)qel->tx.crypto.bufs[idx]->data +
+		(qel->tx.crypto.offset & QUIC_CRYPTO_BUF_MASK);
+	end = (const unsigned char *)qel->tx.crypto.bufs[idx]->data +
+		qel->tx.crypto.bufs[idx]->sz;
+
+	fprintf(stderr, "Remaining number of bytes to send: %zu (crypto buf #%d)\n",
+	        qel->tx.crypto.sz - qel->tx.crypto.offset, idx);
 
 	while (pos < end) {
 		ssize_t ret, to_send;
 
-		to_send = quic_build_handshake_packet(obuf_pos, obuf_end,  &pos, end, tls_enc_level, quic_conn);
+		to_send = quic_build_handshake_packet(obuf_pos, obuf_end,  &ppos, end, tls_enc_level, quic_conn);
 		fprintf(stderr, "%s: to send: %zd\n", __func__, to_send);
 		switch (to_send) {
 		case -2:
 			fprintf(stderr, "%s: Encryption error\n", __func__);
 			goto err;
 		case -1:
-			fprintf(stderr, "%s: Buffer full\n", __func__);
-			tmpbuf.data = 0;
-			*obuf_pos = quic_conn->obuf.data;
-			continue;
+			fprintf(stderr, "%s: Buffer full left: %zu\n", __func__, tmpbuf.data);
+			break;
 		default:
 			tmpbuf.data += to_send;
 		}
 
+		/* If all the data for this encryption level has been prepared, select the next level. */
 		if (qel->tx.crypto.offset == qel->tx.crypto.sz) {
-			/* If the data for this encryption level has been sent, select the next level. */
 			if (ctx->state == QUIC_HS_ST_SERVER_INITIAL) {
 				ctx->state = QUIC_HS_ST_SERVER_HANSHAKE;
 				goto next_level;
 			}
 		}
+
+		/*
+		 * If we have reached the end of a crypto buffer (ppos == end) and
+		 * if the output buffer is not full (*obuf_pos != obuf_end && to_send != -1) and
+		 * if there is remaining data to send (qel->tx.crypto.offset != qel->tx.crypto.sz),
+		 * let go out to to come back later to completely fill the output buffer.
+		 */
+		if (ppos == end && *obuf_pos != obuf_end && to_send != -1 &&
+		    qel->tx.crypto.offset != qel->tx.crypto.sz)
+			goto out;
 
 		ret = ctx->xprt->snd_buf(quic_conn->conn, quic_conn->conn->xprt_ctx,
 		                         &tmpbuf, tmpbuf.data, 0);
@@ -723,13 +741,14 @@ static int quic_send_handshake_packets(struct quic_conn_ctx *ctx)
 			goto out;
 
 		fprintf(stderr, "%s: sending %zu bytes\n", __func__, tmpbuf.data);
-		if (pos == end) {
-			tmpbuf.data = 0;
-			*obuf_pos = quic_conn->obuf.data;
-		}
+		tmpbuf.data = 0;
+		*obuf_pos = quic_conn->obuf.data;
+		pos = ppos;
 	}
 
  out:
+	if (qel->tx.crypto.offset != qel->tx.crypto.sz || tmpbuf.data)
+		tasklet_wakeup(((struct quic_conn_ctx *)quic_conn->conn->xprt_ctx)->wait_event.tasklet);
 	return 1;
 
  err:
@@ -749,7 +768,8 @@ static int quic_conn_do_handshake(struct quic_conn_ctx *ctx)
 	fprintf(stderr, "%s ctx state: %d\n", __func__, ctx->state);
 	quic_conn = ctx->conn->quic_conn;
 
-	quic_send_handshake_packets(ctx);
+	if (!quic_send_handshake_packets(ctx))
+		return 0;
 
 	switch (ctx->state) {
 	case QUIC_HS_ST_SERVER_INITIAL:
