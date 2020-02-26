@@ -1731,7 +1731,6 @@ static ssize_t quic_build_handshake_packet(unsigned char **buf, const unsigned c
 	if (pkt_len == -1)
 		return -1;
 
-	hexdump(beg, pkt_len, "%s PKT (%zd)\n", __func__, pkt_len);
 	payload = (unsigned char *)buf_pn + pn_len;
 	payload_len = pos - payload;
 	aad_len = payload - beg;
