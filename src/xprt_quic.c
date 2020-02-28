@@ -617,6 +617,7 @@ static int quic_parse_handshake_packet(struct quic_packet *qpkt, struct quic_con
 					fprintf(stderr, "%s SSL providing QUIC data error\n", __func__);
 				}
 				else {
+					enc_level->rx.crypto.offset += frm.crypto.len;
 					fprintf(stderr, "SSL_provide_quic_data() succeded \n");
 				}
 			}
