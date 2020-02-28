@@ -935,6 +935,23 @@ static int quic_conn_init(struct connection *conn, void **xprt_ctx)
 		if (ssl_bio_and_sess_init(conn, bc->initial_ctx,
 		                          &ctx->ssl, &ctx->bio, ha_quic_meth, ctx) == -1)
 			goto err;
+
+		if (conn->quic_conn->version >= QUIC_PROTOCOL_VERSION_DRAFT_27) {
+			bc->enc_quic_params_len =
+				quic_transport_params_encode_draft27(bc->enc_quic_params,
+				                                     bc->enc_quic_params + sizeof bc->enc_quic_params,
+				                                     &bc->quic_params, 1);
+		}
+		else {
+			bc->enc_quic_params_len =
+				quic_transport_params_encode(bc->enc_quic_params,
+				                             bc->enc_quic_params + sizeof bc->enc_quic_params,
+				                             &bc->quic_params, 1);
+		}
+		if (!bc->enc_quic_params_len) {
+			fprintf(stderr, "QUIC transport parameters encoding failed");
+			goto err;
+		}
 		SSL_set_quic_transport_params(ctx->ssl, bc->enc_quic_params, bc->enc_quic_params_len);
 		SSL_set_accept_state(ctx->ssl);
 	}
@@ -1098,7 +1115,7 @@ static int quic_remove_header_protection(struct quic_conn *conn, struct quic_pac
 /*
  * Inspired from session_accept_fd().
  */
-static int quic_new_conn(struct quic_conn *quic_conn,
+static int quic_new_conn(struct quic_conn *quic_conn, uint32_t version,
                          struct listener *l, struct sockaddr_storage *saddr)
 {
 	struct connection *cli_conn;
@@ -1113,6 +1130,7 @@ static int quic_new_conn(struct quic_conn *quic_conn,
 
 	fprintf(stderr, "%s conn: @%p\n", __func__, cli_conn);
 	quic_conn->conn = cli_conn;
+	quic_conn->version = version;
 	cli_conn->quic_conn = quic_conn;
 
 	/* XXX Not sure it is safe to keep this statement. */
@@ -1220,13 +1238,12 @@ static int quic_conn_derive_initial_secrets(struct quic_tls_ctx *ctx,
 	return 1;
 }
 
-static int quic_new_conn_init(struct listener *l, struct quic_conn *conn, uint32_t version,
+static int quic_new_conn_init(struct listener *l, struct quic_conn *conn,
                               unsigned char *dcid, size_t dcid_len, unsigned char *scid, size_t scid_len)
 {
 	int i;
 
 	fprintf(stderr, "%s: new quic_conn @%p\n", __func__, conn);
-	conn->version = version;
 	/* Copy the initial DCID. */
 	conn->idcid.len = dcid_len;
 	memcpy(conn->idcid.data, dcid, dcid_len);
@@ -1364,14 +1381,15 @@ static ssize_t quic_packet_read(unsigned char **buf, const unsigned char *end,
 			}
 
 			conn = pool_alloc(pool_head_quic_conn);
-			memset(conn, 0, sizeof *conn);
-			ret = quic_new_conn(conn, l, saddr);
-
-			if (!conn || ret == -1)
+			if (!conn)
 				goto err;
 
-			if (!quic_new_conn_init(l, conn, qpkt->version,
-			                        qpkt->dcid.data, cid_lookup_len, qpkt->scid.data, qpkt->scid.len))
+			memset(conn, 0, sizeof *conn);
+			ret = quic_new_conn(conn, qpkt->version, l, saddr);
+			if (ret == -1)
+				goto err;
+
+			if (!quic_new_conn_init(l, conn, qpkt->dcid.data, cid_lookup_len, qpkt->scid.data, qpkt->scid.len))
 				goto err;
 		}
 		else {
