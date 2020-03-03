@@ -157,12 +157,6 @@ struct quic_crypto_frm {
 #define QUIC_CRYPTO_BUF_SZ    (1UL << QUIC_CRYPTO_BUF_SHIFT) /* 16 KB */
 
 /*
- * The maximum number of allowed buffers of QUIC_CRYPTO_BUF_SZ bytes used during
- * the TLS handshakes.
- */
-#define QUIC_CRYPTO_BUF_MAX   64
-
-/*
  * CRYPTO buffer struct.
  * Such buffers are used to send CRYPTO data.
  */
@@ -184,7 +178,7 @@ struct quic_enc_level {
 	struct {
 		struct eb_root qpkts;
 		struct {
-			struct quic_crypto_buf *bufs[QUIC_CRYPTO_BUF_MAX];
+			struct quic_crypto_buf **bufs;
 			/* The number of element in use in the previous array. */
 			size_t nb_buf;
 			/* The total size of the CRYPTO data stored in the CRYPTO buffers. */

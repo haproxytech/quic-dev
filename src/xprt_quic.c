@@ -222,37 +222,47 @@ static int quic_crypto_data_cpy(struct quic_enc_level *qel,
 {
 	struct quic_crypto_buf **qcb;
 	/* The remaining byte to store in CRYPTO buffers. */
-	size_t left, *nb_buf;
+	size_t *nb_buf;
+	unsigned char *pos;
 
 	nb_buf = &qel->tx.crypto.nb_buf;
-	qcb = &qel->tx.crypto.bufs[*nb_buf];
-	left = len;
+	qcb = &qel->tx.crypto.bufs[*nb_buf - 1];
+	pos = (*qcb)->data + (*qcb)->sz;
 
-	while (left > 0 && *nb_buf < QUIC_CRYPTO_BUF_MAX) {
+	while (len > 0) {
 		size_t to_copy;
 
-		if (!*qcb) {
-			*qcb = pool_alloc(pool_head_quic_crypto_buf);
-			if (!*qcb) {
-				fprintf(stderr, "%s: crypto allocation failed\n", __func__);
-				return 0;
-			}
-			(*qcb)->sz = 0;
-		}
-		to_copy = left > QUIC_CRYPTO_BUF_SZ ? QUIC_CRYPTO_BUF_SZ : left;
-		to_copy -= (*qcb)->sz;
-		memcpy((*qcb)->data, data, to_copy);
+		to_copy = len > QUIC_CRYPTO_BUF_SZ  - (*qcb)->sz ? QUIC_CRYPTO_BUF_SZ - (*qcb)->sz : len;
+		memcpy(pos, data, to_copy);
 		/* Increment the total size of this CRYPTO buffers by <to_copy>. */
-		qel->tx.crypto.sz += (*qcb)->sz = to_copy;
-		left -= to_copy;
+		qel->tx.crypto.sz += to_copy;
+		(*qcb)->sz += to_copy;
+		pos += to_copy;
+		len -= to_copy;
 		data += to_copy;
-		if ((*qcb)->sz >= QUIC_CRYPTO_BUF_MAX) {
-			++*nb_buf;
-			qcb++;
+		if ((*qcb)->sz >= QUIC_CRYPTO_BUF_SZ) {
+			struct quic_crypto_buf **tmp;
+
+			tmp = realloc(qel->tx.crypto.bufs, (*nb_buf + 1) * sizeof *qel->tx.crypto.bufs);
+			if (tmp) {
+				qel->tx.crypto.bufs = tmp;
+				qcb = &qel->tx.crypto.bufs[*nb_buf];
+				*qcb = pool_alloc(pool_head_quic_crypto_buf);
+				if (!*qcb) {
+					fprintf(stderr, "%s: crypto allocation failed\n", __func__);
+					return 0;
+				}
+				(*qcb)->sz = 0;
+				pos = (*qcb)->data;
+				++*nb_buf;
+			}
+			else {
+				/* XXX deallocate everything */
+			}
 		}
 	}
 
-	return left == 0;
+	return len == 0;
 }
 
 
@@ -271,6 +281,10 @@ int ha_quic_add_handshake_data(SSL *ssl, enum ssl_encryption_level_t level,
 	    tls_enc_level != QUIC_TLS_ENC_LEVEL_HANDSHAKE)
 		return 0;
 
+	if (!qel->tx.crypto.bufs) {
+		fprintf(stderr, "Crypto buffers could not be allacated\n");
+		return 0;
+	}
 	if (!quic_crypto_data_cpy(qel, data, len)) {
 		fprintf(stderr, "Too much crypto data (%zu bytes)\n", len);
 		return 0;
@@ -1277,9 +1291,24 @@ static int quic_new_conn_init(struct listener *l, struct quic_conn *conn,
 		struct quic_enc_level *qel= &conn->enc_levels[i];
 
 		qel->rx.qpkts = EB_ROOT;
+		qel->tx.crypto.bufs = malloc(sizeof *qel->tx.crypto.bufs);
+		if (qel->tx.crypto.bufs) {
+			qel->tx.crypto.bufs[0] = pool_alloc(pool_head_quic_crypto_buf);
+			if (!qel->tx.crypto.bufs[0]) {
+				fprintf(stderr, "%s: could not allocated any crypto buffer\n", __func__);
+				free(qel->tx.crypto.bufs);
+				qel->tx.crypto.bufs = NULL;
+				return 0;
+			}
+			qel->tx.crypto.bufs[0]->sz = 0;
+			qel->tx.crypto.nb_buf = 1;
+			qel->tx.crypto.offset = 0;
+		}
+		else {
+			qel->tx.crypto.nb_buf = 0;
+		}
+		qel->tx.crypto.sz = 0;
 		qel->tx.crypto.offset = 0;
-		qel->tx.crypto.nb_buf = 0;
-		memset(qel->tx.crypto.bufs, 0, sizeof qel->tx.crypto.bufs);
 	}
 
 	return 1;
