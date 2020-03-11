@@ -83,14 +83,6 @@ struct quic_tls_secrets {
 	unsigned char hp_key[32];
 };
 
-/* QUIC packet number space */
-struct quic_pktns {
-	/* Last packet number */
-	int64_t last_pn;
-	/* Last acked packet number */
-	int64_t last_acked_pn;
-};
-
 struct quic_tls_ctx {
 	const EVP_CIPHER *aead;
 	unsigned char aead_iv[12];

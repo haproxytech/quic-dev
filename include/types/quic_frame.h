@@ -76,11 +76,6 @@ struct quic_padding {
 	size_t len;
 };
 
-struct quic_ack_range {
-	uint64_t gap;
-	uint64_t ack_range;
-};
-
 struct quic_ack {
 	uint64_t largest_ack;
 	uint64_t ack_delay;

@@ -113,6 +113,18 @@ struct quic_transport_params {
 	struct preferred_address preferred_address;                    /* Forbidden for clients */
 };
 
+/* QUIC packet number space */
+struct quic_pktns {
+	struct {
+		/* Next packet number to use for transmissions. */
+		int64_t next_pn;
+	} tx;
+	struct {
+		/* Largest acked packet number */
+		int64_t largest_acked_pn;
+	} rx;
+};
+
 /* The QUIC packet numbers are 62-bits integers */
 #define QUIC_MAX_PACKET_NUM      ((1ULL << 62) - 1)
 
@@ -202,8 +214,7 @@ struct quic_conn {
 
 	struct quic_enc_level enc_levels[QUIC_TLS_ENC_LEVEL_MAX];
 
-	struct quic_pktns tx_ns[QUIC_TLS_PKTNS_MAX];
-	struct quic_pktns rx_ns[QUIC_TLS_PKTNS_MAX];
+	struct quic_pktns pktns[QUIC_TLS_PKTNS_MAX];
 	/* One largest packet number by client/server by number space */
 	uint64_t client_max_pn[QUIC_TLS_PKTNS_MAX];
 	uint64_t server_max_pn[QUIC_TLS_PKTNS_MAX];

@@ -251,7 +251,7 @@ static inline int quic_enc_int(unsigned char **buf, const unsigned char *end, ui
 	return 1;
 }
 
-static inline size_t quic_packet_number_length(int64_t next_pn, int64_t last_acked_pn)
+static inline size_t quic_packet_number_length(int64_t next_pn, int64_t largest_acked_pn)
 {
 	int64_t max_nack_pkts;
 
@@ -260,7 +260,7 @@ static inline size_t quic_packet_number_length(int64_t next_pn, int64_t last_ack
 	 * twice as large a range than the difference between the largest
 	 * acknowledged packet and packet number being sent.
 	 */
-	max_nack_pkts = 2 * (next_pn - last_acked_pn) + 1;
+	max_nack_pkts = 2 * (next_pn - largest_acked_pn) + 1;
 	if (max_nack_pkts > 0xffffff)
 		return 4;
 	if (max_nack_pkts > 0xffff)
@@ -912,6 +912,16 @@ static inline int quic_transport_params_decode_draft27(struct quic_transport_par
 	}
 
 	return 1;
+}
+
+/*
+ * Initialize a QUIC packet number space.
+ * Never fails.
+ */
+static inline void quic_pktns_init(struct quic_pktns *pktns)
+{
+	pktns->tx.next_pn = -1;
+	pktns->rx.largest_acked_pn = -1;
 }
 
 #endif /* _PROTO_XPRT_QUIC_H */

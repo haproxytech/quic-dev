@@ -191,16 +191,6 @@ static inline void quic_initial_tls_ctx_init(struct quic_tls_ctx *ctx)
 	ctx->hp = EVP_aes_128_ctr();
 }
 
-/*
- * Initialize a QUIC packet number space.
- * Never fails.
- */
-static inline void quic_tls_ctx_pktns_init(struct quic_pktns *pktns)
-{
-	pktns->last_pn = -1;
-	pktns->last_acked_pn = -1;
-}
-
 static inline int quic_tls_level_pkt_type(enum quic_tls_enc_level level)
 {
 	switch (level) {
