@@ -199,6 +199,7 @@ struct quic_enc_level {
 			uint64_t offset;
 		} crypto;
 	} tx;
+	struct quic_pktns *pktns;
 };
 
 struct quic_conn {

@@ -1308,6 +1308,8 @@ static int quic_new_conn_init(struct listener *l, struct quic_conn *conn,
 		}
 		qel->tx.crypto.sz = 0;
 		qel->tx.crypto.offset = 0;
+		/* Initialize the packet number space */
+		qel->pktns = &conn->pktns[quic_tls_pktns(i)];
 	}
 
 	return 1;
@@ -1659,7 +1661,6 @@ static ssize_t quic_do_build_handshake_packet(unsigned char **buf, const unsigne
                                               enum quic_tls_enc_level level, struct quic_conn *conn)
 {
 	unsigned char *beg;
-	struct quic_pktns *pktns;
 	/* This packet type. */
 	int packet_type;
 	/* Packet number. */
@@ -1674,11 +1675,9 @@ static ssize_t quic_do_build_handshake_packet(unsigned char **buf, const unsigne
 	struct quic_frame frm = { .type = QUIC_FT_CRYPTO, };
 	struct quic_crypto *crypto = &frm.crypto;
 	struct quic_enc_level *enc_level;
-	enum quic_tls_pktns ns = quic_tls_pktns(level);
 
 	beg = *buf;
 	enc_level = &conn->enc_levels[level];
-	pktns = &conn->pktns[ns];
 	packet_type = quic_tls_level_pkt_type(level);
 
 	crypto->data = *data;
@@ -1693,10 +1692,10 @@ static ssize_t quic_do_build_handshake_packet(unsigned char **buf, const unsigne
 		return -1;
 
 	/* packet number */
-	pn = pktns->tx.next_pn + 1;
+	pn = enc_level->pktns->tx.next_pn + 1;
 
 	/* packet number length */
-	*pn_len = quic_packet_number_length(pn, pktns->rx.largest_acked_pn);
+	*pn_len = quic_packet_number_length(pn, enc_level->pktns->rx.largest_acked_pn);
 
 	quic_build_packet_long_header(buf, end, packet_type, *pn_len, conn);
 
@@ -1761,15 +1760,13 @@ static ssize_t quic_build_handshake_packet(unsigned char **buf, const unsigned c
 	int payload_len;
 	struct quic_tls_ctx *tls_ctx;
 	struct quic_enc_level *enc_level;
-	enum quic_tls_pktns ns = quic_tls_pktns(level);
-	struct quic_pktns *pktns = &conn->pktns[ns];
 	unsigned char iv[12];
 	uint64_t pn;
 
 	beg = pos = *buf;
 	pdata = *data;
 	enc_level = &conn->enc_levels[level];
-	pn = pktns->tx.next_pn + 1;
+	pn = enc_level->pktns->tx.next_pn + 1;
 
 	/* <pkt_len> is the length of this packet before encryption. */
 	pkt_len = quic_do_build_handshake_packet(&pos, end, &buf_pn, &pn_len,
@@ -1802,7 +1799,7 @@ static ssize_t quic_build_handshake_packet(unsigned char **buf, const unsigned c
 	}
 
 	/* Increment the packet number. */
-	pktns->tx.next_pn++;
+	enc_level->pktns->tx.next_pn++;
 	/* Increment the offset of this crypto data stream */
 	enc_level->tx.crypto.offset += pdata - *data;
 	/* Update the CRYPTO data pointer. */
