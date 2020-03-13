@@ -11,7 +11,7 @@
 
 #include <proto/quic_frame.h>
 
-int quic_parse_packet_frames(struct quic_packet *qpkt)
+int quic_parse_packet_frames(struct quic_rx_packet *qpkt)
 {
 	struct quic_frame frm;
 	const unsigned char *pos, *end;

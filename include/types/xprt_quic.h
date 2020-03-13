@@ -131,7 +131,7 @@ struct quic_pktns {
 /* Default QUIC connection transport parameters */
 extern struct quic_transport_params quid_dflt_transport_params;
 
-struct quic_packet {
+struct quic_rx_packet {
 	int from_server;
 	int long_header;
 	unsigned char type;
@@ -156,7 +156,7 @@ struct quic_packet {
  * QUIC packets. We make the assumption there is only one CRYPTO frame
  * by packet.
  */
-struct quic_crypto_frm {
+struct quic_tx_crypto_frm {
 	uint64_t offset;
 	size_t len;
 	/* Packet number this CRYPTO frame is attached to. */
@@ -180,15 +180,16 @@ struct quic_crypto_buf {
 struct quic_enc_level {
 	struct quic_tls_ctx tls_ctx;
 	struct {
+		/* The packets received by the listener I/O handler. */
 		struct eb_root qpkts;
 		/* Crypto frames */
 		struct {
 			uint64_t offset;
-			struct eb_root frms;
+			struct eb_root frms; /* XXX TO CHECK XXX */
 		} crypto;
 	} rx;
 	struct {
-		struct eb_root qpkts;
+		struct eb_root qpkts; /* XXX TO CHECK XXX */
 		struct {
 			struct quic_crypto_buf **bufs;
 			/* The number of element in use in the previous array. */
@@ -219,8 +220,6 @@ struct quic_conn {
 	/* One largest packet number by client/server by number space */
 	uint64_t client_max_pn[QUIC_TLS_PKTNS_MAX];
 	uint64_t server_max_pn[QUIC_TLS_PKTNS_MAX];
-	/* Last QUIC_CONN_MAX_PACKET QUIC received packets */
-	struct quic_packet pkts[QUIC_CONN_MAX_PACKET];
 	/* Used only to reach the tasklet for the I/O handler from this quic_conn object. */
 	struct connection *conn;
 	/* Output buffer used during the handshakes. */

@@ -26,7 +26,7 @@
 
 #include <proto/xprt_quic.h>
 
-int quic_parse_packet_frames(struct quic_packet *qpkt);
+int quic_parse_packet_frames(struct quic_rx_packet *qpkt);
 
 static inline const char *quic_frame_type_string(enum quic_frame_type ft)
 {

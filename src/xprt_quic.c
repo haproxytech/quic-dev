@@ -148,11 +148,12 @@ void hexdump(const void *buf, size_t buflen, const char *title_fmt, ...) {}
 
 DECLARE_STATIC_POOL(pool_head_quic_conn, "quic_conn",
                     sizeof(struct quic_conn) + QUIC_CID_MAXLEN);
-DECLARE_STATIC_POOL(pool_head_quic_packet, "quic_packet", sizeof(struct quic_packet));
+
+DECLARE_STATIC_POOL(pool_head_quic_rx_packet, "quic_rx_packet_pool", sizeof(struct quic_rx_packet));
 
 DECLARE_STATIC_POOL(pool_head_quic_conn_ctx, "quic_conn_ctx_pool", sizeof(struct quic_conn_ctx));
 
-DECLARE_STATIC_POOL(pool_head_quic_crypto_frm_pool, "quic_crypto_frm_pool", sizeof(struct quic_crypto_frm));
+DECLARE_STATIC_POOL(pool_head_quic_tx_crypto_frm_pool, "quic_tx_crypto_frm_pool", sizeof(struct quic_tx_crypto_frm));
 
 DECLARE_STATIC_POOL(pool_head_quic_crypto_buf, "quic_crypto_buf_pool", sizeof(struct quic_crypto_buf));
 
@@ -578,7 +579,7 @@ static int quic_conn_unsubscribe(struct connection *conn, void *xprt_ctx, int ev
 	return conn_unsubscribe(conn, xprt_ctx, event_type, es);
 }
 
-static int quic_packet_decrypt(struct quic_packet *qpkt, struct quic_tls_ctx *tls_ctx)
+static int quic_packet_decrypt(struct quic_rx_packet *qpkt, struct quic_tls_ctx *tls_ctx)
 {
 	int ret;
 	unsigned char iv[12];
@@ -607,7 +608,7 @@ static int quic_packet_decrypt(struct quic_packet *qpkt, struct quic_tls_ctx *tl
 	return 1;
 }
 
-static int quic_parse_handshake_packet(struct quic_packet *qpkt, struct quic_conn_ctx *ctx,
+static int quic_parse_handshake_packet(struct quic_rx_packet *qpkt, struct quic_conn_ctx *ctx,
                                        struct quic_enc_level *enc_level)
 {
 	struct quic_frame frm;
@@ -774,7 +775,7 @@ static int quic_conn_do_handshake(struct quic_conn_ctx *ctx)
 {
 	struct quic_conn *quic_conn;
 	struct quic_enc_level *enc_level;
-	struct quic_packet *qpkt;
+	struct quic_rx_packet *qpkt;
 	struct eb64_node *qpkt_node;
 	struct quic_tls_ctx *tls_ctx;
 	struct eb_root *rx_qpkts;
@@ -802,7 +803,7 @@ static int quic_conn_do_handshake(struct quic_conn_ctx *ctx)
 
 	qpkt_node = eb64_first(rx_qpkts);
 	while (qpkt_node) {
-		qpkt = eb64_entry(&qpkt_node->node, struct quic_packet, pn_node);
+		qpkt = eb64_entry(&qpkt_node->node, struct quic_rx_packet, pn_node);
 		if (!quic_packet_decrypt(qpkt, tls_ctx))
 			return 0;
 
@@ -813,7 +814,7 @@ static int quic_conn_do_handshake(struct quic_conn_ctx *ctx)
 
 		qpkt_node = eb64_next(qpkt_node);
 		eb64_delete(&qpkt->pn_node);
-		pool_free(pool_head_quic_packet, qpkt);
+		pool_free(pool_head_quic_rx_packet, qpkt);
 	}
 
 	ret = SSL_do_handshake(ctx->ssl);
@@ -845,7 +846,7 @@ static int quic_treat_packets(struct quic_conn_ctx *ctx)
 	struct quic_enc_level *enc_level;
 	struct quic_tls_ctx *tls_ctx;
 	struct eb_root *rx_qpkts;
-	struct quic_packet *qpkt;
+	struct quic_rx_packet *qpkt;
 	struct eb64_node *qpkt_node;
 
 	quic_conn = ctx->conn->quic_conn;
@@ -859,7 +860,7 @@ static int quic_treat_packets(struct quic_conn_ctx *ctx)
 
 	qpkt_node = eb64_first(rx_qpkts);
 	while (qpkt_node) {
-		qpkt = eb64_entry(&qpkt_node->node, struct quic_packet, pn_node);
+		qpkt = eb64_entry(&qpkt_node->node, struct quic_rx_packet, pn_node);
 		if (!quic_packet_decrypt(qpkt, tls_ctx))
 			return 0;
 
@@ -869,7 +870,7 @@ static int quic_treat_packets(struct quic_conn_ctx *ctx)
 		}
 		qpkt_node = eb64_next(qpkt_node);
 		eb64_delete(&qpkt->pn_node);
-		pool_free(pool_head_quic_packet, qpkt);
+		pool_free(pool_head_quic_rx_packet, qpkt);
 	}
 
 	return 1;
@@ -1077,7 +1078,7 @@ static uint64_t decode_packet_number(uint64_t largest_pn, uint32_t truncated_pn,
    return candidate_pn;
 }
 
-static int quic_remove_header_protection(struct quic_conn *conn, struct quic_packet *pkt,
+static int quic_remove_header_protection(struct quic_conn *conn, struct quic_rx_packet *pkt,
                                          struct quic_tls_ctx *tls_ctx,
                                          unsigned char *pn, unsigned char *byte0, const unsigned char *end)
 {
@@ -1316,7 +1317,7 @@ static int quic_new_conn_init(struct listener *l, struct quic_conn *conn,
 }
 
 static ssize_t quic_packet_read(unsigned char **buf, const unsigned char *end,
-                                struct quic_packet *qpkt, struct listener *l,
+                                struct quic_rx_packet *qpkt, struct listener *l,
                                 struct sockaddr_storage *saddr, socklen_t *saddrlen)
 {
 	unsigned char *beg;
@@ -1543,9 +1544,9 @@ static ssize_t quic_packets_read(char *buf, size_t len, struct listener *l,
 
 	do {
 		int ret;
-		struct quic_packet *qpkt;
+		struct quic_rx_packet *qpkt;
 
-		qpkt = pool_alloc(pool_head_quic_packet);
+		qpkt = pool_alloc(pool_head_quic_rx_packet);
 		if (!qpkt) {
 			fprintf(stderr, "Not enough memory to allocate a new packet\n");
 			goto err;
@@ -1553,7 +1554,7 @@ static ssize_t quic_packets_read(char *buf, size_t len, struct listener *l,
 
 		ret = quic_packet_read(&pos, end, qpkt, l, saddr, saddrlen);
 		if (ret == -1) {
-			pool_free(pool_head_quic_packet, qpkt);
+			pool_free(pool_head_quic_rx_packet, qpkt);
 			goto err;
 		}
 
