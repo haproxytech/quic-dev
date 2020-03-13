@@ -198,6 +198,8 @@ struct quic_enc_level {
 			size_t sz;
 			/* The offset of the CRYPT0 data stream. */
 			uint64_t offset;
+			/* The outgoing CRYPTO frames ordered by packet number. */
+			struct eb_root frms;
 		} crypto;
 	} tx;
 	struct quic_pktns *pktns;

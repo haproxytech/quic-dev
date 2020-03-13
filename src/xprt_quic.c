@@ -1302,13 +1302,13 @@ static int quic_new_conn_init(struct listener *l, struct quic_conn *conn,
 			}
 			qel->tx.crypto.bufs[0]->sz = 0;
 			qel->tx.crypto.nb_buf = 1;
-			qel->tx.crypto.offset = 0;
 		}
 		else {
 			qel->tx.crypto.nb_buf = 0;
 		}
 		qel->tx.crypto.sz = 0;
 		qel->tx.crypto.offset = 0;
+		qel->tx.crypto.frms = EB_ROOT;
 		/* Initialize the packet number space */
 		qel->pktns = &conn->pktns[quic_tls_pktns(i)];
 	}
@@ -1763,6 +1763,7 @@ static ssize_t quic_build_handshake_packet(unsigned char **buf, const unsigned c
 	struct quic_enc_level *enc_level;
 	unsigned char iv[12];
 	uint64_t pn;
+	struct quic_tx_crypto_frm *cf;
 
 	beg = pos = *buf;
 	pdata = *data;
@@ -1799,10 +1800,19 @@ static ssize_t quic_build_handshake_packet(unsigned char **buf, const unsigned c
 		return -2;
 	}
 
-	/* Increment the packet number. */
-	enc_level->pktns->tx.next_pn++;
+	cf = pool_alloc(pool_head_quic_tx_crypto_frm_pool);
+	if (!cf) {
+		fprintf(stderr, "CRYPTO frame allocation failed\n");
+		return -2;
+	}
+
+
+	cf->len = pdata - *data;
 	/* Increment the offset of this crypto data stream */
-	enc_level->tx.crypto.offset += pdata - *data;
+	cf->pn.key = ++enc_level->pktns->tx.next_pn;
+	cf->offset = enc_level->tx.crypto.offset;
+	enc_level->tx.crypto.offset += cf->len;
+	eb64_insert(&enc_level->tx.crypto.frms, &cf->pn);
 	/* Update the CRYPTO data pointer. */
 	*data = pdata;
 
