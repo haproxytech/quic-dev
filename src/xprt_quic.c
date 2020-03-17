@@ -1613,7 +1613,7 @@ static int quic_build_packet_long_header(unsigned char **buf, const unsigned cha
 	return 1;
 }
 
-static int quic_apply_header_protection(unsigned char *buf, unsigned char *pn, size_t pnlen, int type,
+static int quic_apply_header_protection(unsigned char *buf, unsigned char *pn, size_t pnlen,
                                         const EVP_CIPHER *aead, const unsigned char *key)
 {
 	int i, ret, outlen;
@@ -1794,7 +1794,7 @@ static ssize_t quic_build_handshake_packet(unsigned char **buf, const unsigned c
 
 	pos += QUIC_TLS_TAG_LEN;
 
-	if (!quic_apply_header_protection(beg, buf_pn, pn_len, level,
+	if (!quic_apply_header_protection(beg, buf_pn, pn_len,
 	                                  tls_ctx->hp, tls_ctx->tx.hp_key)) {
 		fprintf(stderr, "Could not apply the header protection\n");
 		return -2;
