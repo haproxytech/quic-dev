@@ -173,13 +173,13 @@ static int inline quic_build_ack_frame(unsigned char **buf, const unsigned char 
 }
 
 /*
- * Parse an ACK frame from <buf> buffer with <end> as end into <frm> frame.
+ * Parse an ACK frame header from <buf> buffer with <end> as end into <frm> frame.
  * Return 1 if succeeded (enough room to parse this frame), 0 if not.
  */
-static int inline quic_parse_ack_frame(struct quic_frame *frm,
-                                       const unsigned char **buf, const unsigned char *end)
+static int inline quic_parse_ack_frame_header(struct quic_frame *frm,
+                                              const unsigned char **buf, const unsigned char *end)
 {
-	int i, ret;
+	int ret;
 	struct quic_ack *ack = &frm->ack;
 	uint64_t smallest;
 
@@ -205,23 +205,6 @@ static int inline quic_parse_ack_frame(struct quic_frame *frm,
 	fprintf(stderr, "first_ack_range: %lu\n", ack->first_ack_range);
 	smallest = ack->largest_ack - ack->first_ack_range;
 	fprintf(stderr, "acks from %lu -> %lu\n", smallest, ack->largest_ack);
-	for (i = 0; i < ack->ack_range_num; i++) {
-		uint64_t gap, ack_range;
-		uint64_t largest;
-
-		ret = quic_dec_int(&gap, buf, end);
-		if (!ret)
-			return 0;
-		ret = quic_dec_int(&ack_range, buf, end);
-		if (!ret)
-			return 0;
-
-		largest = smallest - gap - 2;
-		smallest = largest - ack_range;
-		fprintf(stderr, "acks from %lu -> %lu\n", smallest, largest);
-		fprintf(stderr, "ack range %d: gap: %lu ack_range: %lu\n", i, gap, ack_range);
-	}
-	fprintf(stderr, "+++++++++++\n");
 
 	return 1;
 }

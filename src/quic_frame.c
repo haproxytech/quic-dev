@@ -96,7 +96,7 @@ int (*quic_parse_frame_funcs[])(struct quic_frame *frm,
                                 const unsigned char **, const unsigned char *) = {
 	[QUIC_FT_PADDING]      = quic_parse_padding_frame,
 	[QUIC_FT_PING]         = quic_parse_ping_frame,
-	[QUIC_FT_ACK]          = quic_parse_ack_frame,
+	[QUIC_FT_ACK]          = quic_parse_ack_frame_header,
 	[QUIC_FT_ACK_ECN]      = quic_parse_ack_ecn_frame,
 	[QUIC_FT_RESET_STREAM] = quic_parse_reset_stream_frame,
 	[QUIC_FT_STOP_SENDING] = quic_parse_stop_sending_frame,
