@@ -153,7 +153,7 @@ DECLARE_STATIC_POOL(pool_head_quic_rx_packet, "quic_rx_packet_pool", sizeof(stru
 
 DECLARE_STATIC_POOL(pool_head_quic_conn_ctx, "quic_conn_ctx_pool", sizeof(struct quic_conn_ctx));
 
-DECLARE_STATIC_POOL(pool_head_quic_tx_crypto_frm_pool, "quic_tx_crypto_frm_pool", sizeof(struct quic_tx_crypto_frm));
+DECLARE_STATIC_POOL(pool_head_quic_tx_crypto_frm, "quic_tx_crypto_frm_pool", sizeof(struct quic_tx_crypto_frm));
 
 DECLARE_STATIC_POOL(pool_head_quic_crypto_buf, "quic_crypto_buf_pool", sizeof(struct quic_crypto_buf));
 
@@ -161,6 +161,7 @@ static BIO_METHOD *ha_quic_meth;
 
 static ssize_t quic_build_handshake_packet(unsigned char **buf, const unsigned char *end,
                                            const unsigned char **data, const unsigned char *end_data,
+                                           uint64_t *offset,
                                            enum quic_tls_enc_level level, struct quic_conn *conn);
 
 /*
@@ -608,6 +609,66 @@ static int quic_packet_decrypt(struct quic_rx_packet *qpkt, struct quic_tls_ctx 
 	return 1;
 }
 
+/*
+ * Remove <largest> down to <smallest> node entries from <frms> root of CRYPTO frames
+ * deallocating them.
+ */
+static inline struct eb64_node *quic_ack_range_crypto_frames(struct eb_root *frms,
+                                                             uint64_t largest, uint64_t smallest)
+{
+	struct eb64_node *node;
+	struct quic_tx_crypto_frm *frm;
+
+	node = eb64_lookup(frms, largest);
+	while (node && node->key >= smallest) {
+		frm = eb64_entry(&node->node, struct quic_tx_crypto_frm, pn);
+		fprintf(stderr, "Removing CRYPTO frame #%llu\n", frm->pn.key);
+		node = eb64_prev(node);
+		eb64_delete(&frm->pn);
+		pool_free(pool_head_quic_tx_crypto_frm, frm);
+	}
+
+	return node;
+}
+
+/*
+ * Remove <largest> down to <smallest> node entries from <frms> root of CRYPTO frames
+ * deallocating them and accumulate the CRYPTO frames belonging to the same gap
+ * <smallest> -> <next_largest> non inclusive in a unique frame to be retransmitted if any.
+ * It is possible that this frame does not exist if the ranges have been already parsed
+ * (but not acknowledged).
+ * Note that <largest> >= <smallest> > <next_largest>.
+ */
+static inline struct quic_tx_crypto_frm *
+quic_ack_range_with_gap_crypto_frames(struct eb_root *frms,
+                                      uint64_t largest, uint64_t smallest, uint64_t next_largest)
+{
+	struct eb64_node *node;
+	struct quic_tx_crypto_frm *frm;
+
+	node = quic_ack_range_crypto_frames(frms, largest, smallest);
+	if (!node)
+		return NULL;
+
+	/* Aggregate the consecutive CRYPTO frames belonging to the same gap. */
+	do {
+		struct quic_tx_crypto_frm *prev_frm;
+
+		frm = eb64_entry(&node->node, struct quic_tx_crypto_frm, pn);
+		fprintf(stderr, "Should retransmit CRYPTO frame #%llu offset: %lu len: %zu\n",
+		        frm->pn.key, frm->offset, frm->len);
+		node = eb64_prev(node);
+		if (node && node->key > next_largest) {
+			prev_frm = eb64_entry(&node->node, struct quic_tx_crypto_frm, pn);
+			prev_frm->len += frm->len;
+			eb64_delete(&frm->pn);
+			pool_free(pool_head_quic_tx_crypto_frm, frm);
+		}
+	} while (node);
+
+	return frm;
+}
+
 static int quic_parse_handshake_packet(struct quic_rx_packet *qpkt, struct quic_conn_ctx *ctx,
                                        struct quic_enc_level *enc_level)
 {
@@ -644,7 +705,54 @@ static int quic_parse_handshake_packet(struct quic_rx_packet *qpkt, struct quic_
 			}
 			break;
 		case QUIC_FT_ACK:
+		{
+			struct quic_ack *ack = &frm.ack;
+			uint64_t smallest, largest;
+
+			if (ack->largest_ack > enc_level->pktns->tx.next_pn) {
+				fprintf(stderr, "ACK for not sent packet #%lu (%lu)\n",
+				        ack->largest_ack, enc_level->pktns->tx.next_pn);
+				return 0;
+			}
+
+			if (ack->first_ack_range > ack->largest_ack) {
+				fprintf(stderr, "Too big first ACK range #%lu\n", ack->first_ack_range);
+				return 0;
+			}
+
+			largest = ack->largest_ack;
+			smallest = largest - ack->first_ack_range;
+			do {
+				uint64_t gap, ack_range;
+				struct quic_tx_crypto_frm *frm;
+
+				if (!ack->ack_range_num--) {
+					quic_ack_range_crypto_frames(&enc_level->tx.crypto.frms, largest, smallest);
+					break;
+				}
+
+				if (!quic_dec_int(&gap, &pos, end) || smallest < gap + 2)
+					return 0;
+
+				if (!quic_dec_int(&ack_range, &pos, end) || smallest - gap - 2 < ack_range)
+					return 0;
+
+				frm = quic_ack_range_with_gap_crypto_frames(&enc_level->tx.crypto.frms,
+				                                            largest, smallest, smallest - gap - 2);
+				if (frm) {
+					eb64_delete(&frm->pn);
+					eb64_insert(&enc_level->tx.crypto.retransmit_frms, &frm->pn);
+					ctx->conn->quic_conn->retransmit = 1;
+				}
+				/* Next range */
+				largest = smallest - gap - 2;
+				smallest = largest - ack_range;
+
+				fprintf(stderr, "acks from %lu -> %lu\n", smallest, largest);
+			} while (1);
+
 			break;
+		}
 		case QUIC_FT_PING:
 			break;
 		case QUIC_FT_CONNECTION_CLOSE:
@@ -655,6 +763,128 @@ static int quic_parse_handshake_packet(struct quic_rx_packet *qpkt, struct quic_
 	}
 
 	return 1;
+}
+
+static int quic_retransmit_handshake_packets(struct quic_conn_ctx *ctx)
+{
+	struct quic_conn *quic_conn;
+	unsigned char **obuf_pos;
+	const unsigned char *obuf_end;
+	enum quic_tls_enc_level tls_enc_level;
+	struct quic_enc_level *qel;
+	struct buffer tmpbuf = { };
+	struct eb_root *frms;
+	struct eb64_node *node;
+	struct quic_tx_crypto_frm *frm;
+	size_t len;
+
+	const unsigned char *ppos, *pos, *end;
+	int idx;
+
+	quic_conn = ctx->conn->quic_conn;
+
+	/* Initialize the output buffer pointers. */
+	obuf_pos = &quic_conn->obuf.pos;
+	obuf_end = quic_conn->obuf.data + sizeof quic_conn->obuf.data;
+
+	tmpbuf.area = (char *)quic_conn->obuf.data;
+	tmpbuf.size = sizeof quic_conn->obuf.data;
+	tmpbuf.data = *obuf_pos - quic_conn->obuf.data;
+
+	tls_enc_level = QUIC_TLS_ENC_LEVEL_INITIAL;
+
+ next_level:
+	frms = &quic_conn->enc_levels[tls_enc_level].tx.crypto.retransmit_frms;
+	if (eb_is_empty(frms)) {
+		if (tls_enc_level == QUIC_TLS_ENC_LEVEL_INITIAL) {
+			tls_enc_level = QUIC_TLS_ENC_LEVEL_HANDSHAKE;
+			goto next_level;
+		}
+		else if (tls_enc_level == QUIC_TLS_ENC_LEVEL_HANDSHAKE && tmpbuf.data) {
+			if (ctx->xprt->snd_buf(quic_conn->conn, quic_conn->conn->xprt_ctx,
+								   &tmpbuf, tmpbuf.data, 0) <= 0)
+				goto out;
+			return 1;
+		}
+	}
+
+	qel = &quic_conn->enc_levels[tls_enc_level];
+	node = eb64_first(frms);
+	while (node) {
+		frm = eb64_entry(&node->node, struct quic_tx_crypto_frm, pn);
+		/* Note that <frm> CRYPTO frame may overlap several CRYPTO buffers */
+		idx = frm->offset >> QUIC_CRYPTO_BUF_SHIFT;
+		ppos = pos = (const unsigned char *)qel->tx.crypto.bufs[idx]->data +
+			(frm->offset & QUIC_CRYPTO_BUF_MASK);
+		end = (const unsigned char *)qel->tx.crypto.bufs[idx]->data +
+			qel->tx.crypto.bufs[idx]->sz;
+
+		len = frm->len > end - ppos ? end - ppos : frm->len;
+		end = ppos + len;
+
+		fprintf(stderr, "Remaining number of bytes to send for frame #%llu: %zu offset: %lu\n",
+		        frm->pn.key, len, frm->offset);
+
+		while (pos < end) {
+			ssize_t ret, to_send;
+			uint64_t offset = frm->offset;
+
+			to_send = quic_build_handshake_packet(obuf_pos, obuf_end,  &ppos, end, &frm->offset,
+			                                      tls_enc_level, quic_conn);
+			fprintf(stderr, "%s: to send: %zd\n", __func__, to_send);
+			switch (to_send) {
+			case -2:
+				fprintf(stderr, "%s: Encryption error\n", __func__);
+				goto err;
+			case -1:
+				fprintf(stderr, "%s: Buffer full left: %zu\n", __func__, tmpbuf.data);
+				break;
+			default:
+				tmpbuf.data += to_send;
+				frm->len -= frm->offset - offset;
+			}
+
+			/* If all the data for this encryption level has been prepared, select the next level. */
+			if (!frm->len && ctx->state == QUIC_HS_ST_SERVER_INITIAL) {
+				ctx->state = QUIC_HS_ST_SERVER_HANSHAKE;
+				goto next_level;
+			}
+			/*
+			 * If we have reached the end of a CRYPTO frame or buffer (ppos == end) and
+			 * if the output buffer is not full (*obuf_pos != obuf_end && to_send != -1) and
+			 * if there is remaining data to send (qel->tx.crypto.offset != qel->tx.crypto.sz),
+			 * let's go out to to come back later to completely fill the output buffer.
+			 */
+			if (ppos == end && *obuf_pos != obuf_end && to_send != -1 && frm->len > 0)
+				goto out;
+
+			ret = ctx->xprt->snd_buf(quic_conn->conn, quic_conn->conn->xprt_ctx,
+									 &tmpbuf, tmpbuf.data, 0);
+			if (ret <= 0)
+				goto out;
+
+			fprintf(stderr, "%s: sending %zu bytes at offset %lu\n", __func__, tmpbuf.data, offset);
+			tmpbuf.data = 0;
+			*obuf_pos = quic_conn->obuf.data;
+			pos = ppos;
+		}
+		if (!frm->len) {
+			node = eb64_next(node);
+			eb64_delete(&frm->pn);
+			pool_free(pool_head_quic_tx_crypto_frm, frm);
+		}
+	}
+
+ out:
+	if (ctx->state == QUIC_HS_ST_SERVER_HANSHAKE && eb_is_empty(frms))
+		quic_conn->retransmit = 0;
+
+	if (!eb_is_empty(frms) || tmpbuf.data)
+		tasklet_wakeup(((struct quic_conn_ctx *)quic_conn->conn->xprt_ctx)->wait_event.tasklet);
+	return 1;
+
+ err:
+	return 0;
 }
 
 static int quic_send_handshake_packets(struct quic_conn_ctx *ctx)
@@ -720,7 +950,8 @@ static int quic_send_handshake_packets(struct quic_conn_ctx *ctx)
 	while (pos < end) {
 		ssize_t ret, to_send;
 
-		to_send = quic_build_handshake_packet(obuf_pos, obuf_end,  &ppos, end, tls_enc_level, quic_conn);
+		to_send = quic_build_handshake_packet(obuf_pos, obuf_end,  &ppos, end, &qel->tx.crypto.offset,
+		                                      tls_enc_level, quic_conn);
 		fprintf(stderr, "%s: to send: %zd\n", __func__, to_send);
 		switch (to_send) {
 		case -2:
@@ -783,6 +1014,9 @@ static int quic_conn_do_handshake(struct quic_conn_ctx *ctx)
 
 	fprintf(stderr, "%s ctx state: %d\n", __func__, ctx->state);
 	quic_conn = ctx->conn->quic_conn;
+
+	if (quic_conn->retransmit && !quic_retransmit_handshake_packets(ctx))
+		return 0;
 
 	if (!quic_send_handshake_packets(ctx))
 		return 0;
@@ -1309,6 +1543,7 @@ static int quic_new_conn_init(struct listener *l, struct quic_conn *conn,
 		qel->tx.crypto.sz = 0;
 		qel->tx.crypto.offset = 0;
 		qel->tx.crypto.frms = EB_ROOT;
+		qel->tx.crypto.retransmit_frms = EB_ROOT;
 		/* Initialize the packet number space */
 		qel->pktns = &conn->pktns[quic_tls_pktns(i)];
 	}
@@ -1658,7 +1893,7 @@ static int quic_apply_header_protection(unsigned char *buf, unsigned char *pn, s
  */
 static ssize_t quic_do_build_handshake_packet(unsigned char **buf, const unsigned char *end,
                                               unsigned char **buf_pn, size_t *pn_len,
-                                              const unsigned char **data, const unsigned char *end_data,
+                                              const unsigned char **data, const unsigned char *end_data, uint64_t offset,
                                               enum quic_tls_enc_level level, struct quic_conn *conn)
 {
 	unsigned char *beg;
@@ -1682,7 +1917,7 @@ static ssize_t quic_do_build_handshake_packet(unsigned char **buf, const unsigne
 	packet_type = quic_tls_level_pkt_type(level);
 
 	crypto->data = *data;
-	crypto->offset = enc_level->tx.crypto.offset;
+	crypto->offset = offset;
 
 	/* For a server, the token field of an Initial packet is empty. */
 	token_fields_len = packet_type == QUIC_PACKET_TYPE_INITIAL ? 1 : 0;
@@ -1750,6 +1985,7 @@ static ssize_t quic_do_build_handshake_packet(unsigned char **buf, const unsigne
 
 static ssize_t quic_build_handshake_packet(unsigned char **buf, const unsigned char *end,
                                            const unsigned char **data, const unsigned char *end_data,
+                                           uint64_t *offset,
                                            enum quic_tls_enc_level level, struct quic_conn *conn)
 {
 	/* A pointer to the packet number fiel in <buf> */
@@ -1772,7 +2008,7 @@ static ssize_t quic_build_handshake_packet(unsigned char **buf, const unsigned c
 
 	/* <pkt_len> is the length of this packet before encryption. */
 	pkt_len = quic_do_build_handshake_packet(&pos, end, &buf_pn, &pn_len,
-	                                         &pdata, end_data, level, conn);
+	                                         &pdata, end_data, *offset, level, conn);
 	if (pkt_len == -1)
 		return -1;
 
@@ -1800,7 +2036,7 @@ static ssize_t quic_build_handshake_packet(unsigned char **buf, const unsigned c
 		return -2;
 	}
 
-	cf = pool_alloc(pool_head_quic_tx_crypto_frm_pool);
+	cf = pool_alloc(pool_head_quic_tx_crypto_frm);
 	if (!cf) {
 		fprintf(stderr, "CRYPTO frame allocation failed\n");
 		return -2;
@@ -1810,8 +2046,8 @@ static ssize_t quic_build_handshake_packet(unsigned char **buf, const unsigned c
 	cf->len = pdata - *data;
 	/* Increment the offset of this crypto data stream */
 	cf->pn.key = ++enc_level->pktns->tx.next_pn;
-	cf->offset = enc_level->tx.crypto.offset;
-	enc_level->tx.crypto.offset += cf->len;
+	cf->offset = *offset;
+	*offset += cf->len;
 	eb64_insert(&enc_level->tx.crypto.frms, &cf->pn);
 	/* Update the CRYPTO data pointer. */
 	*data = pdata;

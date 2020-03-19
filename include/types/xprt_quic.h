@@ -200,6 +200,8 @@ struct quic_enc_level {
 			uint64_t offset;
 			/* The outgoing CRYPTO frames ordered by packet number. */
 			struct eb_root frms;
+			/* The outgoing CRYPTO frames to be retransmitted ordered by packet number. */
+			struct eb_root retransmit_frms;
 		} crypto;
 	} tx;
 	struct quic_pktns *pktns;
@@ -229,6 +231,7 @@ struct quic_conn {
 		unsigned char data[QUIC_PACKET_MAXLEN];
 		unsigned char *pos;
 	} obuf;
+	int retransmit;
 };
 
 #endif /* _TYPES_XPRT_QUIC_H */
