@@ -2162,6 +2162,9 @@ int ssl_sock_switchctx_cbk(SSL *ssl, int *al, void *arg)
 
 #ifdef USE_QUIC
 	if (conn->quic_conn) {
+		struct quic_transport_params *tp =
+			&conn->quic_conn->client_transport_parameters;
+
 		/* Look for the QUIC transport parameters. */
 #ifdef OPENSSL_IS_BORINGSSL
 		if (!SSL_early_callback_ctx_extension_get(ctx, TLS_EXTENSION_QUIC_TRANSPORT_PARAMETERS,
@@ -2171,6 +2174,14 @@ int ssl_sock_switchctx_cbk(SSL *ssl, int *al, void *arg)
 		                               &extension_data, &extension_len))
 #endif
 			goto abort;
+
+		if (conn->quic_conn->version >= QUIC_PROTOCOL_VERSION_DRAFT_27) {
+			if (!quic_transport_params_decode_draft27(tp, 0, extension_data, extension_data + extension_len))
+			goto abort;
+		}
+		else if (!quic_transport_params_decode(tp, 0, extension_data, extension_data + extension_len)) {
+			goto abort;
+		}
 	}
 #endif
 
