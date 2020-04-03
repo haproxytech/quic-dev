@@ -52,6 +52,7 @@
 #   USE_SYSTEMD          : enable sd_notify() support.
 #   USE_OBSOLETE_LINKER  : use when the linker fails to emit __start_init/__stop_init
 #   USE_THREAD_DUMP      : use the more advanced thread state dump system. Automatic.
+#   USE_QUIC             : enable QUIC support.
 #
 # Options can be forced by specifying "USE_xxx=1" or can be disabled by using
 # "USE_xxx=" (empty string). The list of enabled and disabled options for a
@@ -293,7 +294,7 @@ use_opts = USE_EPOLL USE_KQUEUE USE_NETFILTER                                 \
            USE_GETADDRINFO USE_OPENSSL USE_LUA USE_FUTEX USE_ACCEPT4          \
            USE_ZLIB USE_SLZ USE_CPU_AFFINITY USE_TFO USE_NS                   \
            USE_DL USE_RT USE_DEVICEATLAS USE_51DEGREES USE_WURFL USE_SYSTEMD  \
-           USE_OBSOLETE_LINKER USE_PRCTL USE_THREAD_DUMP USE_EVPORTS
+           USE_OBSOLETE_LINKER USE_PRCTL USE_THREAD_DUMP USE_EVPORTS USE_QUIC
 
 #### Target system options
 # Depending on the target platform, some options are set, as well as some
@@ -815,12 +816,16 @@ OBJS = src/mux_h2.o src/stream.o src/mux_fcgi.o src/cfgparse-listen.o         \
        src/time.o src/hpack-enc.o src/fcgi.o src/arg.o src/base64.o           \
        src/protocol.o src/freq_ctr.o src/lru.o src/hpack-huff.o src/dict.o    \
        src/hash.o src/mailers.o src/version.o
-OBJS += src/proto_quic.o src/xprt_quic.o src/quic_tls.o src/quic_frame.o
 
 EBTREE_OBJS = $(EBTREE_DIR)/ebtree.o $(EBTREE_DIR)/eb32sctree.o \
               $(EBTREE_DIR)/eb32tree.o $(EBTREE_DIR)/eb64tree.o \
               $(EBTREE_DIR)/ebmbtree.o $(EBTREE_DIR)/ebsttree.o \
               $(EBTREE_DIR)/ebimtree.o $(EBTREE_DIR)/ebistree.o
+
+ifneq ($(USE_QUIC),)
+OBJS += src/proto_quic.o src/xprt_quic.o src/quic_tls.o src/quic_frame.o \
+        src/mux_quic.o
+endif
 
 ifneq ($(TRACE),)
 OBJS += src/calltrace.o

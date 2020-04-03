@@ -34,7 +34,9 @@
 #include <common/hathreads.h>
 
 #include <types/obj_type.h>
+#ifdef USE_QUIC
 #include <types/xprt_quic.h>
+#endif
 #include <eb32tree.h>
 
 /* Some pointer types reference below */
@@ -172,10 +174,12 @@ struct bind_conf {
 	const struct mux_proto_list *mux_proto; /* the mux to use for all incoming connections (specified by the "proto" keyword) */
 	struct xprt_ops *xprt;     /* transport-layer operations for all listeners */
 	int is_ssl;                /* SSL is required for these listeners */
+#ifdef USE_QUIC
 	int is_quic;               /* 1 if QUIC listeners */
 	struct quic_transport_params quic_params; /* QUIC transport parameters */
 	unsigned char enc_quic_params[128];       /* encoded QUIC transport parameters */
 	size_t enc_quic_params_len;
+#endif
 	int generate_certs;        /* 1 if generate-certificates option is set, else 0 */
 	int level;                 /* stats access level (ACCESS_LVL_*) */
 	int severity_output;       /* default severity output format in cli feedback messages */
@@ -236,8 +240,11 @@ struct listener {
 	struct bind_conf *bind_conf;	/* "bind" line settings, include SSL settings among other things */
 	struct list proto_list;         /* list in the protocol header */
 
+#ifdef USE_QUIC
 	struct eb_root quic_initial_clients;
 	struct eb_root quic_clients;
+#endif
+
 	/* warning: this struct is huge, keep it at the bottom */
 	struct sockaddr_storage addr;	/* the address we listen to */
 	struct {

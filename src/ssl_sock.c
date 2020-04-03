@@ -2160,6 +2160,7 @@ int ssl_sock_switchctx_cbk(SSL *ssl, int *al, void *arg)
 	conn = SSL_get_ex_data(ssl, ssl_app_data_index);
 	s = __objt_listener(conn->target)->bind_conf;
 
+#ifdef USE_QUIC
 	if (conn->quic_conn) {
 		/* Look for the QUIC transport parameters. */
 #ifdef OPENSSL_IS_BORINGSSL
@@ -2171,6 +2172,7 @@ int ssl_sock_switchctx_cbk(SSL *ssl, int *al, void *arg)
 #endif
 			goto abort;
 	}
+#endif
 
 	if (s->ssl_conf.early_data)
 		allow_early = 1;
@@ -4638,6 +4640,7 @@ int ssl_sock_prepare_srv_ctx(struct server *srv)
  * May be used by QUIC xprt which makes usage of SSL sessions initialized from SSL_CTXs.
  * Returns 0 if succeeded, or something >0 if not.
  */
+#ifdef USE_QUIC
 static int ssl_initial_ctx(struct bind_conf *bind_conf)
 {
 	if (bind_conf->is_quic)
@@ -4645,6 +4648,12 @@ static int ssl_initial_ctx(struct bind_conf *bind_conf)
 	else
 		return ssl_sock_initial_ctx(bind_conf);
 }
+#else
+static int ssl_initial_ctx(struct bind_conf *bind_conf)
+{
+	return ssl_sock_initial_ctx(bind_conf);
+}
+#endif
 
 /* Walks down the two trees in bind_conf and prepares all certs. The pointer may
  * be NULL, in which case nothing is done. Returns the number of errors

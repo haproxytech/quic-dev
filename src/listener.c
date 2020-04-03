@@ -37,7 +37,9 @@
 #include <proto/listener.h>
 #include <proto/protocol.h>
 #include <proto/proto_sockpair.h>
+#ifdef USE_QUIC
 #include <proto/xprt_quic.h>
+#endif
 #include <proto/sample.h>
 #include <proto/stream.h>
 #include <proto/task.h>
@@ -575,6 +577,7 @@ int create_listeners(struct bind_conf *bc, const struct sockaddr_storage *ss,
 		return 0;
 	}
 
+#ifdef USE_QUIC
 	if (is_sa_family_quic(ss)) {
 		bc->xprt = xprt_get(XPRT_QUIC);
 		bc->is_quic = 1;
@@ -588,6 +591,7 @@ int create_listeners(struct bind_conf *bc, const struct sockaddr_storage *ss,
 			return 0;
 		}
 	}
+#endif
 
 	for (port = portl; port <= porth; port++) {
 		l = calloc(1, sizeof(*l));
@@ -604,7 +608,9 @@ int create_listeners(struct bind_conf *bc, const struct sockaddr_storage *ss,
 		memcpy(&l->addr, ss, sizeof(*ss));
 		MT_LIST_INIT(&l->wait_queue);
 		l->state = LI_INIT;
+#ifdef USE_QUIC
 		l->quic_clients = EB_ROOT_UNIQUE;
+#endif
 
 		proto->add(l, port);
 
