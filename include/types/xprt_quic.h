@@ -168,6 +168,9 @@ struct quic_tx_crypto_frm {
 /* The maximum allowed size of CRYPTO data buffer provided by the TLS stack. */
 #define QUIC_CRYPTO_BUF_SZ    (1UL << QUIC_CRYPTO_BUF_SHIFT) /* 16 KB */
 
+/* The maximum number of bytes of CRYPTO data in flight during handshakes. */
+#define QUIC_CRYPTO_IN_FLIGHT_MAX 4096
+
 /*
  * CRYPTO buffer struct.
  * Such buffers are used to send CRYPTO data.
@@ -233,6 +236,8 @@ struct quic_conn {
 		unsigned char data[QUIC_PACKET_MAXLEN];
 		unsigned char *pos;
 	} obuf;
+
+	uint64_t crypto_in_flight;
 	int retransmit;
 };
 
