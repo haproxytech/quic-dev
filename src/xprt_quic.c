@@ -146,8 +146,7 @@ __attribute__((format (printf, 3, 4)))
 void hexdump(const void *buf, size_t buflen, const char *title_fmt, ...) {}
 #endif
 
-DECLARE_STATIC_POOL(pool_head_quic_conn, "quic_conn",
-                    sizeof(struct quic_conn) + QUIC_CID_MAXLEN);
+DECLARE_STATIC_POOL(pool_head_quic_conn, "quic_conn", sizeof(struct quic_conn));
 
 DECLARE_STATIC_POOL(pool_head_quic_rx_packet, "quic_rx_packet_pool", sizeof(struct quic_rx_packet));
 
