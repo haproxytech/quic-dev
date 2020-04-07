@@ -139,7 +139,7 @@ struct quic_streams_blocked {
 };
 
 struct quic_new_connection_id {
-	uint64_t seq_num;
+	struct eb64_node seq_num;
 	uint64_t retire_prior_to;
 	struct quic_cid cid;
 	unsigned char stateless_reset_token[QUIC_STATELESS_RESET_TOKEN_LEN];

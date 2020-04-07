@@ -2163,7 +2163,7 @@ int ssl_sock_switchctx_cbk(SSL *ssl, int *al, void *arg)
 #ifdef USE_QUIC
 	if (conn->quic_conn) {
 		struct quic_transport_params *tp =
-			&conn->quic_conn->client_transport_parameters;
+			&conn->quic_conn->rx_tps;
 
 		/* Look for the QUIC transport parameters. */
 #ifdef OPENSSL_IS_BORINGSSL

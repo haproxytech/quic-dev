@@ -148,6 +148,9 @@ void hexdump(const void *buf, size_t buflen, const char *title_fmt, ...) {}
 
 DECLARE_STATIC_POOL(pool_head_quic_conn, "quic_conn", sizeof(struct quic_conn));
 
+DECLARE_POOL(pool_head_quic_new_connection_id,
+             "quic_new_connnection_id_pool", sizeof(struct quic_new_connection_id));
+
 DECLARE_STATIC_POOL(pool_head_quic_rx_packet, "quic_rx_packet_pool", sizeof(struct quic_rx_packet));
 
 DECLARE_STATIC_POOL(pool_head_quic_conn_ctx, "quic_conn_ctx_pool", sizeof(struct quic_conn_ctx));
@@ -1397,6 +1400,7 @@ static int quic_new_conn(struct quic_conn *quic_conn, uint32_t version,
 	fprintf(stderr, "%s conn: @%p\n", __func__, cli_conn);
 	quic_conn->conn = cli_conn;
 	quic_conn->version = version;
+	quic_conn->tx_tps = &l->bind_conf->quic_params;
 	cli_conn->quic_conn = quic_conn;
 
 	/* XXX Not sure it is safe to keep this statement. */
@@ -1508,7 +1512,10 @@ static int quic_new_conn_init(struct listener *l, struct quic_conn *conn,
                               unsigned char *dcid, size_t dcid_len, unsigned char *scid, size_t scid_len)
 {
 	int i;
+	/* Initial CID. */
+	struct quic_new_connection_id *icid;
 
+	conn->cids = EB_ROOT;
 	fprintf(stderr, "%s: new quic_conn @%p\n", __func__, conn);
 	/* Copy the initial DCID. */
 	conn->idcid.len = dcid_len;
@@ -1521,9 +1528,19 @@ static int quic_new_conn_init(struct listener *l, struct quic_conn *conn,
 	/* Initialize the output buffer */
 	conn->obuf.pos = conn->obuf.data;
 
-	/* Select our SCID which is the connection ID use to match the client connections. */
-	conn->scid.len = QUIC_CID_LEN;
-	RAND_bytes(conn->scid.data, conn->scid.len);
+
+	icid = new_quic_connection_id(&conn->cids, 0);
+	if (!icid)
+		return 0;
+
+	/* Select our SCID which is the first CID with 0 as sequence number. */
+	conn->scid = icid->cid;
+
+	for (i = 1; i < conn->tx_tps->active_connection_id_limit; i++) {
+		icid = new_quic_connection_id(&conn->cids, 0);
+		if (!icid)
+			goto err;
+	}
 
 	/* Insert the DCIC the client has choosen. */
 	ebmb_insert(&l->quic_initial_clients, &conn->idcid_node, conn->idcid.len);
@@ -1567,6 +1584,10 @@ static int quic_new_conn_init(struct listener *l, struct quic_conn *conn,
 	conn->crypto_in_flight = 0;
 
 	return 1;
+
+ err:
+	free_quic_conn_cids(conn);
+	return 0;
 }
 
 static ssize_t quic_packet_read(unsigned char **buf, const unsigned char *end,

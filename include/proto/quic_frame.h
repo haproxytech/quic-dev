@@ -617,7 +617,7 @@ static inline int quic_build_new_connection_id_frame(unsigned char **buf, const 
 {
 	struct quic_new_connection_id *new_cid = &frm->new_connection_id;
 
-	if (!quic_enc_int(buf, end, new_cid->seq_num) ||
+	if (!quic_enc_int(buf, end, new_cid->seq_num.key) ||
 	    !quic_enc_int(buf, end, new_cid->retire_prior_to) ||
 	    end - *buf < sizeof_quic_cid(&new_cid->cid) + sizeof new_cid->stateless_reset_token)
 		return 0;
@@ -642,7 +642,7 @@ static inline int quic_parse_new_connection_id_frame(struct quic_frame *frm,
 {
 	struct quic_new_connection_id *new_cid = &frm->new_connection_id;
 
-	if (!quic_dec_int(&new_cid->seq_num, buf, end) ||
+	if (!quic_dec_int((uint64_t *)&new_cid->seq_num.key, buf, end) ||
 	    !quic_dec_int(&new_cid->retire_prior_to, buf, end) || end <= *buf)
 		return 0;
 

@@ -220,10 +220,12 @@ struct quic_conn {
 	struct quic_cid dcid;
 	struct ebmb_node scid_node;
 	struct quic_cid scid;
+	struct eb_root cids;
 
 	struct quic_enc_level enc_levels[QUIC_TLS_ENC_LEVEL_MAX];
 
-	struct quic_transport_params client_transport_parameters;
+	struct quic_transport_params *tx_tps;
+	struct quic_transport_params rx_tps;
 
 	struct quic_pktns pktns[QUIC_TLS_PKTNS_MAX];
 	/* One largest packet number by client/server by number space */

@@ -27,8 +27,12 @@
 #include <common/net_helper.h>
 
 #include <types/listener.h>
+#include <types/quic_frame.h>
 #include <types/xprt_quic.h>
 
+#include <common/openssl-compat.h>
+
+extern struct pool_head *pool_head_quic_new_connection_id;
 
 int ssl_quic_initial_ctx(struct bind_conf *bind_conf);
 
@@ -38,6 +42,56 @@ int ssl_quic_initial_ctx(struct bind_conf *bind_conf);
 static inline size_t sizeof_quic_cid(struct quic_cid *cid)
 {
 	return sizeof cid->len + cid->len;
+}
+
+
+/*
+ * Free the CIDs attached to a QUIC connection.
+ * Always succeeds.
+ */
+static inline void free_quic_conn_cids(struct quic_conn *conn)
+{
+	struct eb64_node *node;
+
+	node = eb64_first(&conn->cids);
+	while (node) {
+		struct quic_new_connection_id *cid;
+
+		cid = eb64_entry(&node->node, struct quic_new_connection_id, seq_num);
+		node = eb64_next(node);
+		eb64_delete(&cid->seq_num);
+		pool_free(pool_head_quic_new_connection_id, cid);
+	}
+}
+
+/*
+ * Allocate a new CID and attach it to <root> ebtree.
+ * Returns the new CID if succedded, NULL if not.
+ */
+static inline struct quic_new_connection_id *
+new_quic_connection_id(struct eb_root *root, int seq_num)
+{
+	struct quic_new_connection_id *cid;
+
+	cid = pool_alloc(pool_head_quic_new_connection_id);
+	if (!cid)
+		return NULL;
+
+	cid->cid.len = QUIC_CID_LEN;
+	if (RAND_bytes(cid->cid.data, cid->cid.len) != 1) {
+		fprintf(stderr, "Could not generate %d random bytes\n", cid->cid.len);
+		goto err;
+	}
+
+	cid->seq_num.key = seq_num;
+	cid->retire_prior_to = 0;
+	eb64_insert(root, &cid->seq_num);
+
+	return cid;
+
+ err:
+	pool_free(pool_head_quic_new_connection_id, cid);
+	return NULL;
 }
 
 /* The maximum size of a variable-length QUIC integer encoded with 1 byte */
