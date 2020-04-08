@@ -1029,7 +1029,7 @@ static int quic_conn_do_handshake(struct quic_conn_ctx *ctx)
 	struct eb64_node *qpkt_node;
 	struct quic_tls_ctx *tls_ctx;
 	struct eb_root *rx_qpkts;
-	int ret;
+	int i, ret;
 
 	fprintf(stderr, "%s ctx state: %d\n", __func__, ctx->state);
 	quic_conn = ctx->conn->quic_conn;
@@ -1079,6 +1079,14 @@ static int quic_conn_do_handshake(struct quic_conn_ctx *ctx)
 
 	fprintf(stderr, "SSL_do_handhake() succeeded\n");
 
+	for (i = 1; i < quic_conn->rx_tps.active_connection_id_limit; i++) {
+		struct quic_new_connection_id *icid;
+
+		icid = new_quic_connection_id(&quic_conn->cids, 0);
+		if (!icid)
+			goto err;
+	}
+
 	if (ctx->state == QUIC_HS_ST_SERVER_HANSHAKE)
 		ctx->conn->flags &= ~CO_FL_SSL_WAIT_HS;
 
@@ -1091,6 +1099,10 @@ static int quic_conn_do_handshake(struct quic_conn_ctx *ctx)
 	fprintf(stderr, "SSL_process_quic_post_handshake() succeeded\n");
 
 	return 1;
+
+ err:
+	free_quic_conn_cids(quic_conn);
+	return 0;
 }
 
 static int quic_treat_packets(struct quic_conn_ctx *ctx)
@@ -1536,12 +1548,6 @@ static int quic_new_conn_init(struct listener *l, struct quic_conn *conn,
 	/* Select our SCID which is the first CID with 0 as sequence number. */
 	conn->scid = icid->cid;
 
-	for (i = 1; i < conn->tx_tps->active_connection_id_limit; i++) {
-		icid = new_quic_connection_id(&conn->cids, 0);
-		if (!icid)
-			goto err;
-	}
-
 	/* Insert the DCIC the client has choosen. */
 	ebmb_insert(&l->quic_initial_clients, &conn->idcid_node, conn->idcid.len);
 
@@ -1584,10 +1590,6 @@ static int quic_new_conn_init(struct listener *l, struct quic_conn *conn,
 	conn->crypto_in_flight = 0;
 
 	return 1;
-
- err:
-	free_quic_conn_cids(conn);
-	return 0;
 }
 
 static ssize_t quic_packet_read(unsigned char **buf, const unsigned char *end,
