@@ -93,6 +93,8 @@ static inline const char *quic_frame_type_string(enum quic_frame_type ft)
 		return "CONNECTION_CLOSE";
 	case QUIC_FT_CONNECTION_CLOSE_APP:
 		return "CONNECTION_CLOSE_APP";
+	case QUIC_FT_HANDSHAKE_DONE:
+		return "HANDSHAKE_DONE";
 	default:
 		return "UNKNOWN";
 	}
@@ -617,20 +619,21 @@ static inline int quic_build_new_connection_id_frame(unsigned char **buf, const 
 {
 	struct quic_new_connection_id *new_cid = &frm->new_connection_id;
 
-	if (!quic_enc_int(buf, end, new_cid->seq_num.key) ||
+	if (!quic_enc_int(buf, end, new_cid->seq_num) ||
 	    !quic_enc_int(buf, end, new_cid->retire_prior_to) ||
-	    end - *buf < sizeof_quic_cid(&new_cid->cid) + sizeof new_cid->stateless_reset_token)
+	    end - *buf < sizeof new_cid->cid.len + new_cid->cid.len + QUIC_STATELESS_RESET_TOKEN_LEN)
 		return 0;
 
 	*(*buf)++ = new_cid->cid.len;
 
-	memcpy(*buf, new_cid->cid.data, new_cid->cid.len);
-	*buf += new_cid->cid.len;
+	if (new_cid->cid.len) {
+		memcpy(*buf, new_cid->cid.data, new_cid->cid.len);
+		*buf += new_cid->cid.len;
+	}
+	memcpy(*buf, new_cid->stateless_reset_token, QUIC_STATELESS_RESET_TOKEN_LEN);
+	*buf += QUIC_STATELESS_RESET_TOKEN_LEN;
 
-	memcpy(*buf, new_cid->stateless_reset_token, sizeof new_cid->stateless_reset_token);
-	*buf += sizeof new_cid->stateless_reset_token;
-
-	return 0;
+	return 1;
 }
 
 /*
@@ -642,20 +645,20 @@ static inline int quic_parse_new_connection_id_frame(struct quic_frame *frm,
 {
 	struct quic_new_connection_id *new_cid = &frm->new_connection_id;
 
-	if (!quic_dec_int((uint64_t *)&new_cid->seq_num.key, buf, end) ||
+	if (!quic_dec_int(&new_cid->seq_num, buf, end) ||
 	    !quic_dec_int(&new_cid->retire_prior_to, buf, end) || end <= *buf)
 		return 0;
 
 	new_cid->cid.len = *(*buf)++;
-	if (end - *buf < new_cid->cid.len + sizeof new_cid->stateless_reset_token)
+	if (end - *buf < new_cid->cid.len + QUIC_STATELESS_RESET_TOKEN_LEN)
 		return 0;
 
 	if (new_cid->cid.len) {
-		memcpy(new_cid->cid.data, *buf, new_cid->cid.len);
+		new_cid->cid.data = *buf;
 		*buf += new_cid->cid.len;
 	}
-	memcpy(new_cid->stateless_reset_token, *buf, sizeof new_cid->stateless_reset_token);
-	*buf += sizeof new_cid->stateless_reset_token;
+	new_cid->stateless_reset_token = *buf;
+	*buf += QUIC_STATELESS_RESET_TOKEN_LEN;
 
 	return 1;
 }
@@ -883,6 +886,7 @@ static inline int quic_build_frame(unsigned char **buf, const unsigned char *end
 	if (end <= *buf)
 		return 0;
 
+	fprintf(stderr, "%s: %s frame\n", __func__, quic_frame_type_string(frm->type));
 	*(*buf)++ = frm->type;
 
 	return quic_build_frame_funcs[frm->type](buf, end, frm);

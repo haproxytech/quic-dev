@@ -32,14 +32,14 @@
 
 #include <common/openssl-compat.h>
 
-extern struct pool_head *pool_head_quic_new_connection_id;
+extern struct pool_head *pool_head_quic_connection_id;
 
 int ssl_quic_initial_ctx(struct bind_conf *bind_conf);
 
 /*
  * Returns the required length in bytes to encode <cid> QUIC connection ID.
  */
-static inline size_t sizeof_quic_cid(struct quic_cid *cid)
+static inline size_t sizeof_quic_cid(const struct quic_cid *cid)
 {
 	return sizeof cid->len + cid->len;
 }
@@ -55,30 +55,48 @@ static inline void free_quic_conn_cids(struct quic_conn *conn)
 
 	node = eb64_first(&conn->cids);
 	while (node) {
-		struct quic_new_connection_id *cid;
+		struct quic_connection_id *cid;
 
-		cid = eb64_entry(&node->node, struct quic_new_connection_id, seq_num);
+		cid = eb64_entry(&node->node, struct quic_connection_id, seq_num);
 		node = eb64_next(node);
 		eb64_delete(&cid->seq_num);
-		pool_free(pool_head_quic_new_connection_id, cid);
+		pool_free(pool_head_quic_connection_id, cid);
 	}
+}
+
+/*
+ * Copy <src> new connection ID information to <to> NEW_CONNECTION_ID frame data.
+ * Never fails.
+ */
+static inline void quic_connection_id_to_frm_cpy(struct quic_frame *dst,
+                                                 struct quic_connection_id *src)
+{
+	struct quic_new_connection_id *to = &dst->new_connection_id;
+
+	dst->type = QUIC_FT_NEW_CONNECTION_ID;
+	to->seq_num = src->seq_num.key;
+	to->retire_prior_to = src->retire_prior_to;
+	to->cid.len = src->cid.len;
+	to->cid.data = src->cid.data;
+	to->stateless_reset_token = src->stateless_reset_token;
 }
 
 /*
  * Allocate a new CID and attach it to <root> ebtree.
  * Returns the new CID if succedded, NULL if not.
  */
-static inline struct quic_new_connection_id *
+static inline struct quic_connection_id *
 new_quic_connection_id(struct eb_root *root, int seq_num)
 {
-	struct quic_new_connection_id *cid;
+	struct quic_connection_id *cid;
 
-	cid = pool_alloc(pool_head_quic_new_connection_id);
+	cid = pool_alloc(pool_head_quic_connection_id);
 	if (!cid)
 		return NULL;
 
 	cid->cid.len = QUIC_CID_LEN;
-	if (RAND_bytes(cid->cid.data, cid->cid.len) != 1) {
+	if (RAND_bytes(cid->cid.data, cid->cid.len) != 1 ||
+	    RAND_bytes(cid->stateless_reset_token, sizeof cid->stateless_reset_token) != 1) {
 		fprintf(stderr, "Could not generate %d random bytes\n", cid->cid.len);
 		goto err;
 	}
@@ -90,7 +108,7 @@ new_quic_connection_id(struct eb_root *root, int seq_num)
 	return cid;
 
  err:
-	pool_free(pool_head_quic_new_connection_id, cid);
+	pool_free(pool_head_quic_connection_id, cid);
 	return NULL;
 }
 
@@ -323,6 +341,35 @@ static inline size_t quic_packet_number_length(int64_t next_pn, int64_t largest_
 		return 2;
 
 	return 1;
+}
+
+/*
+ * Encode <pn> packet number with <pn_len> as length in byte into a buffer with <buf> as
+ * current copy address and <end> as pointer to one past the end of this buffer.
+ * This is the responsability of the caller to check there is enough room in the buffer
+ * to copy <pn_len> bytes.
+ * Never fails.
+ */
+static inline void quic_packet_number_encode(unsigned char **buf, const unsigned char *end,
+                                             uint64_t pn, size_t pn_len)
+{
+	/* Encode the packet number. */
+	switch (pn_len) {
+	case 1:
+		**buf = pn;
+		break;
+	case 2:
+		write_n16(*buf, pn);
+		break;
+	case 3:
+		pn = htonl(pn);
+		memcpy(*buf, &pn, pn_len);
+		break;
+	case 4:
+		write_n32(*buf, pn);
+		break;
+	}
+	*buf += pn_len;
 }
 
 static inline void quic_dflt_transport_params_cpy(struct quic_transport_params *dst)

@@ -139,10 +139,13 @@ struct quic_streams_blocked {
 };
 
 struct quic_new_connection_id {
-	struct eb64_node seq_num;
+	uint64_t seq_num;
 	uint64_t retire_prior_to;
-	struct quic_cid cid;
-	unsigned char stateless_reset_token[QUIC_STATELESS_RESET_TOKEN_LEN];
+	struct {
+		unsigned char len;
+		const unsigned char *data;
+	} cid;
+	const unsigned char *stateless_reset_token;
 };
 
 struct quic_retire_connection_id {
@@ -171,6 +174,7 @@ struct quic_connection_close_app {
 };
 
 struct quic_frame {
+	struct list list;
 	unsigned char type;
 	union {
 		struct quic_padding padding;

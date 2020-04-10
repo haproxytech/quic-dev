@@ -24,6 +24,8 @@
 
 #include <sys/socket.h>
 
+#include <common/mini-clist.h>
+
 #include <types/quic.h>
 #include <types/quic_tls.h>
 
@@ -35,6 +37,8 @@
  */
 #define QUIC_CONN_MAX_PACKET  64
 
+#define QUIC_STATELESS_RESET_TOKEN_LEN 16
+
 /*
  * This struct is used by ebmb_node structs as last member of flexible array.
  * So do not change the order of the member of quic_cid struct.
@@ -45,7 +49,13 @@ struct quic_cid {
 	unsigned char len;
 };
 
-#define QUIC_STATELESS_RESET_TOKEN_LEN 16
+/* The data structure used to build a set of connection IDs for each connection. */
+struct quic_connection_id {
+	struct eb64_node seq_num;
+	uint64_t retire_prior_to;
+	struct quic_cid cid;
+	unsigned char stateless_reset_token[QUIC_STATELESS_RESET_TOKEN_LEN];
+};
 
 struct preferred_address {
 	uint16_t ipv4_port;
@@ -192,7 +202,6 @@ struct quic_enc_level {
 		} crypto;
 	} rx;
 	struct {
-		struct eb_root qpkts; /* XXX TO CHECK XXX */
 		struct {
 			struct quic_crypto_buf **bufs;
 			/* The number of element in use in the previous array. */
@@ -238,6 +247,13 @@ struct quic_conn {
 		unsigned char data[QUIC_PACKET_MAXLEN];
 		unsigned char *pos;
 	} obuf;
+
+	struct {
+		/* The packets which have been sent. */
+		struct eb_root pkts;
+		/* The remaining frames to send. */
+		struct list frms_to_send;
+	} tx;
 
 	uint64_t crypto_in_flight;
 	int retransmit;
