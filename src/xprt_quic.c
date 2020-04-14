@@ -1229,9 +1229,14 @@ static int quic_conn_init(struct connection *conn, void **xprt_ctx)
 
 	ctx->xprt = xprt_get(XPRT_QUIC);
 	if (objt_server(conn->target)) {
+		struct server *srv = __objt_server(conn->target);
+
 		/* Client */
-		/* XXX TO DO XXX */
 		ctx->state = QUIC_HS_ST_CLIENT_INITIAL;
+		if (ssl_bio_and_sess_init(conn, srv->ssl_ctx.ctx,
+		                          &ctx->ssl, &ctx->bio, ha_quic_meth, ctx) == -1)
+			goto err;
+
 		SSL_set_connect_state(ctx->ssl);
 	}
 	else if (objt_listener(conn->target)) {
