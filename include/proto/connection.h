@@ -989,6 +989,8 @@ static inline int conn_install_mux_be(struct connection *conn, void *ctx, struct
 
 		if (prx->mode == PR_MODE_HTTP)
 			mode = PROTO_MODE_HTTP;
+		else if (prx->mode == PR_MODE_QUIC)
+			mode = PROTO_MODE_QUIC;
 		else
 			mode = PROTO_MODE_TCP;
 
