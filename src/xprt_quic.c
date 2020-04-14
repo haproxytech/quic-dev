@@ -542,7 +542,7 @@ static size_t quic_conn_from_buf(struct connection *conn, void *xprt_ctx, const 
 			send_flag |= MSG_MORE;
 
 		ret = sendto(conn->handle.fd, b_peek(buf, done), try, send_flag,
-		             (struct sockaddr *)conn->src, get_addr_len(conn->src));
+		             (struct sockaddr *)conn->dst, get_addr_len(conn->dst));
 		if (ret > 0) {
 			count -= ret;
 			done += ret;
@@ -1438,7 +1438,7 @@ static int quic_new_conn(struct quic_conn *quic_conn, uint32_t version,
 	if (unlikely((cli_conn = conn_new()) == NULL))
 		goto out;
 
-	if (!sockaddr_alloc(&cli_conn->src))
+	if (!sockaddr_alloc(&cli_conn->dst))
 		goto out_free_conn;
 
 	fprintf(stderr, "%s conn: @%p\n", __func__, cli_conn);
@@ -1450,7 +1450,7 @@ static int quic_new_conn(struct quic_conn *quic_conn, uint32_t version,
 	/* XXX Not sure it is safe to keep this statement. */
 	cli_conn->handle.fd = l->fd;
 	if (saddr)
-		*cli_conn->src = *saddr;
+		*cli_conn->dst = *saddr;
 	cli_conn->flags |= CO_FL_ADDR_FROM_SET;
 	cli_conn->target = &l->obj_type;
 	cli_conn->proxy_netns = l->netns;
