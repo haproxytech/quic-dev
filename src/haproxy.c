@@ -2753,8 +2753,14 @@ void deinit(void)
 			free(s->curr_idle_thr);
 
 			if (s->use_ssl == 1 || s->check.use_ssl == 1 || (s->proxy->options & PR_O_TCPCHK_SSL)) {
-				if (xprt_get(XPRT_SSL) && xprt_get(XPRT_SSL)->destroy_srv)
-					xprt_get(XPRT_SSL)->destroy_srv(s);
+				if (is_sa_family_quic(&s->addr)) {
+					if (xprt_get(XPRT_QUIC) && xprt_get(XPRT_QUIC)->destroy_srv)
+						xprt_get(XPRT_QUIC)->destroy_srv(s);
+				}
+				else {
+					if (xprt_get(XPRT_SSL) && xprt_get(XPRT_SSL)->destroy_srv)
+						xprt_get(XPRT_SSL)->destroy_srv(s);
+				}
 			}
 			HA_SPIN_DESTROY(&s->lock);
 
