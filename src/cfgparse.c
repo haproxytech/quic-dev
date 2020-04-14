@@ -3232,8 +3232,14 @@ out_uri_auth_compat:
 
 			/* this will also properly set the transport layer for prod and checks */
 			if (newsrv->use_ssl == 1 || newsrv->check.use_ssl == 1 || (newsrv->proxy->options & PR_O_TCPCHK_SSL)) {
-				if (xprt_get(XPRT_SSL) && xprt_get(XPRT_SSL)->prepare_srv)
-					cfgerr += xprt_get(XPRT_SSL)->prepare_srv(newsrv);
+				if (is_sa_family_quic(&newsrv->addr)) {
+					if (xprt_get(XPRT_QUIC) && xprt_get(XPRT_QUIC)->prepare_srv)
+						cfgerr += xprt_get(XPRT_QUIC)->prepare_srv(newsrv);
+				}
+				else {
+					if (xprt_get(XPRT_SSL) && xprt_get(XPRT_SSL)->prepare_srv)
+						cfgerr += xprt_get(XPRT_SSL)->prepare_srv(newsrv);
+				}
 			}
 
 			if ((newsrv->flags & SRV_F_FASTOPEN) &&

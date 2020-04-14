@@ -1772,7 +1772,12 @@ struct server *new_server(struct proxy *proxy)
 	srv->agent.status = HCHK_STATUS_INI;
 	srv->agent.server = srv;
 	srv->agent.proxy = proxy;
-	srv->xprt  = srv->check.xprt = srv->agent.xprt = xprt_get(XPRT_RAW);
+	if (is_sa_family_quic(&srv->addr)) {
+		srv->xprt  = srv->check.xprt = srv->agent.xprt = xprt_get(XPRT_QUIC);
+	}
+	else {
+		srv->xprt  = srv->check.xprt = srv->agent.xprt = xprt_get(XPRT_RAW);
+	}
 
 	/* please don't put default server settings here, they are set in
 	 * init_default_instance().
@@ -2089,8 +2094,12 @@ int parse_server(const char *file, int linenum, char **args, struct proxy *curpr
 				}
 			}
 
-			if (is_sa_family_quic(sk))
+			if (is_sa_family_quic(sk)) {
+				fprintf(stderr, "%s %s setting XPRT_QUIC\n", __func__, newsrv->id);
 				newsrv->xprt = xprt_get(XPRT_QUIC);
+			}
+			else
+				fprintf(stderr, "%s %s setting %s\n", __func__, newsrv->id, newsrv->xprt->name);
 
 			newsrv->addr = *sk;
 			newsrv->svc_port = port;

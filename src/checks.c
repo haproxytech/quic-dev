@@ -5225,12 +5225,20 @@ static int init_srv_check(struct server *srv)
 			srv->check.use_ssl = srv->use_ssl;
 			srv->check.xprt    = srv->xprt;
 		}
-		else if (srv->check.use_ssl == 1)
-			srv->check.xprt = xprt_get(XPRT_SSL);
+		else if (srv->check.use_ssl == 1) {
+			if (is_sa_family_quic(&srv->addr))
+				srv->xprt = xprt_get(XPRT_QUIC);
+			else
+				srv->xprt = xprt_get(XPRT_SSL);
+		}
 		srv->check.send_proxy |= (srv->pp_opts);
 	}
-	else if (srv->check.use_ssl == 1)
-		srv->check.xprt = xprt_get(XPRT_SSL);
+	else if (srv->check.use_ssl == 1) {
+		if (is_sa_family_quic(&srv->addr))
+			srv->xprt = xprt_get(XPRT_QUIC);
+		else
+			srv->xprt = xprt_get(XPRT_SSL);
+	}
 
 	/* Inherit the mux protocol from the server if not already defined for
 	 * the check
