@@ -95,6 +95,8 @@ struct preferred_address {
 #define QUIC_TP_ACK_DELAY_EXPONENT_LIMIT 20
 #define QUIC_TP_MAX_ACK_DELAY_LIMIT      (1UL << 14)
 
+/* The maximum length of encoded transport parameters for any QUIC peer. */
+#define QUIC_TP_MAX_ENCLEN    128
 /*
  * QUIC transport parameters.
  * Note that forbidden parameters sent by clients MUST generate TRANSPORT_PARAMETER_ERROR errors.

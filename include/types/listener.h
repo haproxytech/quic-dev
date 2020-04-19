@@ -177,7 +177,7 @@ struct bind_conf {
 #ifdef USE_QUIC
 	int is_quic;               /* 1 if QUIC listeners */
 	struct quic_transport_params quic_params; /* QUIC transport parameters */
-	unsigned char enc_quic_params[128];       /* encoded QUIC transport parameters */
+	unsigned char enc_quic_params[QUIC_TP_MAX_ENCLEN]; /* encoded QUIC transport parameters */
 	size_t enc_quic_params_len;
 #endif
 	int generate_certs;        /* 1 if generate-certificates option is set, else 0 */
