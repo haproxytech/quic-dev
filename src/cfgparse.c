@@ -83,7 +83,9 @@
 #include <proto/task.h>
 #include <proto/tcp_rules.h>
 #include <proto/connection.h>
-
+#ifdef USE_QUIC
+#include <proto/xprt_quic.h>
+#endif
 
 /* Used to chain configuration sections definitions. This list
  * stores struct cfg_section
@@ -456,6 +458,9 @@ void init_default_instance()
 
 	defproxy.email_alert.level = LOG_ALERT;
 	defproxy.load_server_state_from_file = PR_SRV_STATE_FILE_UNSPEC;
+#ifdef USE_QUIC
+	quic_transport_params_init(&defproxy.defsrv.quic_params, 0);
+#endif
 }
 
 /* Allocate and initialize the frontend of a "peers" section found in

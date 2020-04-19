@@ -1778,6 +1778,10 @@ struct server *new_server(struct proxy *proxy)
 	else {
 		srv->xprt  = srv->check.xprt = srv->agent.xprt = xprt_get(XPRT_RAW);
 	}
+#ifdef USE_QUIC
+	srv->quic_initial_clients = EB_ROOT;
+	srv->quic_clients = EB_ROOT;
+#endif
 
 	/* please don't put default server settings here, they are set in
 	 * init_default_instance().

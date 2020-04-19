@@ -330,6 +330,13 @@ struct server {
 #endif
 	} ssl_ctx;
 #endif
+#ifdef USE_QUIC
+	struct quic_transport_params quic_params;          /* QUIC transport parameters */
+	unsigned char enc_quic_params[QUIC_TP_MAX_ENCLEN]; /* encoded QUIC transport parameters */
+	size_t enc_quic_params_len;                        /* Length of the encoded QUIC transport parameters */
+	struct eb_root quic_initial_clients;
+	struct eb_root quic_clients;
+#endif
 	struct dns_srvrq *srvrq;		/* Pointer representing the DNS SRV requeest, if any */
 	__decl_hathreads(HA_SPINLOCK_T lock);   /* may enclose the proxy's lock, must not be taken under */
 	struct {
