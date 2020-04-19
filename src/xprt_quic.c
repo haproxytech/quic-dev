@@ -35,6 +35,7 @@
 #include <proto/freq_ctr.h>
 #include <proto/log.h>
 #include <proto/pipe.h>
+#include <proto/proxy.h>
 #include <proto/quic_frame.h>
 #include <proto/quic_tls.h>
 #include <proto/ssl_sock.h>
@@ -1414,6 +1415,145 @@ static int quic_conn_init(struct connection *conn, void **xprt_ctx)
 	return -1;
 }
 
+/* Release the SSL context of <srv> server. */
+void quic_conn_free_srv_ctx(struct server *srv)
+{
+	fprintf(stderr, "%s\n", __func__);
+	if (srv->ssl_ctx.ctx)
+		SSL_CTX_free(srv->ssl_ctx.ctx);
+}
+
+/*
+ * Prepare the SSL context for <srv> server.
+ * Returns an error count.
+ */
+int quic_conn_prepare_srv_ctx(struct server *srv)
+{
+	struct proxy *curproxy = srv->proxy;
+	int cfgerr = 0;
+	SSL_CTX *ctx = NULL;
+	int verify = SSL_VERIFY_NONE;
+	long mode =
+		SSL_MODE_ENABLE_PARTIAL_WRITE |
+		SSL_MODE_ACCEPT_MOVING_WRITE_BUFFER |
+		SSL_MODE_RELEASE_BUFFERS |
+		SSL_MODE_SMALL_BUFFERS;
+
+	/* Make sure openssl opens /dev/urandom before the chroot */
+	if (!ssl_initialize_random()) {
+		ha_alert("OpenSSL random data generator initialization failed.\n");
+		cfgerr++;
+	}
+
+	ctx = SSL_CTX_new(TLS_client_method());
+	SSL_CTX_set_min_proto_version(ctx, TLS1_3_VERSION);
+	SSL_CTX_set_max_proto_version(ctx, TLS1_3_VERSION);
+
+	SSL_CTX_set_mode(ctx, mode);
+	fprintf(stderr, "%s SSL ctx mode: %ld\n", __func__, mode);
+
+	srv->ssl_ctx.ctx = ctx;
+	if (srv->ssl_ctx.client_crt) {
+		if (SSL_CTX_use_PrivateKey_file(srv->ssl_ctx.ctx, srv->ssl_ctx.client_crt, SSL_FILETYPE_PEM) <= 0) {
+			ha_alert("config : %s '%s', server '%s': unable to load SSL private key from PEM file '%s'.\n",
+			         proxy_type_str(curproxy), curproxy->id,
+			         srv->id, srv->ssl_ctx.client_crt);
+			cfgerr++;
+		}
+		else if (SSL_CTX_use_certificate_chain_file(srv->ssl_ctx.ctx, srv->ssl_ctx.client_crt) <= 0) {
+			ha_alert("config : %s '%s', server '%s': unable to load ssl certificate from PEM file '%s'.\n",
+			         proxy_type_str(curproxy), curproxy->id,
+			         srv->id, srv->ssl_ctx.client_crt);
+			cfgerr++;
+		}
+		else if (SSL_CTX_check_private_key(srv->ssl_ctx.ctx) <= 0) {
+			ha_alert("config : %s '%s', server '%s': inconsistencies between private key and certificate loaded from PEM file '%s'.\n",
+			         proxy_type_str(curproxy), curproxy->id,
+			         srv->id, srv->ssl_ctx.client_crt);
+			cfgerr++;
+		}
+	}
+
+	if (global.ssl_server_verify == SSL_SERVER_VERIFY_REQUIRED)
+		verify = SSL_VERIFY_PEER;
+	switch (srv->ssl_ctx.verify) {
+	case SSL_SOCK_VERIFY_NONE:
+		verify = SSL_VERIFY_NONE;
+		break;
+	case SSL_SOCK_VERIFY_REQUIRED:
+		verify = SSL_VERIFY_PEER;
+		break;
+	}
+	SSL_CTX_set_verify(srv->ssl_ctx.ctx, verify,
+	                   (srv->ssl_ctx.verify_host || (verify & SSL_VERIFY_PEER)) ? ssl_sock_srv_verifycbk : NULL);
+	if (verify & SSL_VERIFY_PEER) {
+		if (srv->ssl_ctx.ca_file) {
+			/* set CAfile to verify */
+			if (!ssl_set_verify_locations_file(srv->ssl_ctx.ctx, srv->ssl_ctx.ca_file)) {
+				ha_alert("Proxy '%s', server '%s' [%s:%d] unable to set CA file '%s'.\n",
+				         curproxy->id, srv->id,
+				         srv->conf.file, srv->conf.line, srv->ssl_ctx.ca_file);
+				cfgerr++;
+			}
+		}
+		else {
+			if (global.ssl_server_verify == SSL_SERVER_VERIFY_REQUIRED)
+				ha_alert("Proxy '%s', server '%s' [%s:%d] verify is enabled by default "
+				         "but no CA file specified. If you're running on a LAN where "
+				         "you're certain to trust the server's certificate, please set "
+				         "an explicit 'verify none' statement on the 'server' line, or "
+				         "use 'ssl-server-verify none' in the global section to disable "
+				         "server-side verifications by default.\n",
+				         curproxy->id, srv->id,
+				         srv->conf.file, srv->conf.line);
+			else
+				ha_alert("Proxy '%s', server '%s' [%s:%d] verify is enabled but no CA file specified.\n",
+				         curproxy->id, srv->id,
+				         srv->conf.file, srv->conf.line);
+			cfgerr++;
+		}
+#ifdef X509_V_FLAG_CRL_CHECK
+		if (srv->ssl_ctx.crl_file) {
+			X509_STORE *store = SSL_CTX_get_cert_store(srv->ssl_ctx.ctx);
+
+			if (!ssl_set_cert_crl_file(store, srv->ssl_ctx.crl_file)) {
+				ha_alert("Proxy '%s', server '%s' [%s:%d] unable to configure CRL file '%s'.\n",
+				         curproxy->id, srv->id,
+				         srv->conf.file, srv->conf.line, srv->ssl_ctx.crl_file);
+				cfgerr++;
+			}
+			else {
+				X509_STORE_set_flags(store, X509_V_FLAG_CRL_CHECK|X509_V_FLAG_CRL_CHECK_ALL);
+			}
+		}
+#endif
+	}
+
+	SSL_CTX_set_session_cache_mode(srv->ssl_ctx.ctx, SSL_SESS_CACHE_CLIENT |
+	                               SSL_SESS_CACHE_NO_INTERNAL_STORE);
+	SSL_CTX_sess_set_new_cb(srv->ssl_ctx.ctx, ssl_sess_new_srv_cb);
+	if (srv->ssl_ctx.ciphers &&
+		!SSL_CTX_set_cipher_list(srv->ssl_ctx.ctx, srv->ssl_ctx.ciphers)) {
+		ha_alert("Proxy '%s', server '%s' [%s:%d] : unable to set SSL cipher list to '%s'.\n",
+		         curproxy->id, srv->id,
+		         srv->conf.file, srv->conf.line, srv->ssl_ctx.ciphers);
+		cfgerr++;
+	}
+
+#if (HA_OPENSSL_VERSION_NUMBER >= 0x10101000L)
+	if (srv->ssl_ctx.ciphersuites &&
+		!SSL_CTX_set_ciphersuites(srv->ssl_ctx.ctx, srv->ssl_ctx.ciphersuites)) {
+		ha_alert("Proxy '%s', server '%s' [%s:%d] : unable to set TLS 1.3 cipher suites to '%s'.\n",
+		         curproxy->id, srv->id,
+		         srv->conf.file, srv->conf.line, srv->ssl_ctx.ciphersuites);
+		cfgerr++;
+	}
+#endif
+	SSL_CTX_set_quic_method(ctx, &ha_quic_method);
+
+    return cfgerr;
+}
+
 /* transport-layer operations for QUIC sockets */
 static struct xprt_ops quic_conn = {
 	.snd_buf  = quic_conn_from_buf,
@@ -1427,8 +1567,8 @@ static struct xprt_ops quic_conn = {
 	.init     = quic_conn_init,
 	.prepare_bind_conf = ssl_sock_prepare_bind_conf,
 	.destroy_bind_conf = ssl_sock_destroy_bind_conf,
-	.prepare_srv = ssl_sock_prepare_srv_ctx,
-	.destroy_srv = ssl_sock_free_srv_ctx,
+	.prepare_srv = quic_conn_prepare_srv_ctx,
+	.destroy_srv = quic_conn_free_srv_ctx,
 	.name     = "QUIC",
 };
 
