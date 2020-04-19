@@ -1226,13 +1226,21 @@ static int quic_new_conn_init(struct quic_conn *conn,
 
 	conn->cids = EB_ROOT;
 	fprintf(stderr, "%s: new quic_conn @%p\n", __func__, conn);
-	/* Copy the initial DCID. */
-	conn->idcid.len = dcid_len;
-	memcpy(conn->idcid.data, dcid, dcid_len);
+	/* Server */
+	if (objt_listener(conn->conn->target)) {
+		/* Copy the initial DCID. */
+		conn->idcid.len = dcid_len;
+		memcpy(conn->idcid.data, dcid, dcid_len);
 
-	/* Copy the SCID as our DCID for this connection. */
-	memcpy(conn->dcid.data, scid, scid_len);
-	conn->dcid.len = scid_len;
+		/* Copy the SCID as our DCID for this connection. */
+		memcpy(conn->dcid.data, scid, scid_len);
+		conn->dcid.len = scid_len;
+	}
+	/* Client */
+	else {
+		memcpy(conn->dcid.data, dcid, dcid_len);
+		conn->dcid.len = dcid_len;
+	}
 
 	/* Initialize the output buffer */
 	conn->obuf.pos = conn->obuf.data;
