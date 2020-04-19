@@ -4460,12 +4460,8 @@ int ssl_sock_prepare_srv_ctx(struct server *srv)
 			return cfgerr;
 		}
 	}
-	if (srv->use_ssl == 1) {
-		if (is_sa_family_quic(&srv->addr))
-			srv->xprt = xprt_get(XPRT_QUIC);
-		else
-			srv->xprt = &ssl_sock;
-	}
+	if (srv->use_ssl == 1)
+		srv->xprt = &ssl_sock;
 
 	ctx = SSL_CTX_new(SSLv23_client_method());
 	if (!ctx) {
