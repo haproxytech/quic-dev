@@ -213,26 +213,30 @@ ssize_t quic_tls_derive_initial_secrets(const EVP_MD *md,
 {
 	const unsigned char client_label[] = "client in";
 	const unsigned char server_label[] = "server in";
-	unsigned char *rxp, *txp;
-	size_t rxp_sz, txp_sz;
+	const unsigned char *tx_label, *rx_label;
+	size_t rx_label_sz, tx_label_sz;
 
 	if (server) {
-		rxp = rx; rxp_sz = rx_sz;
-		txp = tx; txp_sz = tx_sz;
+		rx_label = client_label;
+		rx_label_sz = sizeof client_label;
+		tx_label = server_label;
+		tx_label_sz = sizeof server_label;
 	}
 	else {
-		rxp = tx; rxp_sz = tx_sz;
-		txp = rx; txp_sz = rx_sz;
+		rx_label = server_label;
+		rx_label_sz = sizeof server_label;
+		tx_label = client_label;
+		tx_label_sz = sizeof client_label;
 	}
 
-	if (!quic_hkdf_expand_label(md, rxp, rxp_sz, secret, secret_sz,
-	                            client_label, sizeof client_label - 1) ||
-	    !quic_hkdf_expand_label(md, txp, txp_sz, secret, secret_sz,
-	                            server_label, sizeof server_label - 1))
+	if (!quic_hkdf_expand_label(md, rx, rx_sz, secret, secret_sz,
+	                            rx_label, rx_label_sz - 1) ||
+	    !quic_hkdf_expand_label(md, tx, tx_sz, secret, secret_sz,
+	                            tx_label, tx_label_sz - 1))
 	    return 0;
 
-	hexdump(rxp, rxp_sz, "CLIENT INITIAL SECRET:\n");
-	hexdump(txp, txp_sz, "SERVER INITIAL SECRET:\n");
+	hexdump(rx, rx_sz, "CLIENT INITIAL SECRET:\n");
+	hexdump(tx, tx_sz, "SERVER INITIAL SECRET:\n");
 
 	return 1;
 }
