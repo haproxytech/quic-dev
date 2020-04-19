@@ -1319,14 +1319,8 @@ static int quic_conn_derive_initial_secrets(struct quic_tls_ctx *ctx,
 	                                     initial_secret, sizeof initial_secret, server))
 	    return 0;
 
-	if (server) {
-		rx_ctx = &ctx->rx;
-		tx_ctx = &ctx->tx;
-	}
-	else {
-		rx_ctx = &ctx->tx;
-		tx_ctx = &ctx->rx;
-	}
+	rx_ctx = &ctx->rx;
+	tx_ctx = &ctx->tx;
 	if (!quic_tls_derive_packet_protection_keys(ctx->aead, ctx->hp, ctx->md,
 	                                            rx_ctx->key, sizeof rx_ctx->key,
 	                                            rx_ctx->iv, sizeof rx_ctx->iv,
