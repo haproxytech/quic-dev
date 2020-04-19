@@ -327,7 +327,7 @@ int ssl_store_load_locations_file(char *path)
 }
 
 /* mimic what X509_STORE_load_locations do with store_ctx */
-static int ssl_set_cert_crl_file(X509_STORE *store_ctx, char *path)
+int ssl_set_cert_crl_file(X509_STORE *store_ctx, char *path)
 {
 	X509_STORE *store;
 	store = ssl_store_get0_locations_file(path);
@@ -354,7 +354,7 @@ static int ssl_set_cert_crl_file(X509_STORE *store_ctx, char *path)
 }
 
 /* SSL_CTX_load_verify_locations substitute, internally call X509_STORE_load_locations */
-static int ssl_set_verify_locations_file(SSL_CTX *ctx, char *path)
+int ssl_set_verify_locations_file(SSL_CTX *ctx, char *path)
 {
 	X509_STORE *store_ctx = SSL_CTX_get_cert_store(ctx);
 	return ssl_set_cert_crl_file(store_ctx, path);
@@ -3506,7 +3506,7 @@ static int ssl_sock_load_ckchs(const char *path, struct ckch_store *ckchs,
  * if the random is said as not implemented, because we expect that openssl
  * will use another method once needed.
  */
-static int ssl_initialize_random()
+int ssl_initialize_random()
 {
 	unsigned char random;
 	static int random_initialized = 0;
@@ -3858,7 +3858,7 @@ static int sh_ssl_sess_store(unsigned char *s_id, unsigned char *data, int data_
 }
 
 /* SSL callback used when a new session is created while connecting to a server */
-static int ssl_sess_new_srv_cb(SSL *ssl, SSL_SESSION *sess)
+int ssl_sess_new_srv_cb(SSL *ssl, SSL_SESSION *sess)
 {
 	struct connection *conn = SSL_get_ex_data(ssl, ssl_app_data_index);
 	struct server *s;
@@ -4334,7 +4334,7 @@ static int ssl_sock_srv_hostcheck(const char *pattern, const char *hostname)
 	return 1;
 }
 
-static int ssl_sock_srv_verifycbk(int ok, X509_STORE_CTX *ctx)
+int ssl_sock_srv_verifycbk(int ok, X509_STORE_CTX *ctx)
 {
 	SSL *ssl;
 	struct connection *conn;

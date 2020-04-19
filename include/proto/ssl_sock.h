@@ -143,6 +143,12 @@ int ssl_sock_switchctx_cbk(const struct ssl_early_callback_ctx *ctx);
 int ssl_sock_switchctx_cbk(SSL *ssl, int *al, void *arg);
 #endif
 
+int ssl_initialize_random();
+int ssl_sock_srv_verifycbk(int ok, X509_STORE_CTX *ctx);
+int ssl_set_verify_locations_file(SSL_CTX *ctx, char *path);
+int ssl_set_cert_crl_file(X509_STORE *store_ctx, char *path);
+int ssl_sess_new_srv_cb(SSL *ssl, SSL_SESSION *sess);
+
 #if ((HA_OPENSSL_VERSION_NUMBER >= 0x10101000L) || defined(OPENSSL_IS_BORINGSSL))
 int ssl_sock_switchctx_err_cbk(SSL *ssl, int *al, void *priv);
 #endif
