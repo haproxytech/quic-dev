@@ -1196,6 +1196,97 @@ static int quic_conn_remove_xprt(struct connection *conn, void *xprt_ctx, void *
 	return -1;
 }
 
+/*
+ * Allocate a new QUIC connection and return it if succeeded, NULL if not.
+ */
+static struct quic_conn *quic_new_conn(uint32_t version, struct quic_transport_params *tps)
+{
+	struct quic_conn *quic_conn;
+
+	quic_conn = pool_alloc(pool_head_quic_conn);
+	if (quic_conn) {
+		memset(quic_conn, 0, sizeof *quic_conn);
+		quic_conn->version = version;
+		quic_conn->tx_tps = tps;
+	}
+
+	return quic_conn;
+}
+
+static int quic_new_conn_init(struct quic_conn *conn,
+                              struct eb_root *quic_initial_clients,
+                              struct eb_root *quic_clients,
+                              unsigned char *dcid, size_t dcid_len,
+                              unsigned char *scid, size_t scid_len)
+{
+	int i;
+	/* Initial CID. */
+	struct quic_connection_id *icid;
+
+	conn->cids = EB_ROOT;
+	fprintf(stderr, "%s: new quic_conn @%p\n", __func__, conn);
+	/* Copy the initial DCID. */
+	conn->idcid.len = dcid_len;
+	memcpy(conn->idcid.data, dcid, dcid_len);
+
+	/* Copy the SCID as our DCID for this connection. */
+	memcpy(conn->dcid.data, scid, scid_len);
+	conn->dcid.len = scid_len;
+
+	/* Initialize the output buffer */
+	conn->obuf.pos = conn->obuf.data;
+
+	icid = new_quic_connection_id(&conn->cids, 0);
+	if (!icid)
+		return 0;
+
+	/* Select our SCID which is the first CID with 0 as sequence number. */
+	conn->scid = icid->cid;
+
+	/* Insert the DCIC the client has choosen. */
+	ebmb_insert(quic_initial_clients, &conn->idcid_node, conn->idcid.len);
+
+	/* Insert our SCID, the connection ID for the client. */
+	ebmb_insert(quic_clients, &conn->scid_node, conn->scid.len);
+
+	/* Initialize the Initial level TLS encryption context. */
+	quic_initial_tls_ctx_init(&conn->enc_levels[QUIC_TLS_ENC_LEVEL_INITIAL].tls_ctx);
+	/* Packet number spaces initialization. */
+	for (i = 0; i < QUIC_TLS_PKTNS_MAX; i++) {
+		quic_pktns_init(&conn->pktns[i]);
+	}
+	for (i = 0; i < QUIC_TLS_ENC_LEVEL_MAX; i++) {
+		struct quic_enc_level *qel= &conn->enc_levels[i];
+
+		qel->rx.qpkts = EB_ROOT;
+		qel->tx.crypto.bufs = malloc(sizeof *qel->tx.crypto.bufs);
+		if (qel->tx.crypto.bufs) {
+			qel->tx.crypto.bufs[0] = pool_alloc(pool_head_quic_crypto_buf);
+			if (!qel->tx.crypto.bufs[0]) {
+				fprintf(stderr, "%s: could not allocated any crypto buffer\n", __func__);
+				free(qel->tx.crypto.bufs);
+				qel->tx.crypto.bufs = NULL;
+				return 0;
+			}
+			qel->tx.crypto.bufs[0]->sz = 0;
+			qel->tx.crypto.nb_buf = 1;
+		}
+		else {
+			qel->tx.crypto.nb_buf = 0;
+		}
+		qel->tx.crypto.sz = 0;
+		qel->tx.crypto.offset = 0;
+		qel->tx.crypto.frms = EB_ROOT;
+		qel->tx.crypto.retransmit_frms = EB_ROOT;
+		/* Initialize the packet number space */
+		qel->pktns = &conn->pktns[quic_tls_pktns(i)];
+	}
+	conn->retransmit = 0;
+	conn->crypto_in_flight = 0;
+	LIST_INIT(&conn->tx.frms_to_send);
+
+	return 1;
+}
 static int quic_conn_init(struct connection *conn, void **xprt_ctx)
 {
 	struct quic_conn_ctx *ctx;
@@ -1230,13 +1321,48 @@ static int quic_conn_init(struct connection *conn, void **xprt_ctx)
 	ctx->xprt = xprt_get(XPRT_QUIC);
 	if (objt_server(conn->target)) {
 		struct server *srv = __objt_server(conn->target);
+		unsigned char dcid[QUIC_CID_LEN];
+		unsigned char scid[QUIC_CID_LEN];
+
+
+		if (RAND_bytes(dcid, sizeof dcid) != 1 || RAND_bytes(scid, sizeof scid) != 1)
+			goto err;
+
+		conn->quic_conn = quic_new_conn(QUIC_PROTOCOL_VERSION_DRAFT_27, &srv->quic_params);
+		if (!conn->quic_conn)
+			goto err;
+
+		if (!quic_new_conn_init(conn->quic_conn, &srv->quic_initial_clients, &srv->quic_clients,
+		                        dcid, sizeof dcid, scid, sizeof scid))
+			goto err;
+
+		conn->quic_conn->conn = conn;
 
 		/* Client */
 		ctx->state = QUIC_HS_ST_CLIENT_INITIAL;
 		if (ssl_bio_and_sess_init(conn, srv->ssl_ctx.ctx,
-		                          &ctx->ssl, &ctx->bio, ha_quic_meth, ctx) == -1)
+		                          &ctx->ssl, &ctx->bio, ha_quic_meth, ctx) == -1) {
+			fprintf(stderr, "Could not initiliaze SSL ctx\n");
 			goto err;
+		}
 
+		if (conn->quic_conn->version >= QUIC_PROTOCOL_VERSION_DRAFT_27) {
+			srv->enc_quic_params_len =
+				quic_transport_params_encode_draft27(srv->enc_quic_params,
+				                                     srv->enc_quic_params + sizeof srv->enc_quic_params,
+				                                     &srv->quic_params, 0);
+		}
+		else {
+			srv->enc_quic_params_len =
+				quic_transport_params_encode(srv->enc_quic_params,
+				                             srv->enc_quic_params + sizeof srv->enc_quic_params,
+				                             &srv->quic_params, 0);
+		}
+		if (!srv->enc_quic_params_len) {
+			fprintf(stderr, "QUIC transport parameters encoding failed");
+			goto err;
+		}
+		SSL_set_quic_transport_params(ctx->ssl, srv->enc_quic_params, srv->enc_quic_params_len);
 		SSL_set_connect_state(ctx->ssl);
 	}
 	else if (objt_listener(conn->target)) {
@@ -1428,8 +1554,8 @@ static int quic_remove_header_protection(struct quic_conn *conn, struct quic_rx_
 /*
  * Inspired from session_accept_fd().
  */
-static int quic_new_conn(struct quic_conn *quic_conn, uint32_t version,
-                         struct listener *l, struct sockaddr_storage *saddr)
+static int quic_new_cli_conn(struct quic_conn *quic_conn,
+                             struct listener *l, struct sockaddr_storage *saddr)
 {
 	struct connection *cli_conn;
 	struct proxy *p = l->bind_conf->frontend;
@@ -1443,8 +1569,6 @@ static int quic_new_conn(struct quic_conn *quic_conn, uint32_t version,
 
 	fprintf(stderr, "%s conn: @%p\n", __func__, cli_conn);
 	quic_conn->conn = cli_conn;
-	quic_conn->version = version;
-	quic_conn->tx_tps = &l->bind_conf->quic_params;
 	cli_conn->quic_conn = quic_conn;
 
 	/* XXX Not sure it is safe to keep this statement. */
@@ -1552,77 +1676,6 @@ static int quic_conn_derive_initial_secrets(struct quic_tls_ctx *ctx,
 	return 1;
 }
 
-static int quic_new_conn_init(struct listener *l, struct quic_conn *conn,
-                              unsigned char *dcid, size_t dcid_len, unsigned char *scid, size_t scid_len)
-{
-	int i;
-	/* Initial CID. */
-	struct quic_connection_id *icid;
-
-	conn->cids = EB_ROOT;
-	fprintf(stderr, "%s: new quic_conn @%p\n", __func__, conn);
-	/* Copy the initial DCID. */
-	conn->idcid.len = dcid_len;
-	memcpy(conn->idcid.data, dcid, dcid_len);
-
-	/* Copy the SCID as our DCID for this connection. */
-	memcpy(conn->dcid.data, scid, scid_len);
-	conn->dcid.len = scid_len;
-
-	/* Initialize the output buffer */
-	conn->obuf.pos = conn->obuf.data;
-
-	icid = new_quic_connection_id(&conn->cids, 0);
-	if (!icid)
-		return 0;
-
-	/* Select our SCID which is the first CID with 0 as sequence number. */
-	conn->scid = icid->cid;
-
-	/* Insert the DCIC the client has choosen. */
-	ebmb_insert(&l->quic_initial_clients, &conn->idcid_node, conn->idcid.len);
-
-	/* Insert our SCID, the connection ID for the client. */
-	ebmb_insert(&l->quic_clients, &conn->scid_node, conn->scid.len);
-
-	/* Initialize the Initial level TLS encryption context. */
-	quic_initial_tls_ctx_init(&conn->enc_levels[QUIC_TLS_ENC_LEVEL_INITIAL].tls_ctx);
-	/* Packet number spaces initialization. */
-	for (i = 0; i < QUIC_TLS_PKTNS_MAX; i++) {
-		quic_pktns_init(&conn->pktns[i]);
-	}
-	for (i = 0; i < QUIC_TLS_ENC_LEVEL_MAX; i++) {
-		struct quic_enc_level *qel= &conn->enc_levels[i];
-
-		qel->rx.qpkts = EB_ROOT;
-		qel->tx.crypto.bufs = malloc(sizeof *qel->tx.crypto.bufs);
-		if (qel->tx.crypto.bufs) {
-			qel->tx.crypto.bufs[0] = pool_alloc(pool_head_quic_crypto_buf);
-			if (!qel->tx.crypto.bufs[0]) {
-				fprintf(stderr, "%s: could not allocated any crypto buffer\n", __func__);
-				free(qel->tx.crypto.bufs);
-				qel->tx.crypto.bufs = NULL;
-				return 0;
-			}
-			qel->tx.crypto.bufs[0]->sz = 0;
-			qel->tx.crypto.nb_buf = 1;
-		}
-		else {
-			qel->tx.crypto.nb_buf = 0;
-		}
-		qel->tx.crypto.sz = 0;
-		qel->tx.crypto.offset = 0;
-		qel->tx.crypto.frms = EB_ROOT;
-		qel->tx.crypto.retransmit_frms = EB_ROOT;
-		/* Initialize the packet number space */
-		qel->pktns = &conn->pktns[quic_tls_pktns(i)];
-	}
-	conn->retransmit = 0;
-	conn->crypto_in_flight = 0;
-	LIST_INIT(&conn->tx.frms_to_send);
-
-	return 1;
-}
 
 static ssize_t quic_packet_read(unsigned char **buf, const unsigned char *end,
                                 struct quic_rx_packet *qpkt, struct listener *l,
@@ -1713,23 +1766,22 @@ static ssize_t quic_packet_read(unsigned char **buf, const unsigned char *end,
 
 		node = ebmb_lookup(quic_clients, qpkt->dcid.data, cid_lookup_len);
 		if (!node) {
-			int ret;
-
 			if (qpkt->type != QUIC_PACKET_TYPE_INITIAL) {
 				fprintf(stderr, "Connection not found.\n");
 				goto err;
 			}
 
-			conn = pool_alloc(pool_head_quic_conn);
+			conn =  quic_new_conn(qpkt->version, &l->bind_conf->quic_params);
 			if (!conn)
 				goto err;
 
-			memset(conn, 0, sizeof *conn);
-			ret = quic_new_conn(conn, qpkt->version, l, saddr);
-			if (ret == -1)
+			if (!quic_new_cli_conn(conn, l, saddr)) {
+				free(conn);
 				goto err;
+			}
 
-			if (!quic_new_conn_init(l, conn, qpkt->dcid.data, cid_lookup_len, qpkt->scid.data, qpkt->scid.len))
+			if (!quic_new_conn_init(conn, &l->quic_initial_clients, &l->quic_clients,
+			                        qpkt->dcid.data, cid_lookup_len, qpkt->scid.data, qpkt->scid.len))
 				goto err;
 		}
 		else {
