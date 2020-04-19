@@ -279,7 +279,6 @@ int quic_connect_server(struct connection *conn, int flags)
 	struct proxy *be;
 	struct conn_src *src;
 	struct sockaddr_storage *addr;
-	sa_family_t sa_family;
 
 	conn->flags |= CO_FL_WAIT_L4_CONN; /* connection in progress */
 
@@ -466,11 +465,9 @@ int quic_connect_server(struct connection *conn, int flags)
                 setsockopt(fd, SOL_SOCKET, SO_RCVBUF, &global.tune.server_rcvbuf, sizeof(global.tune.server_rcvbuf));
 
 	addr = (conn->flags & CO_FL_SOCKS4) ? &srv->socks4_addr : conn->dst;
-	sa_family = addr->ss_family;
-	addr->ss_family = sa_family == AF_CUST_QUIC ? AF_INET :
-		sa_family == AF_CUST_QUIC6 ? AF_INET6 : -1;
+	addr->ss_family = addr->ss_family == AF_CUST_QUIC ? AF_INET :
+		addr->ss_family == AF_CUST_QUIC6 ? AF_INET6 : -1;
 	ret = connect(fd, (const struct sockaddr *)addr, get_addr_len(addr));
-	addr->ss_family = sa_family;
 	if (ret == -1) {
 		if (errno == EINPROGRESS || errno == EALREADY) {
 			/* common case, let's wait for connect status */
