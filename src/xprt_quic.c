@@ -1252,8 +1252,9 @@ static int quic_new_conn_init(struct quic_conn *conn,
 	/* Select our SCID which is the first CID with 0 as sequence number. */
 	conn->scid = icid->cid;
 
-	/* Insert the DCIC the client has choosen. */
-	ebmb_insert(quic_initial_clients, &conn->idcid_node, conn->idcid.len);
+	/* Insert the DCIC the client has choosen (only for servers) */
+	if (objt_listener(conn->conn->target))
+		ebmb_insert(quic_initial_clients, &conn->idcid_node, conn->idcid.len);
 
 	/* Insert our SCID, the connection ID for the client. */
 	ebmb_insert(quic_clients, &conn->scid_node, conn->scid.len);
@@ -1382,7 +1383,7 @@ static int quic_conn_init(struct connection *conn, void **xprt_ctx)
 			goto err;
 
 		conn->quic_conn->conn = conn;
-		if (!quic_new_conn_init(conn->quic_conn, &srv->quic_initial_clients, &srv->quic_clients,
+		if (!quic_new_conn_init(conn->quic_conn, NULL, &srv->quic_clients,
 		                        dcid, sizeof dcid, scid, sizeof scid))
 			goto err;
 
