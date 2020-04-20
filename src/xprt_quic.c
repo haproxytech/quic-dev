@@ -933,6 +933,7 @@ static int quic_send_handshake_packets(struct quic_conn_ctx *ctx)
  next_level:
 	switch (ctx->state) {
 	case QUIC_HS_ST_SERVER_INITIAL:
+	case QUIC_HS_ST_CLIENT_INITIAL:
 		tls_enc_level = QUIC_TLS_ENC_LEVEL_INITIAL;
 		break;
 	case QUIC_HS_ST_SERVER_HANSHAKE:
@@ -1077,6 +1078,7 @@ static int quic_conn_do_handshake(struct quic_conn_ctx *ctx)
 
 	switch (ctx->state) {
 	case QUIC_HS_ST_SERVER_INITIAL:
+	case QUIC_HS_ST_CLIENT_INITIAL:
 		enc_level = &quic_conn->enc_levels[QUIC_TLS_ENC_LEVEL_INITIAL];
 		break;
 	case QUIC_HS_ST_SERVER_HANSHAKE:
@@ -1827,7 +1829,7 @@ static int quic_new_cli_conn(struct quic_conn *quic_conn,
 }
 
 static ssize_t quic_packet_read(unsigned char **buf, const unsigned char *end,
-                                struct quic_rx_packet *qpkt, struct listener *l,
+                                struct quic_rx_packet *qpkt, int listener, void *ctx,
                                 struct sockaddr_storage *saddr, socklen_t *saddrlen)
 {
 	unsigned char *beg;
@@ -1835,8 +1837,11 @@ static ssize_t quic_packet_read(unsigned char **buf, const unsigned char *end,
 	uint64_t len;
 	unsigned char *pn = NULL; /* Packet number */
 	struct quic_conn *conn;
+	struct eb_root *cids;
 	struct ebmb_node *node;
 	struct quic_tls_ctx *tls_ctx;
+	struct connection *srv_conn;
+	struct listener *l;
 	enum quic_tls_enc_level qpkt_enc_level;
 
 	if (end <= *buf)
@@ -1847,6 +1852,9 @@ static ssize_t quic_packet_read(unsigned char **buf, const unsigned char *end,
 		/* XXX TO BE DISCARDED */
 		goto err;
 
+	l = listener ? ctx : NULL;
+	srv_conn = listener ? NULL : ctx;
+
 	dcid_len = 0;
 	beg = *buf;
 	/* Header form */
@@ -1854,7 +1862,6 @@ static ssize_t quic_packet_read(unsigned char **buf, const unsigned char *end,
 	/* Packet type XXX does not exist for short headers XXX */
 	qpkt->type = (*(*buf)++ >> QUIC_PACKET_TYPE_SHIFT) & QUIC_PACKET_TYPE_BITMASK;
 	if (qpkt->long_header) {
-		struct eb_root *quic_clients;
 		size_t cid_lookup_len;
 
 		/* Version */
@@ -1888,7 +1895,7 @@ static ssize_t quic_packet_read(unsigned char **buf, const unsigned char *end,
 		 * DCIDs of first packets coming from clients may have the same values.
 		 * Let's distinguish them concatenating the socket addresses to the DCIDs.
 		 */
-		if (qpkt->type == QUIC_PACKET_TYPE_INITIAL) {
+		if (l && qpkt->type == QUIC_PACKET_TYPE_INITIAL) {
 			memcpy(qpkt->dcid.data + qpkt->dcid.len, saddr, sizeof *saddr);
 			qpkt->dcid.len += sizeof *saddr;
 		}
@@ -1904,18 +1911,21 @@ static ssize_t quic_packet_read(unsigned char **buf, const unsigned char *end,
 		qpkt->scid.len = scid_len;
 		*buf += scid_len;
 
+		/* For Initial packets, and for servers (QUIC clients connections),
+		 * there is no Initial connection IDs storage.
+		 */
 		if (qpkt->type == QUIC_PACKET_TYPE_INITIAL) {
-			quic_clients = &l->icids;
+			cids = l ? &l->icids : &((struct server *)__objt_server(srv_conn->target))->cids;
 			cid_lookup_len = qpkt->dcid.len;
 		}
 		else {
-			quic_clients = &l->cids;
+			cids = l ? &l->cids : &((struct server *)__objt_server(srv_conn->target))->cids;
 			cid_lookup_len = QUIC_CID_LEN;
 		}
 
-		node = ebmb_lookup(quic_clients, qpkt->dcid.data, cid_lookup_len);
+		node = ebmb_lookup(cids, qpkt->dcid.data, cid_lookup_len);
 		if (!node) {
-			if (qpkt->type != QUIC_PACKET_TYPE_INITIAL) {
+			if (!l || qpkt->type != QUIC_PACKET_TYPE_INITIAL) {
 				fprintf(stderr, "Connection not found.\n");
 				goto err;
 			}
@@ -1934,7 +1944,7 @@ static ssize_t quic_packet_read(unsigned char **buf, const unsigned char *end,
 				goto err;
 		}
 		else {
-			if (qpkt->type == QUIC_PACKET_TYPE_INITIAL)
+			if (l && qpkt->type == QUIC_PACKET_TYPE_INITIAL)
 				conn = ebmb_entry(node, struct quic_conn, idcid_node);
 			else
 				conn = ebmb_entry(node, struct quic_conn, scid_node);
@@ -1959,7 +1969,7 @@ static ssize_t quic_packet_read(unsigned char **buf, const unsigned char *end,
 			 * NOTE: the socket address it concatenated to the destination ID choosen by the client
 			 * for Initial packets.
 			 */
-			if (!quic_conn_derive_initial_secrets(ctx, qpkt->dcid.data, qpkt->dcid.len - sizeof *saddr, 1)) {
+			if (l && !quic_conn_derive_initial_secrets(ctx, qpkt->dcid.data, qpkt->dcid.len - sizeof *saddr, 1)) {
 				fprintf(stderr, "Could not derive initial secrets\n");
 				goto err;
 			}
@@ -1971,7 +1981,8 @@ static ssize_t quic_packet_read(unsigned char **buf, const unsigned char *end,
 			fprintf(stderr, "Too short short headder\n");
 			goto err;
 		}
-		node = ebmb_lookup(&l->cids, *buf, QUIC_CID_LEN);
+		cids = l ? &l->cids : &((struct server *)__objt_server(srv_conn->target))->cids;
+		node = ebmb_lookup(cids, *buf, QUIC_CID_LEN);
 		if (!node) {
 			fprintf(stderr, "Unknonw connection ID\n");
 			goto err;
@@ -2042,7 +2053,7 @@ static ssize_t quic_packet_read(unsigned char **buf, const unsigned char *end,
 	return -1;
 }
 
-static ssize_t quic_packets_read(char *buf, size_t len, struct listener *l,
+static ssize_t quic_packets_read(char *buf, size_t len, int listener, void *ctx,
                                  struct sockaddr_storage *saddr, socklen_t *saddrlen)
 {
 	unsigned char *pos;
@@ -2061,7 +2072,7 @@ static ssize_t quic_packets_read(char *buf, size_t len, struct listener *l,
 			goto err;
 		}
 
-		ret = quic_packet_read(&pos, end, qpkt, l, saddr, saddrlen);
+		ret = quic_packet_read(&pos, end, qpkt, listener, ctx, saddr, saddrlen);
 		if (ret == -1) {
 			pool_free(pool_head_quic_rx_packet, qpkt);
 			goto err;
