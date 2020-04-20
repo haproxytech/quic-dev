@@ -1744,6 +1744,9 @@ static void srv_settings_cpy(struct server *srv, struct server *src, int srv_tmp
 
 	srv->check.via_socks4         = src->check.via_socks4;
 	srv->socks4_addr              = src->socks4_addr;
+#ifdef USE_QUIC
+	srv->quic_params              = src->quic_params;
+#endif
 }
 
 struct server *new_server(struct proxy *proxy)
