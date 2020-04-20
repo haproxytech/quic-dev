@@ -609,7 +609,8 @@ int create_listeners(struct bind_conf *bc, const struct sockaddr_storage *ss,
 		MT_LIST_INIT(&l->wait_queue);
 		l->state = LI_INIT;
 #ifdef USE_QUIC
-		l->quic_clients = EB_ROOT_UNIQUE;
+		l->icids = EB_ROOT_UNIQUE;
+		l->cids = EB_ROOT_UNIQUE;
 #endif
 
 		proto->add(l, port);

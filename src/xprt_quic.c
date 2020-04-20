@@ -1383,7 +1383,7 @@ static int quic_conn_init(struct connection *conn, void **xprt_ctx)
 			goto err;
 
 		conn->quic_conn->conn = conn;
-		if (!quic_new_conn_init(conn->quic_conn, NULL, &srv->quic_clients,
+		if (!quic_new_conn_init(conn->quic_conn, NULL, &srv->cids,
 		                        dcid, sizeof dcid, scid, sizeof scid))
 			goto err;
 
@@ -1905,11 +1905,11 @@ static ssize_t quic_packet_read(unsigned char **buf, const unsigned char *end,
 		*buf += scid_len;
 
 		if (qpkt->type == QUIC_PACKET_TYPE_INITIAL) {
-			quic_clients = &l->quic_initial_clients;
+			quic_clients = &l->icids;
 			cid_lookup_len = qpkt->dcid.len;
 		}
 		else {
-			quic_clients = &l->quic_clients;
+			quic_clients = &l->cids;
 			cid_lookup_len = QUIC_CID_LEN;
 		}
 
@@ -1929,7 +1929,7 @@ static ssize_t quic_packet_read(unsigned char **buf, const unsigned char *end,
 				goto err;
 			}
 
-			if (!quic_new_conn_init(conn, &l->quic_initial_clients, &l->quic_clients,
+			if (!quic_new_conn_init(conn, &l->icids, &l->cids,
 			                        qpkt->dcid.data, cid_lookup_len, qpkt->scid.data, qpkt->scid.len))
 				goto err;
 		}
@@ -1971,7 +1971,7 @@ static ssize_t quic_packet_read(unsigned char **buf, const unsigned char *end,
 			fprintf(stderr, "Too short short headder\n");
 			goto err;
 		}
-		node = ebmb_lookup(&l->quic_clients, *buf, QUIC_CID_LEN);
+		node = ebmb_lookup(&l->cids, *buf, QUIC_CID_LEN);
 		if (!node) {
 			fprintf(stderr, "Unknonw connection ID\n");
 			goto err;

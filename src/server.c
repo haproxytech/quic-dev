@@ -1782,7 +1782,7 @@ struct server *new_server(struct proxy *proxy)
 		srv->xprt  = srv->check.xprt = srv->agent.xprt = xprt_get(XPRT_RAW);
 	}
 #ifdef USE_QUIC
-	srv->quic_clients = EB_ROOT;
+	srv->cids = EB_ROOT_UNIQUE;
 #endif
 
 	/* please don't put default server settings here, they are set in

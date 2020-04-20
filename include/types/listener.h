@@ -241,8 +241,8 @@ struct listener {
 	struct list proto_list;         /* list in the protocol header */
 
 #ifdef USE_QUIC
-	struct eb_root quic_initial_clients;
-	struct eb_root quic_clients;
+	struct eb_root icids;
+	struct eb_root cids;
 #endif
 
 	/* warning: this struct is huge, keep it at the bottom */
