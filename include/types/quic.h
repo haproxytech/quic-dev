@@ -27,6 +27,9 @@
 
 #define QUIC_PACKET_MAXLEN      1252 /* (bytes) for IPv4, 1232 for IPv6 */
 
+/* The minimum length of Initial packets. */
+#define QUIC_INITIAL_PACKET_MINLEN 1200
+
 /*
  * QUIC CID lengths. This the length of the connection IDs for this QUIC
  * implementation.

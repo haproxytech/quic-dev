@@ -2204,6 +2204,7 @@ static ssize_t quic_do_build_handshake_packet(unsigned char **buf, const unsigne
 	struct quic_frame frm = { .type = QUIC_FT_CRYPTO, };
 	struct quic_crypto *crypto = &frm.crypto;
 	struct quic_enc_level *enc_level;
+	size_t padding_len;
 
 	beg = *buf;
 	enc_level = &conn->enc_levels[level];
@@ -2243,6 +2244,12 @@ static ssize_t quic_do_build_handshake_packet(unsigned char **buf, const unsigne
 	frm_header_sz += quic_int_getsize(crypto->len);
 	/* packet length (after encryption) */
 	len = *pn_len + frm_header_sz + crypto->len + QUIC_TLS_TAG_LEN;
+
+	padding_len = 0;
+	if (objt_server(conn->conn->target) &&
+	    packet_type == QUIC_PACKET_TYPE_INITIAL && len < QUIC_INITIAL_PACKET_MINLEN)
+		len += padding_len = QUIC_INITIAL_PACKET_MINLEN - len;
+
 	/* Length (of the remaining data). Must not fail because, buffer size checked above. */
 	quic_enc_int(buf, end, len);
 
@@ -2255,6 +2262,13 @@ static ssize_t quic_do_build_handshake_packet(unsigned char **buf, const unsigne
 	/* Crypto frame */
 	if (!quic_build_frame(buf, end, &frm))
 		return -1;
+
+	if (padding_len) {
+		frm.type = QUIC_FT_PADDING;
+		frm.padding.len = padding_len;
+		if (!quic_build_frame(buf, end, &frm))
+			return -1;
+	}
 
 	*data += crypto->len;
 
