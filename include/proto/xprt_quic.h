@@ -977,11 +977,9 @@ static inline int quic_transport_params_encode_draft27(unsigned char *buf, const
 	    return 0;
 
 	/* 0-length value */
-	if (p->disable_active_migration) {
-	    if (end - pos < 4)
-		    return 0;
-	    quic_transport_param_encode_type_len_draft27(&pos, end, QUIC_TP_DISABLE_ACTIVE_MIGRATION, 0);
-	}
+	if (p->disable_active_migration &&
+	    !quic_transport_param_encode_type_len_draft27(&pos, end, QUIC_TP_DISABLE_ACTIVE_MIGRATION, 0))
+		return 0;
 
 	if (p->active_connection_id_limit &&
 	    !quic_transport_param_enc_int_draft27(&pos, end, QUIC_TP_ACTIVE_CONNECTION_ID_LIMIT,
