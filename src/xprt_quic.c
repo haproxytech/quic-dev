@@ -818,6 +818,9 @@ static int quic_retransmit_handshake_packets(struct quic_conn_ctx *ctx)
 			if (ctx->xprt->snd_buf(quic_conn->conn, quic_conn->conn->xprt_ctx,
 								   &tmpbuf, tmpbuf.data, 0) <= 0)
 				goto out;
+
+			tmpbuf.data = 0;
+			*obuf_pos = quic_conn->obuf.data;
 			return 1;
 		}
 	}
@@ -950,13 +953,16 @@ static int quic_send_handshake_packets(struct quic_conn_ctx *ctx)
 	        __func__, qel->tx.crypto.offset, qel->tx.crypto.sz, tmpbuf.data, quic_conn->crypto_in_flight);
 
 	/* No CRYPTO data to send. */
-	if (!qel->tx.crypto.sz)
+	if (!qel->tx.crypto.sz && !tmpbuf.data)
 		return 1;
 
 	if (qel->tx.crypto.offset == qel->tx.crypto.sz && tmpbuf.data) {
 	    if (ctx->xprt->snd_buf(quic_conn->conn, quic_conn->conn->xprt_ctx,
 	                           &tmpbuf, tmpbuf.data, 0) <= 0)
 			goto out;
+
+		tmpbuf.data = 0;
+		*obuf_pos = quic_conn->obuf.data;
 		return 1;
 	}
 
