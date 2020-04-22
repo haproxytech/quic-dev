@@ -3523,7 +3523,7 @@ out_uri_auth_compat:
 		cfgerr += flt_check(curproxy);
 
 		if (curproxy->cap & PR_CAP_FE) {
-			if (!curproxy->accept)
+			if (!curproxy->accept && curproxy->mode != PR_MODE_QUIC)
 				curproxy->accept = frontend_accept;
 
 			if (curproxy->tcp_req.inspect_delay ||
