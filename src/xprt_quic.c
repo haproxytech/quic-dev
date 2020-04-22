@@ -1038,7 +1038,6 @@ static int quic_send_handshake_packets(struct quic_conn_ctx *ctx)
 	tmpbuf.size = sizeof quic_conn->obuf.data;
 	tmpbuf.data = *obuf_pos - quic_conn->obuf.data;
 
- next_level:
 	switch (ctx->state) {
 	case QUIC_HS_ST_SERVER_INITIAL:
 	case QUIC_HS_ST_CLIENT_INITIAL:
@@ -1051,11 +1050,12 @@ static int quic_send_handshake_packets(struct quic_conn_ctx *ctx)
 		return 0;
 	}
 
+ next_level:
 	qel = &quic_conn->enc_levels[tls_enc_level];
 
 	/* Nothing to do? */
-	fprintf(stderr, "%s nothing to do? %lu %lu left: %zu in flight: %zu\n",
-	        __func__, qel->tx.crypto.offset, qel->tx.crypto.sz, tmpbuf.data, quic_conn->crypto_in_flight);
+	fprintf(stderr, "%s nothing to do? crypto.sz: %lu crypto.offset: %lu left in buf: %zu in flight: %zu\n",
+	        __func__, qel->tx.crypto.sz, qel->tx.crypto.offset, tmpbuf.data, quic_conn->crypto_in_flight);
 
 	/* No CRYPTO data to send. */
 	if (!qel->tx.crypto.sz && !tmpbuf.data)
@@ -1102,8 +1102,8 @@ static int quic_send_handshake_packets(struct quic_conn_ctx *ctx)
 		quic_conn->crypto_in_flight += ppos - pos;
 		/* If all the data for this encryption level has been prepared, select the next level. */
 		if (qel->tx.crypto.offset == qel->tx.crypto.sz) {
-			if (ctx->state == QUIC_HS_ST_SERVER_INITIAL) {
-				ctx->state = QUIC_HS_ST_SERVER_HANSHAKE;
+			if (tls_enc_level == QUIC_TLS_ENC_LEVEL_INITIAL) {
+				tls_enc_level = QUIC_TLS_ENC_LEVEL_HANDSHAKE;
 				goto next_level;
 			}
 		}
@@ -1886,6 +1886,7 @@ static ssize_t quic_packet_read(unsigned char **buf, const unsigned char *end,
 	struct connection *srv_conn;
 	struct listener *l;
 	enum quic_tls_enc_level qpkt_enc_level;
+	struct quic_conn_ctx *conn_ctx;
 
 	if (end <= *buf)
 		goto err;
@@ -2099,6 +2100,14 @@ static ssize_t quic_packet_read(unsigned char **buf, const unsigned char *end,
 	memcpy(qpkt->data, beg, qpkt->len);
 	/* Updtate the offset of <*buf> for the next QUIC packet. */
 	*buf = beg + qpkt->len;
+
+	/* Update the state if needed. */
+	conn_ctx = conn->conn->xprt_ctx;
+	if (l) {
+		if (conn_ctx->state == QUIC_HS_ST_SERVER_INITIAL && qpkt->type == QUIC_PACKET_TYPE_HANDSHAKE)
+			conn_ctx->state = QUIC_HS_ST_SERVER_HANSHAKE;
+	}
+
 	/* Wake the tasklet of the QUIC connection packet handler. */
 	if (conn->conn && conn->conn->xprt_ctx)
 		tasklet_wakeup(((struct quic_conn_ctx *)conn->conn->xprt_ctx)->wait_event.tasklet);
