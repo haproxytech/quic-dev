@@ -144,6 +144,7 @@ struct quic_pktns {
 extern struct quic_transport_params quid_dflt_transport_params;
 
 struct quic_rx_packet {
+	struct list list;
 	int from_server;
 	int long_header;
 	unsigned char type;
@@ -151,6 +152,7 @@ struct quic_rx_packet {
 	/* Initial desctination connection ID. */
 	struct quic_cid dcid;
 	struct quic_cid scid;
+	size_t pn_offset;
 	/* Packet number */
 	uint64_t pn;
 	/* Packet number length */
@@ -158,6 +160,7 @@ struct quic_rx_packet {
 	uint64_t token_len;
 	/* Packet length */
 	uint64_t len;
+	/* Additional authenticated data length */
 	size_t aad_len;
 	unsigned char data[QUIC_PACKET_MAXLEN];
 	struct eb64_node pn_node;
@@ -195,8 +198,11 @@ struct quic_crypto_buf {
 struct quic_enc_level {
 	struct quic_tls_ctx tls_ctx;
 	struct {
-		/* The packets received by the listener I/O handler. */
+		/* The packets received by the listener I/O handler
+		   with header protection removed. */
 		struct eb_root qpkts;
+		/* Liste of QUIC packets with protected header. */
+		struct list pqpkts;
 		/* Crypto frames */
 		struct {
 			uint64_t offset;
