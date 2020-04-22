@@ -588,6 +588,111 @@ static int quic_conn_unsubscribe(struct connection *conn, void *xprt_ctx, int ev
 	return conn_unsubscribe(conn, xprt_ctx, event_type, es);
 }
 
+static uint64_t *quic_max_pn(struct quic_conn *conn, int server, int long_header, int packet_type)
+{
+	/* Packet number space */
+	int pn_space;
+
+	if (long_header && packet_type == QUIC_PACKET_TYPE_INITIAL) {
+		pn_space = QUIC_TLS_PKTNS_INITIAL;
+	} else if (long_header && packet_type == QUIC_PACKET_TYPE_HANDSHAKE) {
+		pn_space = QUIC_TLS_PKTNS_HANDSHAKE;
+	} else {
+		pn_space = QUIC_TLS_PKTNS_01RTT;
+	}
+
+	if (server) {
+		return &conn->server_max_pn[pn_space];
+	} else {
+		return &conn->client_max_pn[pn_space];
+	}
+}
+
+/*
+ * See https://quicwg.org/base-drafts/draft-ietf-quic-transport.html#packet-encoding
+ * The comments come from this draft.
+ */
+static uint64_t decode_packet_number(uint64_t largest_pn, uint32_t truncated_pn, unsigned int pn_nbits)
+{
+	uint64_t expected_pn = largest_pn + 1;
+	uint64_t pn_win = (uint64_t)1 << pn_nbits;
+	uint64_t pn_hwin = pn_win / 2;
+	uint64_t pn_mask = pn_win - 1;
+	uint64_t candidate_pn;
+
+
+	// The incoming packet number should be greater than
+	// expected_pn - pn_hwin and less than or equal to
+	// expected_pn + pn_hwin
+	//
+	// This means we can't just strip the trailing bits from
+	// expected_pn and add the truncated_pn because that might
+	// yield a value outside the window.
+	//
+	// The following code calculates a candidate value and
+	// makes sure it's within the packet number window.
+	candidate_pn = (expected_pn & ~pn_mask) | truncated_pn;
+	if (candidate_pn + pn_hwin <= expected_pn)
+	  return candidate_pn + pn_win;
+
+	// Note the extra check for underflow when candidate_pn
+	// is near zero.
+	if (candidate_pn > expected_pn + pn_hwin && candidate_pn > pn_win)
+	  return candidate_pn - pn_win;
+
+	return candidate_pn;
+}
+
+static int quic_remove_header_protection(struct quic_conn *conn, struct quic_rx_packet *pkt,
+                                         struct quic_tls_ctx *tls_ctx,
+                                         unsigned char *pn, unsigned char *byte0, const unsigned char *end)
+{
+	int ret, outlen, i, pnlen;
+	uint64_t *largest_pn, packet_number;
+	uint32_t truncated_pn = 0;
+	unsigned char mask[5] = {0};
+	unsigned char *sample;
+	EVP_CIPHER_CTX *ctx;
+	unsigned char *hp_key;
+
+	/* Check there is enough data in this packet. */
+	if (end - pn < QUIC_PACKET_PN_MAXLEN + sizeof mask)
+		return 0;
+
+	ctx = EVP_CIPHER_CTX_new();
+	if (!ctx)
+		return 0;
+
+	ret = 0;
+	sample = pn + QUIC_PACKET_PN_MAXLEN;
+
+	hp_key = tls_ctx->rx.hp_key;
+	if (!EVP_DecryptInit_ex(ctx, tls_ctx->hp, NULL, hp_key, sample) ||
+	    !EVP_DecryptUpdate(ctx, mask, &outlen, mask, sizeof mask) ||
+	    !EVP_DecryptFinal_ex(ctx, mask, &outlen))
+	    goto out;
+
+	*byte0 ^= mask[0] & (*byte0 & QUIC_PACKET_LONG_HEADER_BIT ? 0xf : 0x1f);
+	pnlen = (*byte0 & QUIC_PACKET_PNL_BITMASK) + 1;
+	for (i = 0; i < pnlen; i++) {
+		pn[i] ^= mask[i + 1];
+		truncated_pn = (truncated_pn << 8) | pn[i];
+	}
+
+	largest_pn = quic_max_pn(conn, 0, *byte0 & QUIC_PACKET_LONG_HEADER_BIT, pkt->type);
+	packet_number = decode_packet_number(*largest_pn, truncated_pn, pnlen * 8);
+	/* Store remaining information for this unprotected header */
+	pkt->pn = packet_number;
+	pkt->pnl = pnlen;
+
+	ret = 1;
+
+ out:
+	EVP_CIPHER_CTX_free(ctx);
+
+	return ret;
+}
+
 static int quic_packet_decrypt(struct quic_rx_packet *qpkt, struct quic_tls_ctx *tls_ctx)
 {
 	int ret;
@@ -1646,111 +1751,6 @@ __attribute__((destructor))
 static void __quic_conn_deinit(void)
 {
 	BIO_meth_free(ha_quic_meth);
-}
-
-static uint64_t *quic_max_pn(struct quic_conn *conn, int server, int long_header, int packet_type)
-{
-	/* Packet number space */
-    int pn_space;
-
-    if (long_header && packet_type == QUIC_PACKET_TYPE_INITIAL) {
-        pn_space = QUIC_TLS_PKTNS_INITIAL;
-    } else if (long_header && packet_type == QUIC_PACKET_TYPE_HANDSHAKE) {
-        pn_space = QUIC_TLS_PKTNS_HANDSHAKE;
-    } else {
-        pn_space = QUIC_TLS_PKTNS_01RTT;
-    }
-
-    if (server) {
-        return &conn->server_max_pn[pn_space];
-    } else {
-        return &conn->client_max_pn[pn_space];
-    }
-}
-
-/*
- * See https://quicwg.org/base-drafts/draft-ietf-quic-transport.html#packet-encoding
- * The comments come from this draft.
- */
-static uint64_t decode_packet_number(uint64_t largest_pn, uint32_t truncated_pn, unsigned int pn_nbits)
-{
-   uint64_t expected_pn = largest_pn + 1;
-   uint64_t pn_win = (uint64_t)1 << pn_nbits;
-   uint64_t pn_hwin = pn_win / 2;
-   uint64_t pn_mask = pn_win - 1;
-   uint64_t candidate_pn;
-
-
-   // The incoming packet number should be greater than
-   // expected_pn - pn_hwin and less than or equal to
-   // expected_pn + pn_hwin
-   //
-   // This means we can't just strip the trailing bits from
-   // expected_pn and add the truncated_pn because that might
-   // yield a value outside the window.
-   //
-   // The following code calculates a candidate value and
-   // makes sure it's within the packet number window.
-   candidate_pn = (expected_pn & ~pn_mask) | truncated_pn;
-   if (candidate_pn + pn_hwin <= expected_pn)
-      return candidate_pn + pn_win;
-
-   // Note the extra check for underflow when candidate_pn
-   // is near zero.
-   if (candidate_pn > expected_pn + pn_hwin && candidate_pn > pn_win)
-      return candidate_pn - pn_win;
-
-   return candidate_pn;
-}
-
-static int quic_remove_header_protection(struct quic_conn *conn, struct quic_rx_packet *pkt,
-                                         struct quic_tls_ctx *tls_ctx,
-                                         unsigned char *pn, unsigned char *byte0, const unsigned char *end)
-{
-	int ret, outlen, i, pnlen;
-	uint64_t *largest_pn, packet_number;
-	uint32_t truncated_pn = 0;
-	unsigned char mask[5] = {0};
-	unsigned char *sample;
-	EVP_CIPHER_CTX *ctx;
-	unsigned char *hp_key;
-
-	/* Check there is enough data in this packet. */
-	if (end - pn < QUIC_PACKET_PN_MAXLEN + sizeof mask)
-		return 0;
-
-	ctx = EVP_CIPHER_CTX_new();
-	if (!ctx)
-		return 0;
-
-	ret = 0;
-	sample = pn + QUIC_PACKET_PN_MAXLEN;
-
-	hp_key = tls_ctx->rx.hp_key;
-	if (!EVP_DecryptInit_ex(ctx, tls_ctx->hp, NULL, hp_key, sample) ||
-	    !EVP_DecryptUpdate(ctx, mask, &outlen, mask, sizeof mask) ||
-	    !EVP_DecryptFinal_ex(ctx, mask, &outlen))
-	    goto out;
-
-	*byte0 ^= mask[0] & (*byte0 & QUIC_PACKET_LONG_HEADER_BIT ? 0xf : 0x1f);
-	pnlen = (*byte0 & QUIC_PACKET_PNL_BITMASK) + 1;
-	for (i = 0; i < pnlen; i++) {
-		pn[i] ^= mask[i + 1];
-		truncated_pn = (truncated_pn << 8) | pn[i];
-	}
-
-	largest_pn = quic_max_pn(conn, 0, *byte0 & QUIC_PACKET_LONG_HEADER_BIT, pkt->type);
-	packet_number = decode_packet_number(*largest_pn, truncated_pn, pnlen * 8);
-	/* Store remaining information for this unprotected header */
-	pkt->pn = packet_number;
-	pkt->pnl = pnlen;
-
-	ret = 1;
-
- out:
-	EVP_CIPHER_CTX_free(ctx);
-
-	return ret;
 }
 
 /*
