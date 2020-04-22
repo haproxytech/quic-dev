@@ -1171,16 +1171,15 @@ static int quic_build_post_handshake_frames(struct quic_conn *conn)
 static int quic_conn_do_handshake(struct quic_conn_ctx *ctx)
 {
 	struct quic_conn *quic_conn;
-	struct quic_enc_level *enc_level;
+	struct quic_enc_level *enc_level, *next_enc_level;
 	struct quic_rx_packet *qpkt;
 	struct eb64_node *qpkt_node;
 	struct quic_tls_ctx *tls_ctx;
 	struct eb_root *rx_qpkts;
 	int ret;
 
-	fprintf(stderr, "%s ctx state: %d\n", __func__, ctx->state);
 	quic_conn = ctx->conn->quic_conn;
-
+	fprintf(stderr, "%s ctx state: %d retransmit? %d\n", __func__, ctx->state, quic_conn->retransmit);
 	if (quic_conn->retransmit && !quic_retransmit_handshake_packets(ctx))
 		return 0;
 
@@ -1191,16 +1190,44 @@ static int quic_conn_do_handshake(struct quic_conn_ctx *ctx)
 	case QUIC_HS_ST_SERVER_INITIAL:
 	case QUIC_HS_ST_CLIENT_INITIAL:
 		enc_level = &quic_conn->enc_levels[QUIC_TLS_ENC_LEVEL_INITIAL];
+		next_enc_level = &quic_conn->enc_levels[QUIC_TLS_ENC_LEVEL_HANDSHAKE];
 		break;
 	case QUIC_HS_ST_SERVER_HANSHAKE:
+	case QUIC_HS_ST_CLIENT_HANSHAKE:
 		enc_level = &quic_conn->enc_levels[QUIC_TLS_ENC_LEVEL_HANDSHAKE];
+		next_enc_level = NULL;
 		break;
 	default:
 		return 0;
 	}
 
+ next_level:
 	tls_ctx = &enc_level->tls_ctx;
 	rx_qpkts = &enc_level->rx.qpkts;
+
+	/* If the header protection key for this level has been derived. */
+	if (tls_ctx->hp) {
+		struct quic_rx_packet *pqpkt, *qqpkt;
+
+		/* Remove protection of all the packet whose header protection could not be removed. */
+		list_for_each_entry_safe(pqpkt, qqpkt, &enc_level->rx.pqpkts, list) {
+			if (!quic_remove_header_protection(ctx->conn->quic_conn, pqpkt, tls_ctx,
+			                                   pqpkt->data + pqpkt->pn_offset,
+			                                   pqpkt->data, pqpkt->data + pqpkt->len)) {
+				fprintf(stderr, "Could not remove packet header protection (state %d)\n", ctx->state);
+				/* XXX TO DO XXX */
+			}
+			else {
+				fprintf(stderr, "Removed header protection of packet #%lu state: %d\n", pqpkt->pn, ctx->state);
+				/* Store the packet into the tree of packets to decrypt. */
+				pqpkt->pn_node.key = pqpkt->pn;
+				eb64_insert(&enc_level->rx.qpkts, &pqpkt->pn_node);
+				/* The AAD includes the packet number field */
+				pqpkt->aad_len = pqpkt->pn_offset + pqpkt->pnl;
+			}
+			LIST_DEL(&pqpkt->list);
+		}
+	}
 
 	qpkt_node = eb64_first(rx_qpkts);
 	while (qpkt_node) {
@@ -1216,6 +1243,15 @@ static int quic_conn_do_handshake(struct quic_conn_ctx *ctx)
 		qpkt_node = eb64_next(qpkt_node);
 		eb64_delete(&qpkt->pn_node);
 		pool_free(pool_head_quic_rx_packet, qpkt);
+	}
+
+	/*
+	 * Check if there is something to do for the next level.
+	 */
+	if (ctx->state == QUIC_HS_ST_CLIENT_INITIAL && next_enc_level->tls_ctx.hp &&
+	    (!LIST_ISEMPTY(&next_enc_level->rx.pqpkts) || !eb_is_empty(&next_enc_level->rx.qpkts))) {
+		enc_level = next_enc_level;
+		goto next_level;
 	}
 
 	ret = SSL_do_handshake(ctx->ssl);
