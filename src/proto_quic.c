@@ -521,8 +521,11 @@ int quic_connect_server(struct connection *conn, int flags)
 
 	conn->flags |= CO_FL_ADDR_TO_SET;
 
-	conn_ctrl_init(conn);       /* registers the FD */
-	fdtab[fd].linger_risk = 1;  /* close hard if needed */
+
+	if (!conn_ctrl_ready(conn)) {
+		fd_insert(conn->handle.fd, conn, quic_conn_fd_handler, 1);
+		conn->flags |= CO_FL_CTRL_READY;
+	}
 
 	if (conn_xprt_init(conn) < 0) {
 		conn_full_close(conn);
@@ -530,7 +533,10 @@ int quic_connect_server(struct connection *conn, int flags)
 		return SF_ERR_RESOURCE;
 	}
 
-	fd_want_send(fd);  /* for connect status, proxy protocol or SSL */
+	/* XXX TO DO: check this. XXX */
+	//fd_want_send(fd);  /* for connect status, proxy protocol or SSL */
+	fd_want_recv(fd);
+
 	return SF_ERR_NONE;  /* connection is OK */
 }
 

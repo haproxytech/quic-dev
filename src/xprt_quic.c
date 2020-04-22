@@ -2489,11 +2489,10 @@ static int quic_send_app_packets(struct quic_conn_ctx *ctx)
 	return 1;
 }
 
-static size_t quic_conn_handler(int fd, void *ctx)
+static size_t quic_conn_handler(int fd, void *ctx, int listener)
 {
 	ssize_t ret;
 	size_t done = 0;
-	struct listener *l = ctx;
 	struct buffer *buf = get_trash_chunk();
 
 	if (!fd_recv_ready(fd))
@@ -2516,14 +2515,14 @@ static size_t quic_conn_handler(int fd, void *ctx)
 		}
 		else {
 			hexdump(buf->area, ret, "------------------------------------------------------------\n"
-			        "%s: recvfrom() (%ld)\n", __func__, ret);
+			        "%s: %s recvfrom() (%ld)\n", __func__, listener ? "server" : "client", ret);
 			done = buf->data = ret;
 			/*
 			 * Senders MUST NOT coalesce QUIC packets for different connections into a single
 			 * UDP datagram. Receivers SHOULD ignore any subsequent packets with a different
 			 * Destination Connection ID than the first packet in the datagram.
 			 */
-			quic_packets_read(buf->area, buf->data, l, &saddr, &saddrlen);
+			quic_packets_read(buf->area, buf->data, listener, ctx, &saddr, &saddrlen);
 			//fd_done_recv(fd);
 		}
 	} while (0);
@@ -2534,11 +2533,14 @@ static size_t quic_conn_handler(int fd, void *ctx)
 
 void quic_fd_handler(int fd)
 {
-	struct listener *l = fdtab[fd].owner;
-
-	fprintf(stderr, "%s: tid: %u\n", __func__, tid);
 	if (fdtab[fd].ev & FD_POLL_IN)
-		quic_conn_handler(fd, l);
+		quic_conn_handler(fd, fdtab[fd].owner, 1);
+}
+
+void quic_conn_fd_handler(int fd)
+{
+	if (fdtab[fd].ev & FD_POLL_IN)
+		quic_conn_handler(fd, fdtab[fd].owner, 0);
 }
 
 /*

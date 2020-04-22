@@ -33,6 +33,7 @@ int quic_get_dst(int fd, struct sockaddr *sa, socklen_t salen, int dir);
 
 /* XXX TO BE MOVED??? XXX */
 void quic_fd_handler(int fd);
+void quic_conn_fd_handler(int fd);
 
 #endif /* _PROTO_PROTO_QUIC_H */
 
