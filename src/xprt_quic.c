@@ -1865,7 +1865,7 @@ static ssize_t quic_packet_read(unsigned char **buf, const unsigned char *end,
 	struct quic_conn *conn;
 	struct eb_root *cids;
 	struct ebmb_node *node;
-	struct quic_tls_ctx *tls_ctx;
+	struct quic_enc_level *qel;
 	struct connection *srv_conn;
 	struct listener *l;
 	enum quic_tls_enc_level qpkt_enc_level;
@@ -2050,14 +2050,14 @@ static ssize_t quic_packet_read(unsigned char **buf, const unsigned char *end,
 		qpkt_enc_level = quic_packet_type_enc_level(qpkt->type);
 	else
 		qpkt_enc_level = QUIC_TLS_ENC_LEVEL_APP;
-	tls_ctx = &conn->enc_levels[qpkt_enc_level].tls_ctx;
+	qel = &conn->enc_levels[qpkt_enc_level];
 
-	if (tls_ctx->hp) {
+	if (qel->tls_ctx.hp) {
 		/*
 		 * Note that the following function enables us to unprotect the packet number
 		 * and its length subsequently used to decrypt the entire packets.
 		 */
-		if (!quic_remove_header_protection(qpkt, tls_ctx, conn->enc_levels[qpkt_enc_level].pktns->rx.largest_pn,
+		if (!quic_remove_header_protection(qpkt, &qel->tls_ctx, qel->pktns->rx.largest_pn,
 		                                   pn, beg, end)) {
 			fprintf(stderr, "Could not remove packet header protection\n");
 			goto err;
@@ -2068,7 +2068,7 @@ static ssize_t quic_packet_read(unsigned char **buf, const unsigned char *end,
 
 		/* Store the packet */
 		qpkt->pn_node.key = qpkt->pn;
-		eb64_insert(&conn->enc_levels[qpkt_enc_level].rx.qpkts, &qpkt->pn_node);
+		eb64_insert(&qel->rx.qpkts, &qpkt->pn_node);
 		/* The AAD includes the packet number field found at <pn>. */
 		qpkt->aad_len = pn - beg + qpkt->pnl;
 	}
@@ -2076,7 +2076,7 @@ static ssize_t quic_packet_read(unsigned char **buf, const unsigned char *end,
 		fprintf(stderr, "packet header protection was not "
 		        "removed (enc. level %d)\n", qpkt_enc_level);
 		qpkt->pn_offset = pn - beg;
-		LIST_ADDQ(&conn->enc_levels[qpkt_enc_level].rx.pqpkts, &qpkt->list);
+		LIST_ADDQ(&qel->rx.pqpkts, &qpkt->list);
 	}
 
 	/* The length of the packet includes the packet number field. */
