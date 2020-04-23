@@ -588,26 +588,6 @@ static int quic_conn_unsubscribe(struct connection *conn, void *xprt_ctx, int ev
 	return conn_unsubscribe(conn, xprt_ctx, event_type, es);
 }
 
-static uint64_t *quic_max_pn(struct quic_conn *conn, int server, int long_header, int packet_type)
-{
-	/* Packet number space */
-	int pn_space;
-
-	if (long_header && packet_type == QUIC_PACKET_TYPE_INITIAL) {
-		pn_space = QUIC_TLS_PKTNS_INITIAL;
-	} else if (long_header && packet_type == QUIC_PACKET_TYPE_HANDSHAKE) {
-		pn_space = QUIC_TLS_PKTNS_HANDSHAKE;
-	} else {
-		pn_space = QUIC_TLS_PKTNS_01RTT;
-	}
-
-	if (server) {
-		return &conn->server_max_pn[pn_space];
-	} else {
-		return &conn->client_max_pn[pn_space];
-	}
-}
-
 /*
  * See https://quicwg.org/base-drafts/draft-ietf-quic-transport.html#packet-encoding
  * The comments come from this draft.
@@ -643,12 +623,12 @@ static uint64_t decode_packet_number(uint64_t largest_pn, uint32_t truncated_pn,
 	return candidate_pn;
 }
 
-static int quic_remove_header_protection(struct quic_conn *conn, struct quic_rx_packet *pkt,
-                                         struct quic_tls_ctx *tls_ctx,
-                                         unsigned char *pn, unsigned char *byte0, const unsigned char *end)
+static int quic_remove_header_protection(struct quic_rx_packet *pkt, struct quic_tls_ctx *tls_ctx,
+                                         int64_t largest_pn, unsigned char *pn,
+                                         unsigned char *byte0, const unsigned char *end)
 {
 	int ret, outlen, i, pnlen;
-	uint64_t *largest_pn, packet_number;
+	uint64_t packet_number;
 	uint32_t truncated_pn = 0;
 	unsigned char mask[5] = {0};
 	unsigned char *sample;
@@ -679,8 +659,7 @@ static int quic_remove_header_protection(struct quic_conn *conn, struct quic_rx_
 		truncated_pn = (truncated_pn << 8) | pn[i];
 	}
 
-	largest_pn = quic_max_pn(conn, 0, *byte0 & QUIC_PACKET_LONG_HEADER_BIT, pkt->type);
-	packet_number = decode_packet_number(*largest_pn, truncated_pn, pnlen * 8);
+	packet_number = decode_packet_number(largest_pn, truncated_pn, pnlen * 8);
 	/* Store remaining information for this unprotected header */
 	pkt->pn = packet_number;
 	pkt->pnl = pnlen;
@@ -1211,7 +1190,7 @@ static int quic_conn_do_handshake(struct quic_conn_ctx *ctx)
 
 		/* Remove protection of all the packet whose header protection could not be removed. */
 		list_for_each_entry_safe(pqpkt, qqpkt, &enc_level->rx.pqpkts, list) {
-			if (!quic_remove_header_protection(ctx->conn->quic_conn, pqpkt, tls_ctx,
+			if (!quic_remove_header_protection(pqpkt, tls_ctx, enc_level->pktns->rx.largest_pn,
 			                                   pqpkt->data + pqpkt->pn_offset,
 			                                   pqpkt->data, pqpkt->data + pqpkt->len)) {
 				fprintf(stderr, "Could not remove packet header protection (state %d)\n", ctx->state);
@@ -1239,6 +1218,10 @@ static int quic_conn_do_handshake(struct quic_conn_ctx *ctx)
 			fprintf(stderr,  "Could not parse the packet frames\n");
 			return 0;
 		}
+
+		/* Update the largest packet number. */
+		if (qpkt->pn > enc_level->pktns->rx.largest_pn)
+			enc_level->pktns->rx.largest_pn = qpkt->pn;
 
 		qpkt_node = eb64_next(qpkt_node);
 		eb64_delete(&qpkt->pn_node);
@@ -2074,7 +2057,8 @@ static ssize_t quic_packet_read(unsigned char **buf, const unsigned char *end,
 		 * Note that the following function enables us to unprotect the packet number
 		 * and its length subsequently used to decrypt the entire packets.
 		 */
-		if (!quic_remove_header_protection(conn, qpkt, tls_ctx, pn, beg, end)) {
+		if (!quic_remove_header_protection(qpkt, tls_ctx, conn->enc_levels[qpkt_enc_level].pktns->rx.largest_pn,
+		                                   pn, beg, end)) {
 			fprintf(stderr, "Could not remove packet header protection\n");
 			goto err;
 		}

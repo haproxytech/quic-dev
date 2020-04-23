@@ -132,6 +132,8 @@ struct quic_pktns {
 		int64_t next_pn;
 	} tx;
 	struct {
+		/* Largest packet number */
+		int64_t largest_pn;
 		/* Largest acked packet number */
 		int64_t largest_acked_pn;
 	} rx;
@@ -245,9 +247,7 @@ struct quic_conn {
 	struct quic_transport_params rx_tps;
 
 	struct quic_pktns pktns[QUIC_TLS_PKTNS_MAX];
-	/* One largest packet number by client/server by number space */
-	uint64_t client_max_pn[QUIC_TLS_PKTNS_MAX];
-	uint64_t server_max_pn[QUIC_TLS_PKTNS_MAX];
+
 	/* Used only to reach the tasklet for the I/O handler from this quic_conn object. */
 	struct connection *conn;
 	/* Output buffer used during the handshakes. */
