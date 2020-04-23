@@ -25,12 +25,13 @@
 #include <stdint.h>
 
 #include <common/net_helper.h>
+#include <common/openssl-compat.h>
 
 #include <types/listener.h>
 #include <types/quic_frame.h>
 #include <types/xprt_quic.h>
 
-#include <common/openssl-compat.h>
+#include <openssl/rand.h>
 
 extern struct pool_head *pool_head_quic_connection_id;
 
