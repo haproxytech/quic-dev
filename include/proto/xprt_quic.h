@@ -1023,6 +1023,7 @@ static inline void quic_pktns_init(struct quic_pktns *pktns)
 	pktns->tx.next_pn = -1;
 	pktns->rx.largest_acked_pn = -1;
 	pktns->rx.largest_pn = -1;
+	LIST_INIT(&pktns->rx.ack_ranges);
 }
 
 #endif /* _PROTO_XPRT_QUIC_H */

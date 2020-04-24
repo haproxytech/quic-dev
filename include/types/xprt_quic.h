@@ -125,6 +125,13 @@ struct quic_transport_params {
 	struct preferred_address preferred_address;                    /* Forbidden for clients */
 };
 
+/* Structure for ACK ranges sent in ACK frames. */
+struct quic_ack_range {
+	struct list list;
+	int64_t first;
+	int64_t last;
+};
+
 /* QUIC packet number space */
 struct quic_pktns {
 	struct {
@@ -136,6 +143,8 @@ struct quic_pktns {
 		int64_t largest_pn;
 		/* Largest acked packet number */
 		int64_t largest_acked_pn;
+		/* list of ACK ranges. */
+		struct list ack_ranges;
 	} rx;
 };
 

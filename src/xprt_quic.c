@@ -162,6 +162,8 @@ DECLARE_STATIC_POOL(pool_head_quic_crypto_buf, "quic_crypto_buf_pool", sizeof(st
 
 DECLARE_STATIC_POOL(pool_head_quic_frame, "quic_frame_pool", sizeof(struct quic_frame));
 
+DECLARE_STATIC_POOL(pool_head_quic_ack_range, "quic_ack_range_pool", sizeof(struct quic_ack_range));
+
 static BIO_METHOD *ha_quic_meth;
 
 static ssize_t quic_build_handshake_packet(unsigned char **buf, const unsigned char *end,
@@ -1147,6 +1149,80 @@ static int quic_build_post_handshake_frames(struct quic_conn *conn)
 	return 0;
 }
 
+/* Deallocate <l> list of ACK ranges. */
+void free_ack_range_list(struct list *l)
+{
+	struct quic_ack_range *curr, *next;
+
+	list_for_each_entry_safe(curr, next, l, list) {
+		LIST_DEL(&curr->list);
+		free(curr);
+	}
+}
+
+/*
+ * Update <l> list of ACK ranges with <pn> new packet number.
+ */
+int quic_update_ack_ranges_list(struct list *l, int64_t pn)
+{
+	struct quic_ack_range *curr, *prev, *next;
+	struct quic_ack_range *new_sack;
+
+	prev = NULL;
+
+	if (LIST_ISEMPTY(l)) {
+		new_sack = pool_alloc(pool_head_quic_ack_range);
+		new_sack->first = new_sack->last = pn;
+		LIST_ADD(l, &new_sack->list);
+		return 1;
+	}
+
+	list_for_each_entry_safe(curr, next, l, list) {
+		/* Already existing packet number */
+		if (pn >= curr->first && pn <= curr->last)
+			break;
+
+		if (pn > curr->last + 1) {
+			new_sack = pool_alloc(pool_head_quic_ack_range);
+			new_sack->first = new_sack->last = pn;
+			if (prev) {
+				/* Insert <new_sack> between <prev> and <curr> */
+				new_sack->list.n = &curr->list;
+				new_sack->list.p = &prev->list;
+				prev->list.n = &new_sack->list;
+				curr->list.p = &new_sack->list;
+			}
+			else {
+				LIST_ADD(l, &new_sack->list);
+			}
+			break;
+		}
+		else if (curr->last + 1 == pn) {
+			curr->last = pn;
+			break;
+		}
+		else if (curr->first == pn + 1) {
+			if (&next->list != l && pn == next->last + 1) {
+				next->last = curr->last;
+				LIST_DEL(&curr->list);
+				free(curr);
+			}
+			else {
+				curr->first = pn;
+			}
+			break;
+		}
+		else if (&next->list == l) {
+			new_sack = pool_alloc(pool_head_quic_ack_range);
+			new_sack->first = new_sack->last = pn;
+			LIST_ADDQ(l, &new_sack->list);
+			break;
+		}
+		prev = curr;
+	}
+
+	return 1;
+}
 static int quic_conn_do_handshake(struct quic_conn_ctx *ctx)
 {
 	struct quic_conn *quic_conn;
@@ -1293,6 +1369,7 @@ static int quic_treat_packets(struct quic_conn_ctx *ctx)
 			fprintf(stderr,  "Could not parse the packet frames\n");
 			return 0;
 		}
+
 		qpkt_node = eb64_next(qpkt_node);
 		eb64_delete(&qpkt->pn_node);
 		pool_free(pool_head_quic_rx_packet, qpkt);
