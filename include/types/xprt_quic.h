@@ -132,6 +132,13 @@ struct quic_ack_range {
 	int64_t last;
 };
 
+struct quic_ack_ranges {
+	/* list of ACK ranges. */
+	struct list list;
+	/* The number of ACK ranges is this lists */
+	size_t sz;
+};
+
 /* QUIC packet number space */
 struct quic_pktns {
 	struct {
@@ -143,8 +150,7 @@ struct quic_pktns {
 		int64_t largest_pn;
 		/* Largest acked packet number */
 		int64_t largest_acked_pn;
-		/* list of ACK ranges. */
-		struct list ack_ranges;
+		struct quic_ack_ranges ack_ranges;
 	} rx;
 };
 

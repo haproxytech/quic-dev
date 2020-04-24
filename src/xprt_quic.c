@@ -1167,8 +1167,11 @@ void free_ack_range_list(struct list *l)
 /*
  * Update <l> list of ACK ranges with <pn> new packet number.
  */
-int quic_update_ack_ranges_list(struct list *l, int64_t pn)
+int quic_update_ack_ranges_list(struct quic_ack_ranges *ack_ranges, int64_t pn)
 {
+	struct list *l = &ack_ranges->list;
+	size_t *sz = &ack_ranges->sz;
+
 	struct quic_ack_range *curr, *prev, *next;
 	struct quic_ack_range *new_sack;
 
@@ -1178,6 +1181,7 @@ int quic_update_ack_ranges_list(struct list *l, int64_t pn)
 		new_sack = pool_alloc(pool_head_quic_ack_range);
 		new_sack->first = new_sack->last = pn;
 		LIST_ADD(l, &new_sack->list);
+		++*sz;
 		return 1;
 	}
 
@@ -1199,6 +1203,7 @@ int quic_update_ack_ranges_list(struct list *l, int64_t pn)
 			else {
 				LIST_ADD(l, &new_sack->list);
 			}
+			++*sz;
 			break;
 		}
 		else if (curr->last + 1 == pn) {
@@ -1210,6 +1215,7 @@ int quic_update_ack_ranges_list(struct list *l, int64_t pn)
 				next->last = curr->last;
 				LIST_DEL(&curr->list);
 				free(curr);
+				--*sz;
 			}
 			else {
 				curr->first = pn;
@@ -1220,6 +1226,7 @@ int quic_update_ack_ranges_list(struct list *l, int64_t pn)
 			new_sack = pool_alloc(pool_head_quic_ack_range);
 			new_sack->first = new_sack->last = pn;
 			LIST_ADDQ(l, &new_sack->list);
+			++*sz;
 			break;
 		}
 		prev = curr;
