@@ -848,6 +848,10 @@ static int quic_parse_handshake_packet(struct quic_rx_packet *qpkt, struct quic_
 
 				fprintf(stderr, "acks from %lu -> %lu\n", smallest, largest);
 			} while (1);
+
+			if (ack->largest_ack > enc_level->pktns->rx.largest_acked_pn)
+				enc_level->pktns->rx.largest_acked_pn = ack->largest_ack;
+
 			tasklet_wakeup(ctx->wait_event.tasklet);
 
 			break;
