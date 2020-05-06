@@ -674,6 +674,35 @@ static int quic_remove_header_protection(struct quic_rx_packet *pkt, struct quic
 	return ret;
 }
 
+/*
+ * Encrypt the payload of a QUIC packet with <pn> as number found at <payload>
+ * address, with <payload_len> as payload length, <aad> as address of
+ * the ADD and <aad_len> as AAD length depending on the <tls_ctx> QUIC TLS
+ * context.
+ * Returns 1 if succeeded, 0 if not.
+ */
+static int quic_packet_encrypt(unsigned char *payload, size_t payload_len,
+                               unsigned char *aad, size_t aad_len, uint64_t pn,
+                               struct quic_tls_ctx *tls_ctx)
+{
+	unsigned char iv[12];
+	unsigned char *tx_iv = tls_ctx->tx.iv;
+	size_t tx_iv_sz = sizeof tls_ctx->tx.iv;
+
+	if (!quic_aead_iv_build(iv, sizeof iv, tx_iv, tx_iv_sz, pn)) {
+		fprintf(stderr, "AEAD IV building for encryption failed\n");
+		return 0;
+	}
+
+	if (!quic_tls_encrypt(payload, payload_len, aad, aad_len,
+	                      tls_ctx->aead, tls_ctx->tx.key, iv)) {
+		fprintf(stderr, "QUIC packet encryption failed\n");
+		return 0;
+	}
+
+	return 1;
+}
+
 static int quic_packet_decrypt(struct quic_rx_packet *qpkt, struct quic_tls_ctx *tls_ctx)
 {
 	int ret;
