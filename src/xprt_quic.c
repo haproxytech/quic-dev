@@ -1463,6 +1463,119 @@ static struct quic_conn *quic_new_conn(uint32_t version, struct quic_transport_p
 	return quic_conn;
 }
 
+static void quic_conn_enc_level_uninit(struct quic_enc_level *qel)
+{
+	int i;
+
+	for (i = 0; i < qel->tx.crypto.nb_buf; i++) {
+		if (qel->tx.crypto.bufs[i]) {
+			pool_free(pool_head_quic_crypto_buf, qel->tx.crypto.bufs[i]);
+			qel->tx.crypto.bufs[i] = NULL;
+		}
+	}
+	free(qel->tx.crypto.bufs);
+	qel->tx.crypto.bufs = NULL;
+}
+
+static int quic_conn_enc_level_init(struct quic_enc_level *qel)
+{
+	qel->rx.qpkts = EB_ROOT;
+	LIST_INIT(&qel->rx.pqpkts);
+
+	/* Allocate only one buffer. */
+	qel->tx.crypto.bufs = malloc(sizeof *qel->tx.crypto.bufs);
+	if (!qel->tx.crypto.bufs)
+		goto err;
+
+	qel->tx.crypto.bufs[0] = pool_alloc(pool_head_quic_crypto_buf);
+	if (!qel->tx.crypto.bufs[0]) {
+		fprintf(stderr, "%s: could not allocated any crypto buffer\n", __func__);
+		goto err;
+	}
+
+	qel->tx.crypto.bufs[0]->sz = 0;
+	qel->tx.crypto.nb_buf = 1;
+
+	qel->tx.crypto.sz = 0;
+	qel->tx.crypto.offset = 0;
+	qel->tx.crypto.frms = EB_ROOT;
+	qel->tx.crypto.retransmit_frms = EB_ROOT;
+
+	return 1;
+
+ err:
+	free(qel->tx.crypto.bufs);
+	qel->tx.crypto.bufs = NULL;
+	return 0;
+}
+
+static inline void free_quic_conn_tx_bufs(struct q_buf **bufs, size_t nb)
+{
+	struct q_buf **p;
+
+	if (!bufs)
+		return;
+
+	p = bufs;
+	while (--nb) {
+		if (!*p) {
+			p++;
+			continue;
+		}
+		free((*p)->area);
+		(*p)->area = NULL;
+		free(*p);
+		*p = NULL;
+		p++;
+	}
+	free(bufs);
+}
+
+/* Allocate an array or <nb> buffers of <sz> bytes each. */
+static inline struct q_buf **quic_conn_tx_bufs_alloc(size_t nb, size_t sz)
+{
+	int i;
+	struct q_buf **bufs, **p;
+
+	bufs = calloc(nb, sizeof *bufs);
+	if (!bufs)
+		return NULL;
+
+	i = 0;
+	p = bufs;
+	while (i++ < nb) {
+		*p = calloc(1, sizeof **p);
+		if (!*p)
+			goto err;
+
+		(*p)->area = malloc(sz);
+		if (!(*p)->area)
+		    goto err;
+
+		(*p)->pos = (*p)->area;
+		(*p)->end = (*p)->area + sz;
+		(*p)->data = 0;
+		p++;
+	}
+
+	return bufs;
+
+ err:
+	free_quic_conn_tx_bufs(bufs, nb);
+	return NULL;
+}
+
+static void quic_conn_free(struct quic_conn *conn)
+{
+	int i;
+
+	free_quic_conn_cids(conn);
+	for (i = 0; i < QUIC_TLS_ENC_LEVEL_MAX; i++)
+		quic_conn_enc_level_uninit(&conn->enc_levels[i]);
+	free_quic_conn_tx_bufs(conn->tx.bufs, conn->tx.nb_buf);
+	pool_free(pool_head_quic_conn, conn);
+}
+
 static int quic_new_conn_init(struct quic_conn *conn,
                               struct eb_root *quic_initial_clients,
                               struct eb_root *quic_clients,
@@ -1514,38 +1627,30 @@ static int quic_new_conn_init(struct quic_conn *conn,
 	for (i = 0; i < QUIC_TLS_PKTNS_MAX; i++) {
 		quic_pktns_init(&conn->pktns[i]);
 	}
+	/* QUIC encryption level context initialization. */
 	for (i = 0; i < QUIC_TLS_ENC_LEVEL_MAX; i++) {
-		struct quic_enc_level *qel= &conn->enc_levels[i];
-
-		qel->rx.qpkts = EB_ROOT;
-		LIST_INIT(&qel->rx.pqpkts);
-		qel->tx.crypto.bufs = malloc(sizeof *qel->tx.crypto.bufs);
-		if (qel->tx.crypto.bufs) {
-			qel->tx.crypto.bufs[0] = pool_alloc(pool_head_quic_crypto_buf);
-			if (!qel->tx.crypto.bufs[0]) {
-				fprintf(stderr, "%s: could not allocated any crypto buffer\n", __func__);
-				free(qel->tx.crypto.bufs);
-				qel->tx.crypto.bufs = NULL;
-				return 0;
-			}
-			qel->tx.crypto.bufs[0]->sz = 0;
-			qel->tx.crypto.nb_buf = 1;
-		}
-		else {
-			qel->tx.crypto.nb_buf = 0;
-		}
-		qel->tx.crypto.sz = 0;
-		qel->tx.crypto.offset = 0;
-		qel->tx.crypto.frms = EB_ROOT;
-		qel->tx.crypto.retransmit_frms = EB_ROOT;
-		/* Initialize the packet number space */
-		qel->pktns = &conn->pktns[quic_tls_pktns(i)];
+		if (!quic_conn_enc_level_init(&conn->enc_levels[i]))
+			goto err;
+		/* Initialize the packet number space. */
+		conn->enc_levels[i].pktns = &conn->pktns[quic_tls_pktns(i)];
 	}
+
+	LIST_INIT(&conn->tx.frms_to_send);
+	conn->tx.bufs = quic_conn_tx_bufs_alloc(QUIC_CONN_TX_BUFS_NB, QUIC_CONN_TX_BUF_SZ);
+	if (!conn->tx.bufs)
+		goto err;
+
+	conn->tx.nb_buf = QUIC_CONN_TX_BUFS_NB;
+	conn->tx.wbuf = conn->tx.rbuf = 0;
+
 	conn->retransmit = 0;
 	conn->crypto_in_flight = 0;
-	LIST_INIT(&conn->tx.frms_to_send);
 
 	return 1;
+
+ err:
+	quic_conn_free(conn);
+	return 0;
 }
 
 static int quic_conn_derive_initial_secrets(struct quic_tls_ctx *ctx,
