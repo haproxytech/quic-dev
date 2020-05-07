@@ -929,7 +929,8 @@ static int quic_prepare_handshake_packets(struct quic_conn_ctx *ctx)
 	if (c_buf_consumed(qel))
 		return 1;
 
-	for (wbuf = q_wbuf(qc); wbuf && !c_buf_consumed(qel); wbuf = q_next_wbuf(qc)) {
+	wbuf = q_wbuf(qc);
+	while (wbuf && !c_buf_consumed(qel)) {
 		ssize_t ret;
 
 		ret = quic_build_handshake_packet(wbuf, qc,
@@ -939,11 +940,26 @@ static int quic_prepare_handshake_packets(struct quic_conn_ctx *ctx)
 		case -2:
 			goto err;
 		case -1:
+			wbuf = q_next_wbuf(qc);
 			continue;
 		default:
+			/* Special case for Initial packets: when they have all
+			 * been sent, select the next level.
+			 */
 			if (c_buf_consumed(qel) && tel == QUIC_TLS_ENC_LEVEL_INITIAL) {
 				tel = next_tel;
 				qel = &qc->enc_levels[tel];
+				/* If there is no more data for the next level, let's
+				 * consume a packet. This is the case for a client
+				 * which sends only one Initial packet, then wait
+				 * for additional data from the server to enter the
+				 * next level.
+				 */
+				if (c_buf_consumed(qel))
+					wbuf = q_next_wbuf(qc);
+			}
+			else {
+				wbuf = q_next_wbuf(qc);
 			}
 		}
 	}
