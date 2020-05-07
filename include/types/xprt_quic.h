@@ -212,6 +212,18 @@ struct quic_crypto_buf {
 	size_t sz;
 };
 
+/* QUIC buffer structure used to build outgoing packets. */
+struct q_buf {
+	/* Points to the data in this buffer. */
+	unsigned char *area;
+	/* Points to the current position to write into this buffer. */
+	unsigned char *pos;
+	/* Point to the end of this buffer past one. */
+	const unsigned char *end;
+	/* The number of data bytes in this buffer. */
+	size_t data;
+};
+
 struct quic_enc_level {
 	struct quic_tls_ctx tls_ctx;
 	struct {
@@ -243,6 +255,10 @@ struct quic_enc_level {
 	} tx;
 	struct quic_pktns *pktns;
 };
+
+/* The number of buffers for outgoing packets (must be a power of two). */
+#define QUIC_CONN_TX_BUFS_NB 8
+#define QUIC_CONN_TX_BUF_SZ  QUIC_PACKET_MAXLEN
 
 struct quic_conn {
 	uint32_t version;
@@ -276,6 +292,15 @@ struct quic_conn {
 		struct eb_root pkts;
 		/* The remaining frames to send. */
 		struct list frms_to_send;
+
+		/* Array of buffers. */
+		struct q_buf **bufs;
+		/* The size of the previous array. */
+		size_t nb_buf;
+		/* Writer index. */
+		int wbuf;
+		/* Reader index. */
+		int rbuf;
 	} tx;
 
 	uint64_t crypto_in_flight;

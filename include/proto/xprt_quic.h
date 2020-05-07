@@ -1027,4 +1027,100 @@ static inline void quic_pktns_init(struct quic_pktns *pktns)
 	pktns->rx.ack_ranges.sz = 0;
 }
 
+/* CRYPTO data buffer handling functions. */
+static inline unsigned char *c_buf_getpos(struct quic_enc_level *qel, uint64_t offset)
+{
+	int idx;
+	unsigned char *data;
+
+	idx = offset >> QUIC_CRYPTO_BUF_SHIFT;
+	data = qel->tx.crypto.bufs[idx]->data;
+	return data + (offset & QUIC_CRYPTO_BUF_MASK);
+}
+
+static inline size_t c_buf_remain(struct quic_enc_level *qel, uint64_t offset)
+{
+	int idx;
+
+	idx = offset >> QUIC_CRYPTO_BUF_SHIFT;
+	return qel->tx.crypto.bufs[idx]->sz - (offset & QUIC_CRYPTO_BUF_MASK);
+}
+
+/*
+ * Returns 1 if the CRYPTO buffer at <qel> encryption level has been
+ * consumed (sent to the peer), 0 if not.
+ */
+static inline int c_buf_consumed(struct quic_enc_level *qel)
+{
+	return qel->tx.crypto.offset == qel->tx.crypto.sz;
+}
+
+
+/* QUIC buffer handling functions */
+static inline struct q_buf *q_wbuf(struct quic_conn *qc)
+{
+	return qc->tx.bufs[qc->tx.wbuf];
+}
+
+static inline struct q_buf *q_rbuf(struct quic_conn *qc)
+{
+	return qc->tx.bufs[qc->tx.rbuf];
+}
+
+static inline struct q_buf *q_next_rbuf(struct quic_conn *qc)
+{
+	qc->tx.rbuf = (qc->tx.rbuf + 1) & (QUIC_CONN_TX_BUFS_NB - 1);
+	return q_rbuf(qc);
+}
+
+/*
+ * Return the next buffer for the writter of ougoing packet, if any
+ * or NULL if there is no more buffer available.
+ */
+static inline struct q_buf *q_next_wbuf(struct quic_conn *qc)
+{
+	int idx;
+
+	idx = (qc->tx.wbuf + 1) & (QUIC_CONN_TX_BUFS_NB - 1);
+	if (idx == qc->tx.rbuf)
+		return NULL;
+
+	qc->tx.wbuf = idx;
+
+	return qc->tx.bufs[qc->tx.wbuf];
+}
+
+/*
+ * Return the position of <buf> buffer to write outgoing packets.
+ */
+static inline unsigned char *q_buf_getpos(struct q_buf *buf)
+{
+	return buf->pos;
+}
+
+/*
+ * Return the pointer to one past the end of <buf> buffer.
+ */
+static inline const unsigned char *q_buf_end(struct q_buf *buf)
+{
+	return buf->end;
+}
+
+/*
+ * Set the position of <buf> buffer to <pos> value.
+ */
+static inline void q_buf_setpos(struct q_buf *buf, unsigned char *pos)
+{
+	buf->pos = pos;
+}
+
+/*
+ * Reset (or empty) <buf> buffer to prepare it for the next writting.
+ */
+static inline void q_buf_reset(struct q_buf *buf)
+{
+	buf->pos = buf->area;
+	buf->data = 0;
+}
+
 #endif /* _PROTO_XPRT_QUIC_H */
