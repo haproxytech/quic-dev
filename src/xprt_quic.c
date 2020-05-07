@@ -1410,6 +1410,7 @@ static int quic_new_conn_init(struct quic_conn *conn,
 	int i;
 	/* Initial CID. */
 	struct quic_connection_id *icid;
+	struct quic_tls_ctx *tls_ctx;
 
 	conn->cids = EB_ROOT;
 	fprintf(stderr, "%s: new quic_conn @%p\n", __func__, conn);
@@ -1447,7 +1448,10 @@ static int quic_new_conn_init(struct quic_conn *conn,
 	ebmb_insert(quic_clients, &conn->scid_node, conn->scid.len);
 
 	/* Initialize the Initial level TLS encryption context. */
-	quic_initial_tls_ctx_init(&conn->enc_levels[QUIC_TLS_ENC_LEVEL_INITIAL].tls_ctx);
+	tls_ctx = &conn->enc_levels[QUIC_TLS_ENC_LEVEL_INITIAL].tls_ctx;
+	tls_ctx->aead = NULL;
+	tls_ctx->md = NULL;
+	tls_ctx->hp = NULL;
 	/* Packet number spaces initialization. */
 	for (i = 0; i < QUIC_TLS_PKTNS_MAX; i++) {
 		quic_pktns_init(&conn->pktns[i]);
@@ -1568,6 +1572,7 @@ static int quic_conn_init(struct connection *conn, void **xprt_ctx)
 			goto err;
 
 		tls_ctx = &conn->quic_conn->enc_levels[QUIC_TLS_ENC_LEVEL_INITIAL].tls_ctx;
+		quic_initial_tls_ctx_init(tls_ctx);
 		if (!quic_conn_derive_initial_secrets(tls_ctx, dcid, sizeof dcid, 0)) {
 			fprintf(stderr, "Could not derive initial secrets\n");
 			goto err;
@@ -2043,9 +2048,12 @@ static ssize_t quic_packet_read(unsigned char **buf, const unsigned char *end,
 			 * NOTE: the socket address it concatenated to the destination ID choosen by the client
 			 * for Initial packets.
 			 */
-			if (l && !quic_conn_derive_initial_secrets(ctx, qpkt->dcid.data, qpkt->dcid.len - sizeof *saddr, 1)) {
-				fprintf(stderr, "Could not derive initial secrets\n");
-				goto err;
+			if (l && !ctx->hp) {
+				quic_initial_tls_ctx_init(ctx);
+				if (!quic_conn_derive_initial_secrets(ctx, qpkt->dcid.data, qpkt->dcid.len - sizeof *saddr, 1)) {
+					fprintf(stderr, "Could not derive initial secrets\n");
+					goto err;
+				}
 			}
 		}
 	}
