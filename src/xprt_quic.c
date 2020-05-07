@@ -2682,7 +2682,6 @@ static ssize_t quic_build_app_packet(unsigned char **buf, const unsigned char *e
 	unsigned char *beg, *pos, *payload;
 	struct quic_enc_level *qel;
 	struct quic_tls_ctx *tls_ctx;
-	unsigned char iv[12];
 	size_t pn_len, aad_len, payload_len;
 	uint64_t pn;
 
@@ -2698,16 +2697,8 @@ static ssize_t quic_build_app_packet(unsigned char **buf, const unsigned char *e
 	aad_len = payload - beg;
 
 	tls_ctx = &qel->tls_ctx;
-	if (!quic_aead_iv_build(iv, sizeof iv, tls_ctx->tx.iv, sizeof tls_ctx->tx.iv, pn)) {
-		fprintf(stderr, "%s AEAD IV building failed\n", __func__);
+	if (!quic_packet_encrypt(payload, payload_len, beg, aad_len, pn, tls_ctx))
 		return -2;
-	}
-
-	if (!quic_tls_encrypt(payload, payload_len, beg, aad_len,
-	                      tls_ctx->aead, tls_ctx->tx.key, iv)) {
-		fprintf(stderr, "%s: QUIC packet encryption failed\n", __func__);
-		return -2;
-	}
 
 	pos += QUIC_TLS_TAG_LEN;
 	if (!quic_apply_header_protection(beg, buf_pn, pn_len,
