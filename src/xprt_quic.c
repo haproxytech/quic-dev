@@ -984,10 +984,14 @@ static int quic_send_handshake_packets(struct quic_conn_ctx *ctx)
 		tmpbuf.area = (char *)rbuf->area;
 		tmpbuf.size = tmpbuf.data = rbuf->data;
 
+	    if (qc->crypto_in_flight > QUIC_CRYPTO_IN_FLIGHT_MAX)
+		    break;
+
 	    if (ctx->xprt->snd_buf(qc->conn, qc->conn->xprt_ctx,
 	                           &tmpbuf, tmpbuf.data, 0) <= 0)
 		    break;
 
+	    qc->crypto_in_flight += rbuf->crypto_data;
 	    /* Reset this buffer to make it available for the next packet to prepare. */
 	    q_buf_reset(rbuf);
 	}
@@ -1395,7 +1399,7 @@ static inline struct q_buf **quic_conn_tx_bufs_alloc(size_t nb, size_t sz)
 
 		(*p)->pos = (*p)->area;
 		(*p)->end = (*p)->area + sz;
-		(*p)->data = 0;
+		(*p)->data = (*p)->crypto_data = 0;
 		p++;
 	}
 
@@ -2348,7 +2352,7 @@ static ssize_t quic_do_build_handshake_packet(struct q_buf *wbuf, int pkt_type,
 	size_t frm_header_sz;
 	struct quic_frame frm = { .type = QUIC_FT_CRYPTO, };
 	struct quic_crypto *crypto = &frm.crypto;
-	size_t padding_len;
+	size_t crypto_len, padding_len;
 
 	beg = pos = q_buf_getpos(wbuf);
 	end = q_buf_end(wbuf);
@@ -2379,9 +2383,12 @@ static ssize_t quic_do_build_handshake_packet(struct q_buf *wbuf, int pkt_type,
 	/* Crypto frame header size (without data) */
 	frm_header_sz = sizeof frm.type + quic_int_getsize(crypto->offset);
 
+	crypto_len = c_buf_remain(qel, *offset);
+	crypto_len = crypto_len > QUIC_CRYPTO_IN_FLIGHT_MAX - conn->crypto_in_flight ?
+		QUIC_CRYPTO_IN_FLIGHT_MAX - conn->crypto_in_flight : crypto_len;
 	crypto->len = max_stream_data_size(end - pos,
 	                                   *pn_len + frm_header_sz + QUIC_TLS_TAG_LEN,
-	                                   c_buf_remain(qel, *offset));
+	                                   crypto_len);
 	frm_header_sz += quic_int_getsize(crypto->len);
 	/* packet length (after encryption) */
 	len = *pn_len + frm_header_sz + crypto->len + QUIC_TLS_TAG_LEN;
@@ -2489,6 +2496,8 @@ static ssize_t quic_build_handshake_packet(struct q_buf *buf, struct quic_conn *
 	*offset += cf->len;
 	/* Increment the number of bytes in <buf> buffer by the length of this packet. */
 	buf->data += end - beg;
+	/* Store the CRYPTO data length for this buffer (may contains several CRYPT frames). */
+	buf->crypto_data += cf->len;
 
 	return end - beg;
 }

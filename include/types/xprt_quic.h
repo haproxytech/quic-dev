@@ -222,6 +222,8 @@ struct q_buf {
 	const unsigned char *end;
 	/* The number of data bytes in this buffer. */
 	size_t data;
+	/* The number of stream (CRYPTO or STREAM) data bytes in this buffer. */
+	size_t crypto_data;
 };
 
 struct quic_enc_level {
@@ -303,7 +305,7 @@ struct quic_conn {
 		int rbuf;
 	} tx;
 
-	uint64_t crypto_in_flight;
+	size_t crypto_in_flight;
 	int retransmit;
 };
 

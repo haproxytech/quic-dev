@@ -1120,7 +1120,7 @@ static inline void q_buf_setpos(struct q_buf *buf, unsigned char *pos)
 static inline void q_buf_reset(struct q_buf *buf)
 {
 	buf->pos = buf->area;
-	buf->data = 0;
+	buf->data = buf->crypto_data = 0;
 }
 
 #endif /* _PROTO_XPRT_QUIC_H */
