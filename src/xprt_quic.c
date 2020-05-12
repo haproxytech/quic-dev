@@ -168,7 +168,7 @@ static BIO_METHOD *ha_quic_meth;
 
 
 static ssize_t quic_build_handshake_packet(struct q_buf *buf, struct quic_conn *qc, int pkt_type,
-                                           uint64_t *offset, struct quic_enc_level *qel);
+                                           uint64_t *offset, size_t len, struct quic_enc_level *qel);
 
 static int quic_send_app_packets(struct quic_conn_ctx *ctx);
 
@@ -935,7 +935,8 @@ static int quic_prepare_handshake_packets(struct quic_conn_ctx *ctx)
 
 		ret = quic_build_handshake_packet(wbuf, qc,
 		                                  quic_tls_level_pkt_type(tel),
-		                                  &qel->tx.crypto.offset, qel);
+		                                  &qel->tx.crypto.offset,
+		                                  c_buf_remain(qel, qel->tx.crypto.offset), qel);
 		switch (ret) {
 		case -2:
 			goto err;
@@ -2334,7 +2335,7 @@ static int quic_apply_header_protection(unsigned char *buf, unsigned char *pn, s
  */
 static ssize_t quic_do_build_handshake_packet(struct q_buf *wbuf, int pkt_type,
                                               unsigned char **buf_pn, size_t *pn_len,
-                                              uint64_t *offset,
+                                              uint64_t *offset, size_t crypto_len,
                                               struct quic_enc_level *qel,
                                               struct quic_conn *conn)
 {
@@ -2352,7 +2353,7 @@ static ssize_t quic_do_build_handshake_packet(struct q_buf *wbuf, int pkt_type,
 	size_t frm_header_sz;
 	struct quic_frame frm = { .type = QUIC_FT_CRYPTO, };
 	struct quic_crypto *crypto = &frm.crypto;
-	size_t crypto_len, padding_len;
+	size_t padding_len;
 
 	beg = pos = q_buf_getpos(wbuf);
 	end = q_buf_end(wbuf);
@@ -2383,7 +2384,6 @@ static ssize_t quic_do_build_handshake_packet(struct q_buf *wbuf, int pkt_type,
 	/* Crypto frame header size (without data) */
 	frm_header_sz = sizeof frm.type + quic_int_getsize(crypto->offset);
 
-	crypto_len = c_buf_remain(qel, *offset);
 	crypto_len = crypto_len > QUIC_CRYPTO_IN_FLIGHT_MAX - conn->crypto_in_flight ?
 		QUIC_CRYPTO_IN_FLIGHT_MAX - conn->crypto_in_flight : crypto_len;
 	crypto->len = max_stream_data_size(end - pos,
@@ -2437,7 +2437,7 @@ static ssize_t quic_do_build_handshake_packet(struct q_buf *wbuf, int pkt_type,
  * if succeeded.
  */
 static ssize_t quic_build_handshake_packet(struct q_buf *buf, struct quic_conn *qc, int pkt_type,
-                                           uint64_t *offset, struct quic_enc_level *qel)
+                                           uint64_t *offset, size_t len, struct quic_enc_level *qel)
 {
 	/* The pointer to the packet number field. */
 	unsigned char *buf_pn;
@@ -2453,7 +2453,7 @@ static ssize_t quic_build_handshake_packet(struct q_buf *buf, struct quic_conn *
 
 	next_offset = *offset;
 	pkt_len = quic_do_build_handshake_packet(buf, pkt_type, &buf_pn, &pn_len,
-	                                         &next_offset, qel, qc);
+	                                         &next_offset, len, qel, qc);
 	if (pkt_len == -1)
 		return -1;
 
