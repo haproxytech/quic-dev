@@ -1074,20 +1074,12 @@ static inline struct q_buf *q_next_rbuf(struct quic_conn *qc)
 }
 
 /*
- * Return the next buffer for the writter of ougoing packet, if any
- * or NULL if there is no more buffer available.
+ * Return the next buffer for the writter of ougoing packet.
  */
 static inline struct q_buf *q_next_wbuf(struct quic_conn *qc)
 {
-	int idx;
-
-	idx = (qc->tx.wbuf + 1) & (QUIC_CONN_TX_BUFS_NB - 1);
-	if (idx == qc->tx.rbuf)
-		return NULL;
-
-	qc->tx.wbuf = idx;
-
-	return qc->tx.bufs[qc->tx.wbuf];
+	qc->tx.wbuf = (qc->tx.wbuf + 1) & (QUIC_CONN_TX_BUFS_NB - 1);
+	return q_wbuf(qc);
 }
 
 /*
@@ -1121,6 +1113,13 @@ static inline void q_buf_reset(struct q_buf *buf)
 {
 	buf->pos = buf->area;
 	buf->data = buf->crypto_data = 0;
+}
+
+/*
+ * Returns 1 if <buf> is empty, 0 if not. */
+static inline int q_buf_empty(struct q_buf *buf)
+{
+	return !buf->data;
 }
 
 #endif /* _PROTO_XPRT_QUIC_H */
