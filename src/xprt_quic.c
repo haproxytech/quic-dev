@@ -788,6 +788,7 @@ quic_ack_range_with_gap_crypto_frames(struct eb_root *frms, uint64_t *crypto_in_
 			pool_free(pool_head_quic_tx_crypto_frm, frm);
 		}
 	} while (node);
+	*crypto_in_flight -= frm->len;
 
 	return frm;
 }
