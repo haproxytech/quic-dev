@@ -907,6 +907,8 @@ static int quic_prepare_handshake_packets(struct quic_conn_ctx *ctx)
 	enum quic_tls_enc_level tel, next_tel;
 	struct quic_enc_level *qel;
 	struct q_buf *wbuf;
+	/* A boolean to flag <wbuf> as reusable, even if not empty. */
+	int reuse_wbuf;
 
 	qc = ctx->conn->quic_conn;
 
@@ -924,23 +926,26 @@ static int quic_prepare_handshake_packets(struct quic_conn_ctx *ctx)
 		return 0;
 	}
 
-
-	qel = &qc->enc_levels[tel];
-	if (c_buf_consumed(qel))
-		return 1;
-
+	reuse_wbuf = 0;
 	wbuf = q_wbuf(qc);
-	while (wbuf && !c_buf_consumed(qel)) {
+	qel = &qc->enc_levels[tel];
+	/*
+	 * When entering this function, the writter buffer must be empty.
+	 * Most of the time it points to the reader buffer.
+	 */
+	while ((q_buf_empty(wbuf) || reuse_wbuf) && !c_buf_consumed(qel)) {
 		ssize_t ret;
 
+		reuse_wbuf = 0;
 		ret = quic_build_handshake_packet(wbuf, qc,
 		                                  quic_tls_level_pkt_type(tel),
 		                                  &qel->tx.crypto.offset,
 		                                  c_buf_remain(qel, qel->tx.crypto.offset), qel);
 		switch (ret) {
 		case -2:
-			goto err;
+			return 0;
 		case -1:
+			/* Not enough room in <wbuf>. */
 			wbuf = q_next_wbuf(qc);
 			continue;
 		default:
@@ -950,14 +955,19 @@ static int quic_prepare_handshake_packets(struct quic_conn_ctx *ctx)
 			if (c_buf_consumed(qel) && tel == QUIC_TLS_ENC_LEVEL_INITIAL) {
 				tel = next_tel;
 				qel = &qc->enc_levels[tel];
-				/* If there is no more data for the next level, let's
-				 * consume a packet. This is the case for a client
-				 * which sends only one Initial packet, then wait
-				 * for additional data from the server to enter the
-				 * next level.
-				 */
-				if (c_buf_consumed(qel))
+				if (c_buf_consumed(qel)) {
+					/* If there is no more data for the next level, let's
+					 * consume a buffer. This is the case for a client
+					 * which sends only one Initial packet, then wait
+					 * for additional CRYPTO data from the server to enter the
+					 * next level.
+					 */
 					wbuf = q_next_wbuf(qc);
+				}
+				else {
+					/* Let's try to reuse this buffer. */
+					reuse_wbuf = 1;
+				}
 			}
 			else {
 				wbuf = q_next_wbuf(qc);
@@ -966,9 +976,6 @@ static int quic_prepare_handshake_packets(struct quic_conn_ctx *ctx)
 	}
 
 	return 1;
-
- err:
-	return 0;
 }
 
 /*
@@ -981,7 +988,7 @@ static int quic_send_handshake_packets(struct quic_conn_ctx *ctx)
 	struct q_buf *rbuf;
 
 	qc = ctx->conn->quic_conn;
-	for (rbuf = q_rbuf(qc); rbuf != q_wbuf(qc); rbuf = q_next_rbuf(qc)) {
+	for (rbuf = q_rbuf(qc); !q_buf_empty(rbuf) ; rbuf = q_next_rbuf(qc)) {
 		tmpbuf.area = (char *)rbuf->area;
 		tmpbuf.size = tmpbuf.data = rbuf->data;
 
