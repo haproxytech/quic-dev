@@ -898,6 +898,102 @@ static int quic_parse_handshake_packet(struct quic_rx_packet *qpkt, struct quic_
 }
 
 /*
+ * Prepare as much as possible handshakes packets to retransmit for the QUIC
+ * connection wich <ctx> as I/O handler context.
+ * Returns 1 if succeeded, or 0 if something wrong happened.
+ */
+static int quic_prepare_handshake_packet_retransmission(struct quic_conn_ctx *ctx)
+{
+	struct quic_conn *qc;
+	enum quic_tls_enc_level tel, next_tel;
+	struct quic_enc_level *qel;
+	struct eb_root *frms;
+	struct eb64_node *node;
+	int reuse_wbuf;
+
+	qc = ctx->conn->quic_conn;
+
+	switch (ctx->state) {
+	case QUIC_HS_ST_SERVER_INITIAL:
+	case QUIC_HS_ST_CLIENT_INITIAL:
+		tel = QUIC_TLS_ENC_LEVEL_INITIAL;
+		next_tel = QUIC_TLS_ENC_LEVEL_HANDSHAKE;
+		break;
+	case QUIC_HS_ST_SERVER_HANSHAKE:
+		tel = QUIC_TLS_ENC_LEVEL_HANDSHAKE;
+		next_tel = -1;
+		break;
+	default:
+		return 0;
+	}
+
+	reuse_wbuf = 0;
+	qel = &qc->enc_levels[tel];
+	frms = &qel->tx.crypto.retransmit_frms;
+	node = eb64_first(frms);
+	while (node) {
+		uint64_t offset;
+		struct q_buf *wbuf;
+		struct quic_tx_crypto_frm *frm;
+
+		wbuf = q_wbuf(qc);
+		frm = eb64_entry(&node->node, struct quic_tx_crypto_frm, pn);
+		while (frm->len) {
+			ssize_t ret;
+
+			if (!q_buf_empty(wbuf) && !reuse_wbuf)
+				goto out;
+
+			reuse_wbuf = 0;
+			offset = frm->offset;
+			ret = quic_build_handshake_packet(wbuf, qc,
+			                                  quic_tls_level_pkt_type(tel),
+			                                  &frm->offset, frm->len, qel);
+			switch (ret) {
+			case -2:
+				return 0;
+			case -1:
+				wbuf = q_next_wbuf(qc);
+				continue;
+			default:
+				frm->len -= frm->offset - offset;
+				if (frm->len)
+					wbuf = q_next_wbuf(qc);
+			}
+		}
+		node = eb64_next(node);
+		eb64_delete(&frm->pn);
+		pool_free(pool_head_quic_tx_crypto_frm, frm);
+		if (!node && tel == QUIC_TLS_ENC_LEVEL_INITIAL) {
+			/* Have a look at the next level. */
+			tel = next_tel;
+			qel = &qc->enc_levels[tel];
+			frms = &qel->tx.crypto.retransmit_frms;
+			node =  eb64_first(frms);
+			if (!node) {
+				/* If there is no more data for the next level, let's
+				 * consume a buffer.
+				 */
+				wbuf = q_next_wbuf(qc);
+			}
+			else {
+				/* Try to reuse the same buffer. */
+				reuse_wbuf = 1;
+			}
+		}
+		else {
+			wbuf = q_next_wbuf(qc);
+		}
+	}
+
+ out:
+	if (eb_is_empty(frms))
+		qc->retransmit = 0;
+
+	return 1;
+}
+
+/*
  * Prepare as much as possible handshake packets for the QUIC connection
  * with <ctx> as I/O handler context.
  * Returns 1 if succeeded, or 0 if something wrong happened.
@@ -1129,7 +1225,12 @@ static int quic_conn_do_handshake(struct quic_conn_ctx *ctx)
 	int ret;
 
 	quic_conn = ctx->conn->quic_conn;
-	if (!quic_prepare_handshake_packets(ctx))
+	if (quic_conn->retransmit &&
+	    !quic_prepare_handshake_packet_retransmission(ctx))
+		return 0;
+
+	if (!quic_conn->retransmit &&
+	    !quic_prepare_handshake_packets(ctx))
 		return 0;
 
 	if (!quic_send_handshake_packets(ctx))
