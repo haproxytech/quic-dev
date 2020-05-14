@@ -912,20 +912,8 @@ static int quic_prepare_handshake_packet_retransmission(struct quic_conn_ctx *ct
 	int reuse_wbuf;
 
 	qc = ctx->conn->quic_conn;
-
-	switch (ctx->state) {
-	case QUIC_HS_ST_SERVER_INITIAL:
-	case QUIC_HS_ST_CLIENT_INITIAL:
-		tel = QUIC_TLS_ENC_LEVEL_INITIAL;
-		next_tel = QUIC_TLS_ENC_LEVEL_HANDSHAKE;
-		break;
-	case QUIC_HS_ST_SERVER_HANSHAKE:
-		tel = QUIC_TLS_ENC_LEVEL_HANDSHAKE;
-		next_tel = -1;
-		break;
-	default:
+	if (!quic_get_tls_enc_levels(&tel, &next_tel, ctx->state))
 		return 0;
-	}
 
 	reuse_wbuf = 0;
 	qel = &qc->enc_levels[tel];
@@ -1008,20 +996,8 @@ static int quic_prepare_handshake_packets(struct quic_conn_ctx *ctx)
 	int reuse_wbuf;
 
 	qc = ctx->conn->quic_conn;
-
-	switch (ctx->state) {
-	case QUIC_HS_ST_SERVER_INITIAL:
-	case QUIC_HS_ST_CLIENT_INITIAL:
-		tel = QUIC_TLS_ENC_LEVEL_INITIAL;
-		next_tel = QUIC_TLS_ENC_LEVEL_HANDSHAKE;
-		break;
-	case QUIC_HS_ST_SERVER_HANSHAKE:
-		tel = QUIC_TLS_ENC_LEVEL_HANDSHAKE;
-		next_tel = -1;
-		break;
-	default:
+	if (!quic_get_tls_enc_levels(&tel, &next_tel, ctx->state))
 		return 0;
-	}
 
 	reuse_wbuf = 0;
 	wbuf = q_wbuf(qc);
@@ -1217,6 +1193,7 @@ int quic_update_ack_ranges_list(struct quic_ack_ranges *ack_ranges, int64_t pn)
 static int quic_conn_do_handshake(struct quic_conn_ctx *ctx)
 {
 	struct quic_conn *quic_conn;
+	enum quic_tls_enc_level tel, next_tel;
 	struct quic_enc_level *enc_level, *next_enc_level;
 	struct quic_rx_packet *qpkt;
 	struct eb64_node *qpkt_node;
@@ -1236,20 +1213,11 @@ static int quic_conn_do_handshake(struct quic_conn_ctx *ctx)
 	if (!quic_send_handshake_packets(ctx))
 		return 0;
 
-	switch (ctx->state) {
-	case QUIC_HS_ST_SERVER_INITIAL:
-	case QUIC_HS_ST_CLIENT_INITIAL:
-		enc_level = &quic_conn->enc_levels[QUIC_TLS_ENC_LEVEL_INITIAL];
-		next_enc_level = &quic_conn->enc_levels[QUIC_TLS_ENC_LEVEL_HANDSHAKE];
-		break;
-	case QUIC_HS_ST_SERVER_HANSHAKE:
-	case QUIC_HS_ST_CLIENT_HANSHAKE:
-		enc_level = &quic_conn->enc_levels[QUIC_TLS_ENC_LEVEL_HANDSHAKE];
-		next_enc_level = NULL;
-		break;
-	default:
-		return 0;
-	}
+	if (!quic_get_tls_enc_levels(&tel, &next_tel, ctx->state))
+	    return 0;
+
+	enc_level = &quic_conn->enc_levels[tel];
+	next_enc_level = &quic_conn->enc_levels[next_tel];
 
  next_level:
 	tls_ctx = &enc_level->tls_ctx;

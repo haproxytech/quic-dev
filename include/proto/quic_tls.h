@@ -204,5 +204,29 @@ static inline int quic_tls_level_pkt_type(enum quic_tls_enc_level level)
 		return -1;
 	}
 }
+
+/*
+ * Set <*level> and <*next_level> depending on <state> QUIC handshake state. */
+static inline int quic_get_tls_enc_levels(enum quic_tls_enc_level *level,
+                                          enum quic_tls_enc_level *next_level,
+                                          enum quic_handshake_state state)
+{
+	switch (state) {
+	case QUIC_HS_ST_SERVER_INITIAL:
+	case QUIC_HS_ST_CLIENT_INITIAL:
+		*level = QUIC_TLS_ENC_LEVEL_INITIAL;
+		*next_level = QUIC_TLS_ENC_LEVEL_HANDSHAKE;
+		break;
+	case QUIC_HS_ST_SERVER_HANSHAKE:
+		*level = QUIC_TLS_ENC_LEVEL_HANDSHAKE;
+		*next_level = QUIC_TLS_ENC_LEVEL_NONE;
+		break;
+	default:
+		return 0;
+	}
+
+	return 1;
+}
+
 #endif /* _PROTO_QUIC_TLS_H */
 
