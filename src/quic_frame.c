@@ -26,6 +26,7 @@ int quic_parse_packet_frames(struct quic_rx_packet *qpkt)
 
 		switch (frm.type) {
 			case QUIC_FT_CRYPTO:
+				qpkt->flags |= QUIC_FL_RX_PACKET_ACK_ELICITING;
 				break;
 
 			case QUIC_FT_PADDING:
@@ -40,6 +41,7 @@ int quic_parse_packet_frames(struct quic_rx_packet *qpkt)
 				break;
 
 			case QUIC_FT_PING:
+				qpkt->flags |= QUIC_FL_RX_PACKET_ACK_ELICITING;
 				break;
 
 			case QUIC_FT_CONNECTION_CLOSE:
@@ -48,6 +50,7 @@ int quic_parse_packet_frames(struct quic_rx_packet *qpkt)
 			case QUIC_FT_NEW_CONNECTION_ID:
 			case QUIC_FT_STREAM_A:
 			case QUIC_FT_STREAM_B:
+				qpkt->flags |= QUIC_FL_RX_PACKET_ACK_ELICITING;
 				break;
 			default:
 				return 0;

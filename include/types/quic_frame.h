@@ -83,6 +83,12 @@ struct quic_ack {
 	uint64_t first_ack_range;
 };
 
+/* Structure used when emitting ACK frames. */
+struct quic_tx_ack {
+	uint64_t ack_delay;
+	struct quic_ack_ranges *ack_ranges;
+};
+
 struct quic_reset_stream {
 	uint64_t id;
 	uint64_t app_error_code;
@@ -179,6 +185,7 @@ struct quic_frame {
 	union {
 		struct quic_padding padding;
 		struct quic_ack ack;
+		struct quic_tx_ack tx_ack;
 		struct quic_crypto crypto;
 		struct quic_reset_stream reset_stream;
 		struct quic_stop_sending_frame stop_sending_frame;

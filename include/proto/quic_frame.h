@@ -166,12 +166,17 @@ static int inline quic_parse_ping_frame(struct quic_frame *frm,
 static int inline quic_build_ack_frame(unsigned char **buf, const unsigned char *end,
                                        struct quic_frame *frm)
 {
-	struct quic_ack *ack = &frm->ack;
+	struct quic_tx_ack *tx_ack = &frm->tx_ack;
+	struct quic_ack_range *ack_range =
+		LIST_ELEM(tx_ack->ack_ranges->list.n, struct quic_ack_range *, list);
 
-	return quic_enc_int(buf, end, ack->largest_ack) &&
-		quic_enc_int(buf, end, ack->ack_delay) &&
-		quic_enc_int(buf, end, ack->first_ack_range) &&
-		quic_enc_int(buf, end, ack->ack_range_num);
+	if (!quic_enc_int(buf, end, ack_range->last) ||
+	    !quic_enc_int(buf, end, tx_ack->ack_delay) ||
+	    !quic_enc_int(buf, end, tx_ack->ack_ranges->sz - 1) ||
+	    !quic_enc_int(buf, end, ack_range->last - ack_range->first))
+		return 0;
+
+	return 1;
 }
 
 /*

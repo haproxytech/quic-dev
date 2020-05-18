@@ -1023,6 +1023,7 @@ static inline void quic_pktns_init(struct quic_pktns *pktns)
 	pktns->tx.next_pn = -1;
 	pktns->rx.largest_acked_pn = -1;
 	pktns->rx.largest_pn = -1;
+	pktns->rx.nb_ack_eliciting = 0;
 	LIST_INIT(&pktns->rx.ack_ranges.list);
 	pktns->rx.ack_ranges.sz = 0;
 }
@@ -1112,7 +1113,7 @@ static inline void q_buf_setpos(struct q_buf *buf, unsigned char *pos)
 static inline void q_buf_reset(struct q_buf *buf)
 {
 	buf->pos = buf->area;
-	buf->data = buf->crypto_data = 0;
+	buf->data = 0;
 }
 
 /*

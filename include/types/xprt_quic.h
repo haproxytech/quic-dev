@@ -139,6 +139,9 @@ struct quic_ack_ranges {
 	size_t sz;
 };
 
+/* Flag the packet number space as requiring an ACK frame to be sent. */
+#define QUIC_FL_PKTNS_ACK_REQUIRED  (1UL << 0)
+
 /* QUIC packet number space */
 struct quic_pktns {
 	struct {
@@ -150,8 +153,11 @@ struct quic_pktns {
 		int64_t largest_pn;
 		/* Largest acked packet number */
 		int64_t largest_acked_pn;
+		/* Number of ack-eliciting packets. */
+		uint64_t nb_ack_eliciting;
 		struct quic_ack_ranges ack_ranges;
 	} rx;
+	unsigned int flags;
 };
 
 /* The QUIC packet numbers are 62-bits integers */
@@ -159,6 +165,9 @@ struct quic_pktns {
 
 /* Default QUIC connection transport parameters */
 extern struct quic_transport_params quid_dflt_transport_params;
+
+/* Flag a received packet as being an ack-eliciting packet. */
+#define QUIC_FL_RX_PACKET_ACK_ELICITING (1UL << 0)
 
 struct quic_rx_packet {
 	struct list list;
@@ -181,6 +190,7 @@ struct quic_rx_packet {
 	size_t aad_len;
 	unsigned char data[QUIC_PACKET_MAXLEN];
 	struct eb64_node pn_node;
+	unsigned int flags;
 };
 
 /*
@@ -222,8 +232,6 @@ struct q_buf {
 	const unsigned char *end;
 	/* The number of data bytes in this buffer. */
 	size_t data;
-	/* The number of stream (CRYPTO or STREAM) data bytes in this buffer. */
-	size_t crypto_data;
 };
 
 struct quic_enc_level {

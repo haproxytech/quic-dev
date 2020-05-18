@@ -819,6 +819,7 @@ static int quic_parse_handshake_packet(struct quic_rx_packet *qpkt, struct quic_
 				else {
 					enc_level->rx.crypto.offset += frm.crypto.len;
 					fprintf(stderr, "SSL_provide_quic_data() succeded \n");
+					qpkt->flags |= QUIC_FL_RX_PACKET_ACK_ELICITING;
 				}
 			}
 			break;
@@ -886,6 +887,7 @@ static int quic_parse_handshake_packet(struct quic_rx_packet *qpkt, struct quic_
 			break;
 		}
 		case QUIC_FT_PING:
+			qpkt->flags |= QUIC_FL_RX_PACKET_ACK_ELICITING;
 			break;
 		case QUIC_FT_CONNECTION_CLOSE:
 			break;
@@ -938,8 +940,10 @@ static int quic_prepare_handshake_packet_retransmission(struct quic_conn_ctx *ct
 			                                  quic_tls_level_pkt_type(tel),
 			                                  &frm->offset, frm->len, qel);
 			switch (ret) {
-			case -2:
+			case -3:
 				return 0;
+			case -2:
+				goto out;
 			case -1:
 				wbuf = q_next_wbuf(qc);
 				continue;
@@ -1015,8 +1019,10 @@ static int quic_prepare_handshake_packets(struct quic_conn_ctx *ctx)
 		                                  &qel->tx.crypto.offset,
 		                                  c_buf_remain(qel, qel->tx.crypto.offset), qel);
 		switch (ret) {
-		case -2:
+		case -3:
 			return 0;
+		case -2:
+			goto out;
 		case -1:
 			/* Not enough room in <wbuf>. */
 			wbuf = q_next_wbuf(qc);
@@ -1047,6 +1053,7 @@ static int quic_prepare_handshake_packets(struct quic_conn_ctx *ctx)
 			}
 		}
 	}
+ out:
 
 	return 1;
 }
@@ -1065,14 +1072,10 @@ static int quic_send_handshake_packets(struct quic_conn_ctx *ctx)
 		tmpbuf.area = (char *)rbuf->area;
 		tmpbuf.size = tmpbuf.data = rbuf->data;
 
-	    if (qc->crypto_in_flight > QUIC_CRYPTO_IN_FLIGHT_MAX)
-		    break;
-
 	    if (ctx->xprt->snd_buf(qc->conn, qc->conn->xprt_ctx,
 	                           &tmpbuf, tmpbuf.data, 0) <= 0)
 		    break;
 
-	    qc->crypto_in_flight += rbuf->crypto_data;
 	    /* Reset this buffer to make it available for the next packet to prepare. */
 	    q_buf_reset(rbuf);
 	}
@@ -1258,9 +1261,18 @@ static int quic_conn_do_handshake(struct quic_conn_ctx *ctx)
 			return 0;
 		}
 
+		if (qpkt->flags & QUIC_FL_RX_PACKET_ACK_ELICITING) {
+			enc_level->pktns->rx.nb_ack_eliciting++;
+			if (!(enc_level->pktns->rx.nb_ack_eliciting & 1))
+				enc_level->pktns->flags |= QUIC_FL_PKTNS_ACK_REQUIRED;
+		}
+
 		/* Update the largest packet number. */
 		if (qpkt->pn > enc_level->pktns->rx.largest_pn)
 			enc_level->pktns->rx.largest_pn = qpkt->pn;
+
+		/* Update the list of ranges to acknowledge. */
+		quic_update_ack_ranges_list(&enc_level->pktns->rx.ack_ranges, qpkt->pn);
 
 		qpkt_node = eb64_next(qpkt_node);
 		eb64_delete(&qpkt->pn_node);
@@ -1332,6 +1344,15 @@ static int quic_treat_packets(struct quic_conn_ctx *ctx)
 			fprintf(stderr,  "Could not parse the packet frames\n");
 			return 0;
 		}
+
+		if (qpkt->flags & QUIC_FL_RX_PACKET_ACK_ELICITING) {
+			enc_level->pktns->rx.nb_ack_eliciting++;
+			if (!(enc_level->pktns->rx.nb_ack_eliciting & 1))
+				enc_level->pktns->flags |= QUIC_FL_PKTNS_ACK_REQUIRED;
+		}
+
+		/* Update the list of ranges to acknowledge. */
+		quic_update_ack_ranges_list(&enc_level->pktns->rx.ack_ranges, qpkt->pn);
 
 		qpkt_node = eb64_next(qpkt_node);
 		eb64_delete(&qpkt->pn_node);
@@ -1477,7 +1498,7 @@ static inline struct q_buf **quic_conn_tx_bufs_alloc(size_t nb, size_t sz)
 
 		(*p)->pos = (*p)->area;
 		(*p)->end = (*p)->area + sz;
-		(*p)->data = (*p)->crypto_data = 0;
+		(*p)->data = 0;
 		p++;
 	}
 
@@ -2391,6 +2412,25 @@ static int quic_apply_header_protection(unsigned char *buf, unsigned char *pn, s
 }
 
 /*
+ * Build a QUIC ACK frame into <buf> buffer from <qars> list of ack ranges.
+ * <qars> MUST not be empty.
+ * Return 0 if failed, or the strictly positive length of the ACK frame if not.
+ */
+static inline ssize_t quic_do_build_ack_frame(struct buffer *buf,
+                                              struct quic_ack_ranges *qars)
+{
+	struct quic_frame ack_frm = { .type = QUIC_FT_ACK, };
+	unsigned char *pos = (unsigned char *)b_orig(buf);
+
+	ack_frm.tx_ack.ack_delay = 0;
+	ack_frm.tx_ack.ack_ranges = qars;
+	if (!quic_build_frame(&pos, pos + buf->size, &ack_frm))
+		return 0;
+
+	return pos - (unsigned char *)b_orig(buf);
+}
+
+/*
  * This function builds a clear handshake packet used during a QUIC TLS handshakes
  * into <wbuf> the current <wbuf> for <conn> QUIC connection with <qel> as QUIC
  * TLS encryption level for ougoing packets filling it with as much as CRYPTO
@@ -2431,6 +2471,13 @@ static ssize_t quic_do_build_handshake_packet(struct q_buf *wbuf, int pkt_type,
 	struct quic_frame frm = { .type = QUIC_FT_CRYPTO, };
 	struct quic_crypto *crypto = &frm.crypto;
 	size_t padding_len;
+	ssize_t ack_frm_len;
+	struct buffer *ack_buf;
+
+	crypto_len = crypto_len > QUIC_CRYPTO_IN_FLIGHT_MAX - conn->crypto_in_flight ?
+		QUIC_CRYPTO_IN_FLIGHT_MAX - conn->crypto_in_flight : crypto_len;
+	if (!crypto_len)
+		return -2;
 
 	beg = pos = q_buf_getpos(wbuf);
 	end = q_buf_end(wbuf);
@@ -2458,17 +2505,27 @@ static ssize_t quic_do_build_handshake_packet(struct q_buf *wbuf, int pkt_type,
 	if (pkt_type == QUIC_PACKET_TYPE_INITIAL)
 		*pos++ = 0;
 
-	/* Crypto frame header size (without data) */
+	/* Build an ACK frame if required. */
+	ack_frm_len = 0;
+	ack_buf = get_trash_chunk();
+	if ((qel->pktns->flags & QUIC_FL_PKTNS_ACK_REQUIRED) &&
+	    !LIST_ISEMPTY(&qel->pktns->rx.ack_ranges.list)) {
+		ack_frm_len = quic_do_build_ack_frame(ack_buf, &qel->pktns->rx.ack_ranges);
+		if (!ack_frm_len)
+			return -1;
+		qel->pktns->flags &= ~QUIC_FL_PKTNS_ACK_REQUIRED;
+	}
+
+	/* Crypto frame header size (without data and data length) */
 	frm_header_sz = sizeof frm.type + quic_int_getsize(crypto->offset);
 
-	crypto_len = crypto_len > QUIC_CRYPTO_IN_FLIGHT_MAX - conn->crypto_in_flight ?
-		QUIC_CRYPTO_IN_FLIGHT_MAX - conn->crypto_in_flight : crypto_len;
-	crypto->len = max_stream_data_size(end - pos,
-	                                   *pn_len + frm_header_sz + QUIC_TLS_TAG_LEN,
-	                                   crypto_len);
-	frm_header_sz += quic_int_getsize(crypto->len);
-	/* packet length (after encryption) */
-	len = *pn_len + frm_header_sz + crypto->len + QUIC_TLS_TAG_LEN;
+	/* Length field value without the CRYPTO frame data length. */
+	len = ack_frm_len + *pn_len + frm_header_sz + QUIC_TLS_TAG_LEN;
+	crypto->len = max_stream_data_size(end - pos, len, crypto_len);
+	/* Add the CRYPTO data length to the packet length (after encryption) and
+	 * the length of this length.
+	 */
+	len += quic_int_getsize(crypto->len) + crypto->len;
 
 	padding_len = 0;
 	if (objt_server(conn->conn->target) &&
@@ -2487,6 +2544,11 @@ static ssize_t quic_do_build_handshake_packet(struct q_buf *wbuf, int pkt_type,
 
 	/* Packet number encoding. */
 	quic_packet_number_encode(&pos, end, pn, *pn_len);
+
+	if (ack_frm_len) {
+		memcpy(pos, b_orig(ack_buf), ack_frm_len);
+		pos += ack_frm_len;
+	}
 
 	/* Crypto frame */
 	if (!quic_build_frame(&pos, end, &frm))
@@ -2531,8 +2593,10 @@ static ssize_t quic_build_handshake_packet(struct q_buf *buf, struct quic_conn *
 	next_offset = *offset;
 	pkt_len = quic_do_build_handshake_packet(buf, pkt_type, &buf_pn, &pn_len,
 	                                         &next_offset, len, qel, qc);
-	if (pkt_len == -1)
-		return -1;
+	if (pkt_len < 0) {
+		fprintf(stderr, "%s returns %zd\n", __func__, pkt_len);
+		return pkt_len;
+	}
 
 	end = beg + pkt_len;
 	pn = qel->pktns->tx.next_pn + 1;
@@ -2542,19 +2606,19 @@ static ssize_t quic_build_handshake_packet(struct q_buf *buf, struct quic_conn *
 
 	tls_ctx = &qel->tls_ctx;
 	if (!quic_packet_encrypt(payload, payload_len, beg, aad_len, pn, tls_ctx))
-		return -2;
+		return -3;
 
 	end += QUIC_TLS_TAG_LEN;
 	if (!quic_apply_header_protection(beg, buf_pn, pn_len,
 	                                  tls_ctx->hp, tls_ctx->tx.hp_key)) {
 		fprintf(stderr, "Could not apply the header protection\n");
-		return -2;
+		return -3;
 	}
 
 	cf = pool_alloc(pool_head_quic_tx_crypto_frm);
 	if (!cf) {
 		fprintf(stderr, "CRYPTO frame allocation failed\n");
-		return -2;
+		return -3;
 	}
 	/*
 	 * Now that a correct packet is built, let us set the position pointer of
@@ -2573,8 +2637,8 @@ static ssize_t quic_build_handshake_packet(struct q_buf *buf, struct quic_conn *
 	*offset += cf->len;
 	/* Increment the number of bytes in <buf> buffer by the length of this packet. */
 	buf->data += end - beg;
-	/* Store the CRYPTO data length for this buffer (may contains several CRYPT frames). */
-	buf->crypto_data += cf->len;
+	/* Increment the CRYPTO data in flight counter. */
+	qc->crypto_in_flight += cf->len;
 
 	return end - beg;
 }
