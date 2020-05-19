@@ -218,6 +218,7 @@ static inline int quic_get_tls_enc_levels(enum quic_tls_enc_level *level,
 		*next_level = QUIC_TLS_ENC_LEVEL_HANDSHAKE;
 		break;
 	case QUIC_HS_ST_SERVER_HANSHAKE:
+	case QUIC_HS_ST_CLIENT_HANSHAKE:
 		*level = QUIC_TLS_ENC_LEVEL_HANDSHAKE;
 		*next_level = QUIC_TLS_ENC_LEVEL_NONE;
 		break;
