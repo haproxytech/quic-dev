@@ -2150,6 +2150,12 @@ static ssize_t quic_packet_read(unsigned char **buf, const unsigned char *end,
 				conn = ebmb_entry(node, struct quic_conn, scid_node);
 		}
 
+		if (!l && qpkt->type == QUIC_PACKET_TYPE_INITIAL) {
+			conn->dcid.len = qpkt->scid.len;
+			if (qpkt->scid.len)
+				memcpy(conn->dcid.data, qpkt->scid.data, qpkt->scid.len);
+		}
+
 		if (qpkt->type == QUIC_PACKET_TYPE_INITIAL) {
 			uint64_t token_len;
 			struct quic_tls_ctx *ctx = &conn->enc_levels[QUIC_TLS_ENC_LEVEL_INITIAL].tls_ctx;
