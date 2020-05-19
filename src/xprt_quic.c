@@ -2482,16 +2482,23 @@ static ssize_t quic_do_build_handshake_packet(struct q_buf *wbuf, int pkt_type,
 	ssize_t ack_frm_len;
 	struct buffer *ack_buf;
 
-	crypto_len = crypto_len > QUIC_CRYPTO_IN_FLIGHT_MAX - conn->crypto_in_flight ?
-		QUIC_CRYPTO_IN_FLIGHT_MAX - conn->crypto_in_flight : crypto_len;
-	if (!crypto_len)
-		return -2;
+	if (crypto_len) {
+		crypto_len = crypto_len > QUIC_CRYPTO_IN_FLIGHT_MAX - conn->crypto_in_flight ?
+			QUIC_CRYPTO_IN_FLIGHT_MAX - conn->crypto_in_flight : crypto_len;
+		if (!crypto_len)
+			return -2;
+
+		crypto->data = c_buf_getpos(qel, *offset);
+		crypto->offset = *offset;
+		/* Crypto frame header size (without data and data length) */
+		frm_header_sz = sizeof frm.type + quic_int_getsize(crypto->offset);
+	}
+	else {
+		frm_header_sz = 0;
+	}
 
 	beg = pos = q_buf_getpos(wbuf);
 	end = q_buf_end(wbuf);
-
-	crypto->data = c_buf_getpos(qel, *offset);
-	crypto->offset = *offset;
 
 	/* For a server, the token field of an Initial packet is empty. */
 	token_fields_len = pkt_type == QUIC_PACKET_TYPE_INITIAL ? 1 : 0;
@@ -2524,16 +2531,15 @@ static ssize_t quic_do_build_handshake_packet(struct q_buf *wbuf, int pkt_type,
 		qel->pktns->flags &= ~QUIC_FL_PKTNS_ACK_REQUIRED;
 	}
 
-	/* Crypto frame header size (without data and data length) */
-	frm_header_sz = sizeof frm.type + quic_int_getsize(crypto->offset);
-
 	/* Length field value without the CRYPTO frame data length. */
 	len = ack_frm_len + *pn_len + frm_header_sz + QUIC_TLS_TAG_LEN;
-	crypto->len = max_stream_data_size(end - pos, len, crypto_len);
-	/* Add the CRYPTO data length to the packet length (after encryption) and
-	 * the length of this length.
-	 */
-	len += quic_int_getsize(crypto->len) + crypto->len;
+	if (crypto_len) {
+		crypto->len = max_stream_data_size(end - pos, len, crypto_len);
+		/* Add the CRYPTO data length to the packet length (after encryption) and
+		 * the length of this length.
+		 */
+		len += quic_int_getsize(crypto->len) + crypto->len;
+	}
 
 	padding_len = 0;
 	if (objt_server(conn->conn->target) &&
@@ -2559,7 +2565,7 @@ static ssize_t quic_do_build_handshake_packet(struct q_buf *wbuf, int pkt_type,
 	}
 
 	/* Crypto frame */
-	if (!quic_build_frame(&pos, end, &frm))
+	if (crypto_len && !quic_build_frame(&pos, end, &frm))
 		return -1;
 
 	/* Build a PADDING frame if needed. */
@@ -2570,7 +2576,8 @@ static ssize_t quic_do_build_handshake_packet(struct q_buf *wbuf, int pkt_type,
 			return -1;
 	}
 
-	*offset += crypto->len;
+	if (crypto_len)
+		*offset += crypto->len;
 
 	return pos - beg;
 }
