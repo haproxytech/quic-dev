@@ -50,7 +50,7 @@ enum quic_handshake_state {
 
 /* QUIC TLS level encryption */
 enum quic_tls_enc_level {
-	QUIC_TLS_ENC_LEVEL_NONE,
+	QUIC_TLS_ENC_LEVEL_NONE = -1,
 	QUIC_TLS_ENC_LEVEL_INITIAL,
 	QUIC_TLS_ENC_LEVEL_EARLY_DATA,
 	QUIC_TLS_ENC_LEVEL_HANDSHAKE,
