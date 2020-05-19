@@ -1010,8 +1010,11 @@ static int quic_prepare_handshake_packets(struct quic_conn_ctx *ctx)
 	 * When entering this function, the writter buffer must be empty.
 	 * Most of the time it points to the reader buffer.
 	 */
-	while ((q_buf_empty(wbuf) || reuse_wbuf) && !c_buf_consumed(qel)) {
+	while ((q_buf_empty(wbuf) || reuse_wbuf)) {
 		ssize_t ret;
+
+		if (c_buf_consumed(qel) && !(qel->pktns->flags & QUIC_FL_PKTNS_ACK_REQUIRED))
+			break;
 
 		reuse_wbuf = 0;
 		ret = quic_build_handshake_packet(wbuf, qc,
