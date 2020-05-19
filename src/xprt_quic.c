@@ -1205,17 +1205,6 @@ static int quic_conn_do_handshake(struct quic_conn_ctx *ctx)
 	int ret;
 
 	quic_conn = ctx->conn->quic_conn;
-	if (quic_conn->retransmit &&
-	    !quic_prepare_handshake_packet_retransmission(ctx))
-		return 0;
-
-	if (!quic_conn->retransmit &&
-	    !quic_prepare_handshake_packets(ctx))
-		return 0;
-
-	if (!quic_send_handshake_packets(ctx))
-		return 0;
-
 	if (!quic_get_tls_enc_levels(&tel, &next_tel, ctx->state))
 	    return 0;
 
@@ -1278,6 +1267,19 @@ static int quic_conn_do_handshake(struct quic_conn_ctx *ctx)
 		eb64_delete(&qpkt->pn_node);
 		pool_free(pool_head_quic_rx_packet, qpkt);
 	}
+
+	if (quic_conn->retransmit)
+		fprintf(stderr, "%s retransmission asked\n", __func__);
+	if (quic_conn->retransmit &&
+	    !quic_prepare_handshake_packet_retransmission(ctx))
+		return 0;
+
+	if (!quic_conn->retransmit &&
+	    !quic_prepare_handshake_packets(ctx))
+		return 0;
+
+	if (!quic_send_handshake_packets(ctx))
+		return 0;
 
 	/*
 	 * Check if there is something to do for the next level.
