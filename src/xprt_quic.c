@@ -1091,9 +1091,12 @@ static int quic_build_post_handshake_frames(struct quic_conn *conn)
 	int i;
 	struct quic_frame *frm;
 
-	frm = pool_alloc(pool_head_quic_frame);
-	frm->type = QUIC_FT_HANDSHAKE_DONE;
-	LIST_ADDQ(&conn->tx.frms_to_send, &frm->list);
+	/* Only servers must send a HANDSHAKE_DONE frame. */
+	if (!objt_server(conn->conn->target)) {
+		frm = pool_alloc(pool_head_quic_frame);
+		frm->type = QUIC_FT_HANDSHAKE_DONE;
+		LIST_ADDQ(&conn->tx.frms_to_send, &frm->list);
+	}
 
 	for (i = 1; i < conn->rx_tps.active_connection_id_limit; i++) {
 		struct quic_connection_id *cid;
