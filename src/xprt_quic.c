@@ -1290,6 +1290,7 @@ static int quic_conn_do_handshake(struct quic_conn_ctx *ctx)
 	if (ctx->state == QUIC_HS_ST_CLIENT_INITIAL && next_enc_level->tls_ctx.hp &&
 	    (!LIST_ISEMPTY(&next_enc_level->rx.pqpkts) || !eb_is_empty(&next_enc_level->rx.qpkts))) {
 		enc_level = next_enc_level;
+		ctx->state = QUIC_HS_ST_CLIENT_HANSHAKE;
 		goto next_level;
 	}
 
