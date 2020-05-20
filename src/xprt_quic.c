@@ -201,20 +201,20 @@ int ha_quic_set_encryption_secrets(SSL *ssl, enum ssl_encryption_level_t level,
 	hexdump(read_secret, secret_len, "read_secret (level %d):\n", level);
 	hexdump(write_secret, secret_len, "write_secret:\n");
 
-	if (!quic_tls_derive_packet_protection_keys(tls_ctx->aead, tls_ctx->hp, tls_ctx->md,
-	                                            tls_ctx->rx.key, sizeof tls_ctx->rx.key,
-	                                            tls_ctx->rx.iv, sizeof tls_ctx->rx.iv,
-	                                            tls_ctx->rx.hp_key, sizeof tls_ctx->rx.hp_key,
-	                                            read_secret, secret_len)) {
+	if (!quic_tls_derive_keys(tls_ctx->aead, tls_ctx->hp, tls_ctx->md,
+	                          tls_ctx->rx.key, sizeof tls_ctx->rx.key,
+	                          tls_ctx->rx.iv, sizeof tls_ctx->rx.iv,
+	                          tls_ctx->rx.hp_key, sizeof tls_ctx->rx.hp_key,
+	                          read_secret, secret_len)) {
 		fprintf(stderr, "%s: RX key derivation failed\n", __func__);
 		return 0;
 	}
 
-	if (!quic_tls_derive_packet_protection_keys(tls_ctx->aead, tls_ctx->hp, tls_ctx->md,
-	                                            tls_ctx->tx.key, sizeof tls_ctx->tx.key,
-	                                            tls_ctx->tx.iv, sizeof tls_ctx->tx.iv,
-	                                            tls_ctx->tx.hp_key, sizeof tls_ctx->tx.hp_key,
-	                                            write_secret, secret_len)) {
+	if (!quic_tls_derive_keys(tls_ctx->aead, tls_ctx->hp, tls_ctx->md,
+	                          tls_ctx->tx.key, sizeof tls_ctx->tx.key,
+	                          tls_ctx->tx.iv, sizeof tls_ctx->tx.iv,
+	                          tls_ctx->tx.hp_key, sizeof tls_ctx->tx.hp_key,
+	                          write_secret, secret_len)) {
 		fprintf(stderr, "%s: TX key derivation failed\n", __func__);
 		return 0;
 	}
@@ -223,9 +223,10 @@ int ha_quic_set_encryption_secrets(SSL *ssl, enum ssl_encryption_level_t level,
 
 /*
  * This function copies the CRYPTO data provided by the TLS stack found at <data>
- * with <len> as size in CRYPTO buffers dedicated to store the information about outgoing
- * CRYPTO frames so that to be able to replay the CRYPTO data streams.
- * It fails only if it could not managed to allocate enough CRYPTO buffers to store all the data.
+ * with <len> as size in CRYPTO buffers dedicated to store the information about
+ * outgoing CRYPTO frames so that to be able to replay the CRYPTO data streams.
+ * It fails only if it could not managed to allocate enough CRYPTO buffers to
+ * store all the data.
  * Note that CRYPTO data may exist at any encryption level except at 0-RTT.
  */
 static int quic_crypto_data_cpy(struct quic_enc_level *qel,
@@ -241,9 +242,10 @@ static int quic_crypto_data_cpy(struct quic_enc_level *qel,
 	pos = (*qcb)->data + (*qcb)->sz;
 
 	while (len > 0) {
-		size_t to_copy;
+		size_t to_copy, room;
 
-		to_copy = len > QUIC_CRYPTO_BUF_SZ  - (*qcb)->sz ? QUIC_CRYPTO_BUF_SZ - (*qcb)->sz : len;
+		room = QUIC_CRYPTO_BUF_SZ  - (*qcb)->sz;
+		to_copy = len > room ? room : len;
 		memcpy(pos, data, to_copy);
 		/* Increment the total size of this CRYPTO buffers by <to_copy>. */
 		qel->tx.crypto.sz += to_copy;
@@ -254,7 +256,8 @@ static int quic_crypto_data_cpy(struct quic_enc_level *qel,
 		if ((*qcb)->sz >= QUIC_CRYPTO_BUF_SZ) {
 			struct quic_crypto_buf **tmp;
 
-			tmp = realloc(qel->tx.crypto.bufs, (*nb_buf + 1) * sizeof *qel->tx.crypto.bufs);
+			tmp = realloc(qel->tx.crypto.bufs,
+			              (*nb_buf + 1) * sizeof *qel->tx.crypto.bufs);
 			if (tmp) {
 				qel->tx.crypto.bufs = tmp;
 				qcb = &qel->tx.crypto.bufs[*nb_buf];
@@ -277,6 +280,11 @@ static int quic_crypto_data_cpy(struct quic_enc_level *qel,
 }
 
 
+/*
+ * ->add_handshake_data QUIC TLS callback used by the QUIC TLS stack when it
+ * wants to provide the QUIC layer with CRYPTO data.
+ * Returns 1 if succeeded, 0 if not.
+ */
 int ha_quic_add_handshake_data(SSL *ssl, enum ssl_encryption_level_t level,
                                const uint8_t *data, size_t len)
 {
@@ -320,6 +328,7 @@ int ha_quic_send_alert(SSL *ssl, enum ssl_encryption_level_t level, uint8_t aler
 	return 1;
 }
 
+/* QUIC TLS methods */
 static SSL_QUIC_METHOD ha_quic_method = {
 	.set_encryption_secrets = ha_quic_set_encryption_secrets,
 	.add_handshake_data     = ha_quic_add_handshake_data,
@@ -327,6 +336,10 @@ static SSL_QUIC_METHOD ha_quic_method = {
 	.send_alert             = ha_quic_send_alert,
 };
 
+/*
+ * Initialize the TLS context of a listener with <bind_conf> as configuration.
+ * Returns an error count.
+ */
 int ssl_quic_initial_ctx(struct bind_conf *bind_conf)
 {
 	struct proxy *curproxy = bind_conf->frontend;
@@ -590,10 +603,13 @@ static int quic_conn_unsubscribe(struct connection *conn, void *xprt_ctx, int ev
 }
 
 /*
+ * Decode an expected packet number from <truncated_on> its truncated value,
+ * depending on <largest_pn> the largest received packet number, and <pn_nbits>
+ * the number of bits used to encode this packet number (its length in bytes * 8).
  * See https://quicwg.org/base-drafts/draft-ietf-quic-transport.html#packet-encoding
- * The comments come from this draft.
  */
-static uint64_t decode_packet_number(uint64_t largest_pn, uint32_t truncated_pn, unsigned int pn_nbits)
+static uint64_t decode_packet_number(uint64_t largest_pn,
+                                     uint32_t truncated_pn, unsigned int pn_nbits)
 {
 	uint64_t expected_pn = largest_pn + 1;
 	uint64_t pn_win = (uint64_t)1 << pn_nbits;
@@ -602,31 +618,29 @@ static uint64_t decode_packet_number(uint64_t largest_pn, uint32_t truncated_pn,
 	uint64_t candidate_pn;
 
 
-	// The incoming packet number should be greater than
-	// expected_pn - pn_hwin and less than or equal to
-	// expected_pn + pn_hwin
-	//
-	// This means we can't just strip the trailing bits from
-	// expected_pn and add the truncated_pn because that might
-	// yield a value outside the window.
-	//
-	// The following code calculates a candidate value and
-	// makes sure it's within the packet number window.
 	candidate_pn = (expected_pn & ~pn_mask) | truncated_pn;
 	if (candidate_pn + pn_hwin <= expected_pn)
 	  return candidate_pn + pn_win;
 
-	// Note the extra check for underflow when candidate_pn
-	// is near zero.
 	if (candidate_pn > expected_pn + pn_hwin && candidate_pn > pn_win)
 	  return candidate_pn - pn_win;
 
 	return candidate_pn;
 }
 
-static int quic_remove_header_protection(struct quic_rx_packet *pkt, struct quic_tls_ctx *tls_ctx,
+/*
+ * Remove the header protection of <pkt> QUIC packet using <tls_ctx> as QUIC TLS
+ * cryptographic context.
+ * <largest_pn> is the largest received packet number and <pn> the address of
+ * the packet number field for this packet with <byte0> address of its first byte.
+ * <end> points to one byte past the end of this packet.
+ * Returns 1 if succeeded, 0 if not.
+ */
+static int quic_remove_header_protection(struct quic_rx_packet *pkt,
+                                         struct quic_tls_ctx *tls_ctx,
                                          int64_t largest_pn, unsigned char *pn,
-                                         unsigned char *byte0, const unsigned char *end)
+                                         unsigned char *byte0,
+                                         const unsigned char *end)
 {
 	int ret, outlen, i, pnlen;
 	uint64_t packet_number;
@@ -702,7 +716,12 @@ static int quic_packet_encrypt(unsigned char *payload, size_t payload_len,
 	return 1;
 }
 
-static int quic_packet_decrypt(struct quic_rx_packet *qpkt, struct quic_tls_ctx *tls_ctx)
+/*
+ * Decrypt <qpkt> QUIC packet with <tls_ctx> as QUIC TLS cryptographic context.
+ * Returns 1 if succeeded, 0 if not.
+ */
+static int quic_packet_decrypt(struct quic_rx_packet *qpkt,
+                               struct quic_tls_ctx *tls_ctx)
 {
 	int ret;
 	unsigned char iv[12];
@@ -733,10 +752,13 @@ static int quic_packet_decrypt(struct quic_rx_packet *qpkt, struct quic_tls_ctx 
 
 /*
  * Remove <largest> down to <smallest> node entries from <frms> root of CRYPTO frames
- * deallocating them.
+ * deallocating them, these frames being acknowledged.
+ * Returns the last node reached to be used for the next range.
+ * May be NULL if <largest> node could not be found.
  */
-static inline struct eb64_node *quic_ack_range_crypto_frames(struct eb_root *frms, uint64_t *crypto_in_flight,
-                                                             uint64_t largest, uint64_t smallest)
+static inline struct eb64_node *
+quic_ack_range_crypto_frames(struct eb_root *frms, uint64_t *crypto_in_flight,
+                             uint64_t largest, uint64_t smallest)
 {
 	struct eb64_node *node;
 	struct quic_tx_crypto_frm *frm;
@@ -755,16 +777,21 @@ static inline struct eb64_node *quic_ack_range_crypto_frames(struct eb_root *frm
 }
 
 /*
- * Remove <largest> down to <smallest> node entries from <frms> root of CRYPTO frames
- * deallocating them and accumulate the CRYPTO frames belonging to the same gap
- * <smallest> -> <next_largest> non inclusive in a unique frame to be retransmitted if any.
- * It is possible that this frame does not exist if the ranges have been already parsed
- * (but not acknowledged).
+ * Remove <largest> down to <smallest> node entries from <frms> root of acket
+ * CRYPTO frames deallocating them and accumulate the CRYPTO frames belonging to
+ * the same gap <smallest> -> <next_largest> non inclusive in a unique frame to
+ * be retransmitted if any.
+ * It is possible that this frame does not exist if the ranges have been already
+ * parsed (but not acknowledged).
  * Note that <largest> >= <smallest> > <next_largest>.
+ * Returns a frame which results of the aggregation of the lost frames belonging
+ * to the same gap.
  */
 static inline struct quic_tx_crypto_frm *
-quic_ack_range_with_gap_crypto_frames(struct eb_root *frms, uint64_t *crypto_in_flight,
-                                      uint64_t largest, uint64_t smallest, uint64_t next_largest)
+quic_ack_range_with_gap_crypto_frames(struct eb_root *frms,
+                                      uint64_t *crypto_in_flight,
+                                      uint64_t largest, uint64_t smallest,
+                                      uint64_t next_largest)
 {
 	struct eb64_node *node;
 	struct quic_tx_crypto_frm *frm;
@@ -793,8 +820,13 @@ quic_ack_range_with_gap_crypto_frames(struct eb_root *frms, uint64_t *crypto_in_
 	return frm;
 }
 
+/*
+ * Parse all the frames of <qpkt> QUIC packet for QUIC connection with <ctx>
+ * as I/O handler context and <qel> as encryption level.
+ * Returns 1 if succeeded, 0 if failed.
+ */
 static int quic_parse_handshake_packet(struct quic_rx_packet *qpkt, struct quic_conn_ctx *ctx,
-                                       struct quic_enc_level *enc_level)
+                                       struct quic_enc_level *qel)
 {
 	struct quic_frame frm;
 	const unsigned char *pos, *end;
@@ -809,7 +841,7 @@ static int quic_parse_handshake_packet(struct quic_rx_packet *qpkt, struct quic_
 
 		switch (frm.type) {
 		case QUIC_FT_CRYPTO:
-			if (frm.crypto.offset == enc_level->rx.crypto.offset) {
+			if (frm.crypto.offset == qel->rx.crypto.offset) {
 				fprintf(stderr, "crypto frame as expected\n");
 				hexdump(frm.crypto.data, frm.crypto.len, "CRYPTO frame:\n");
 				if (SSL_provide_quic_data(ctx->ssl, SSL_quic_read_level(ctx->ssl),
@@ -817,7 +849,7 @@ static int quic_parse_handshake_packet(struct quic_rx_packet *qpkt, struct quic_
 					fprintf(stderr, "%s SSL providing QUIC data error\n", __func__);
 				}
 				else {
-					enc_level->rx.crypto.offset += frm.crypto.len;
+					qel->rx.crypto.offset += frm.crypto.len;
 					fprintf(stderr, "SSL_provide_quic_data() succeded \n");
 					qpkt->flags |= QUIC_FL_RX_PACKET_ACK_ELICITING;
 				}
@@ -834,9 +866,9 @@ static int quic_parse_handshake_packet(struct quic_rx_packet *qpkt, struct quic_
 			struct quic_ack *ack = &frm.ack;
 			uint64_t smallest, largest;
 
-			if (ack->largest_ack > enc_level->pktns->tx.next_pn) {
+			if (ack->largest_ack > qel->pktns->tx.next_pn) {
 				fprintf(stderr, "ACK for not sent packet #%lu (%lu)\n",
-				        ack->largest_ack, enc_level->pktns->tx.next_pn);
+				        ack->largest_ack, qel->pktns->tx.next_pn);
 				return 0;
 			}
 
@@ -852,7 +884,7 @@ static int quic_parse_handshake_packet(struct quic_rx_packet *qpkt, struct quic_
 				struct quic_tx_crypto_frm *frm;
 
 				if (!ack->ack_range_num--) {
-					quic_ack_range_crypto_frames(&enc_level->tx.crypto.frms,
+					quic_ack_range_crypto_frames(&qel->tx.crypto.frms,
 					                             &ctx->conn->quic_conn->crypto_in_flight,
 					                             largest, smallest);
 					break;
@@ -864,12 +896,12 @@ static int quic_parse_handshake_packet(struct quic_rx_packet *qpkt, struct quic_
 				if (!quic_dec_int(&ack_range, &pos, end) || smallest - gap - 2 < ack_range)
 					return 0;
 
-				frm = quic_ack_range_with_gap_crypto_frames(&enc_level->tx.crypto.frms,
+				frm = quic_ack_range_with_gap_crypto_frames(&qel->tx.crypto.frms,
 				                                            &ctx->conn->quic_conn->crypto_in_flight,
 				                                            largest, smallest, smallest - gap - 2);
 				if (frm) {
 					eb64_delete(&frm->pn);
-					eb64_insert(&enc_level->tx.crypto.retransmit_frms, &frm->pn);
+					eb64_insert(&qel->tx.crypto.retransmit_frms, &frm->pn);
 					ctx->conn->quic_conn->retransmit = 1;
 				}
 				/* Next range */
@@ -879,8 +911,8 @@ static int quic_parse_handshake_packet(struct quic_rx_packet *qpkt, struct quic_
 				fprintf(stderr, "acks from %lu -> %lu\n", smallest, largest);
 			} while (1);
 
-			if (ack->largest_ack > enc_level->pktns->rx.largest_acked_pn)
-				enc_level->pktns->rx.largest_acked_pn = ack->largest_ack;
+			if (ack->largest_ack > qel->pktns->rx.largest_acked_pn)
+				qel->pktns->rx.largest_acked_pn = ack->largest_ack;
 
 			tasklet_wakeup(ctx->wait_event.tasklet);
 
@@ -1062,7 +1094,8 @@ static int quic_prepare_handshake_packets(struct quic_conn_ctx *ctx)
 }
 
 /*
- * Send the handshake packet which have been prepared.
+ * Send the handshake packet which have been prepared for QUIC connections
+ * with <ctx> as I/O handler context.
  */
 static int quic_send_handshake_packets(struct quic_conn_ctx *ctx)
 {
@@ -1086,6 +1119,12 @@ static int quic_send_handshake_packets(struct quic_conn_ctx *ctx)
 	return 1;
 }
 
+/*
+ * Build all the frames which must be sent just after the handshake have succeeded.
+ * This is essentially NEW_CONNECTION_ID frames. A QUIC server must also send
+ * a HANDSHAKE_DONE frame.
+ * Return 1 if succeeded, 0 if not.
+ */
 static int quic_build_post_handshake_frames(struct quic_conn *conn)
 {
 	int i;
@@ -1199,6 +1238,12 @@ int quic_update_ack_ranges_list(struct quic_ack_ranges *ack_ranges, int64_t pn)
 
 	return 1;
 }
+
+/*
+ * Called during handshakes to parse and build Initial and Handshake packets for QUIC
+ * connections with <ctx> as I/O handler context.
+ * Returns 1 if succeeded, 0 if not.
+ */
 static int quic_conn_do_handshake(struct quic_conn_ctx *ctx)
 {
 	struct quic_conn *quic_conn;
@@ -1325,6 +1370,11 @@ static int quic_conn_do_handshake(struct quic_conn_ctx *ctx)
 	return 1;
 }
 
+/*
+ * Called after successful handshake to parse Application level encrypted
+ * packets for QUIC connection with <ctx> as I/O handler context.
+ * Return 1 if succeeded, 0 if failed.
+ */
 static int quic_treat_packets(struct quic_conn_ctx *ctx)
 {
 	struct quic_conn *quic_conn;
@@ -1371,7 +1421,7 @@ static int quic_treat_packets(struct quic_conn_ctx *ctx)
 	return 1;
 }
 
-/* QUIC connection packet handler. */
+/* QUIC connection packet handler task. */
 static struct task *quic_conn_io_cb(struct task *t, void *context, unsigned short state)
 {
 	struct quic_conn_ctx *ctx = context;
@@ -1416,6 +1466,10 @@ static struct quic_conn *quic_new_conn(uint32_t version, struct quic_transport_p
 	return quic_conn;
 }
 
+/*
+ * Unitialize <qel> QUIC encryption level.
+ * Never fails.
+ */
 static void quic_conn_enc_level_uninit(struct quic_enc_level *qel)
 {
 	int i;
@@ -1430,6 +1484,10 @@ static void quic_conn_enc_level_uninit(struct quic_enc_level *qel)
 	qel->tx.crypto.bufs = NULL;
 }
 
+/*
+ * Initialize <qel> QUIC TLS encryption level, allocating everything needed.
+ * Returns 1 if succeeded, 0 if not.
+ */
 static int quic_conn_enc_level_init(struct quic_enc_level *qel)
 {
 	qel->rx.qpkts = EB_ROOT;
@@ -1462,6 +1520,10 @@ static int quic_conn_enc_level_init(struct quic_enc_level *qel)
 	return 0;
 }
 
+/*
+ * Release the memory allocated for <buf> array of buffers, with <nb> as size.
+ * Never fails.
+ */
 static inline void free_quic_conn_tx_bufs(struct q_buf **bufs, size_t nb)
 {
 	struct q_buf **p;
@@ -1484,7 +1546,10 @@ static inline void free_quic_conn_tx_bufs(struct q_buf **bufs, size_t nb)
 	free(bufs);
 }
 
-/* Allocate an array or <nb> buffers of <sz> bytes each. */
+/*
+ * Allocate an array or <nb> buffers of <sz> bytes each.
+ * Return this array if succeeded, NULL if failed.
+ */
 static inline struct q_buf **quic_conn_tx_bufs_alloc(size_t nb, size_t sz)
 {
 	int i;
@@ -1518,6 +1583,8 @@ static inline struct q_buf **quic_conn_tx_bufs_alloc(size_t nb, size_t sz)
 	return NULL;
 }
 
+/*
+ * Release all the memory allocated for <conn> QUIC connection. */
 static void quic_conn_free(struct quic_conn *conn)
 {
 	int i;
@@ -1529,6 +1596,14 @@ static void quic_conn_free(struct quic_conn *conn)
 	pool_free(pool_head_quic_conn, conn);
 }
 
+/*
+ * Initialize <conn> QUIC connection with <quic_initial_clients> as root of QUIC
+ * connections used to identify the first Initial packets of client connecting
+ * to listeners. This parameter must be NULL for QUIC connections attached
+ * to listeners. <dcid> is the destination connection ID with <dcid_len> as length.
+ * <scid> is the source connection ID with <scid_len> as length.
+ * Returns 1 if succeeded, 0 if not.
+ */
 static int quic_new_conn_init(struct quic_conn *conn,
                               struct eb_root *quic_initial_clients,
                               struct eb_root *quic_clients,
@@ -1542,7 +1617,7 @@ static int quic_new_conn_init(struct quic_conn *conn,
 
 	conn->cids = EB_ROOT;
 	fprintf(stderr, "%s: new quic_conn @%p\n", __func__, conn);
-	/* Server */
+	/* QUIC Server (or listener). */
 	if (objt_listener(conn->conn->target)) {
 		/* Copy the initial DCID. */
 		conn->idcid.len = dcid_len;
@@ -1552,7 +1627,7 @@ static int quic_new_conn_init(struct quic_conn *conn,
 		memcpy(conn->dcid.data, scid, scid_len);
 		conn->dcid.len = scid_len;
 	}
-	/* Client */
+	/* QUIC Client (outoging connection to servers) */
 	else {
 		memcpy(conn->dcid.data, dcid, dcid_len);
 		conn->dcid.len = dcid_len;
@@ -1568,11 +1643,11 @@ static int quic_new_conn_init(struct quic_conn *conn,
 	/* Select our SCID which is the first CID with 0 as sequence number. */
 	conn->scid = icid->cid;
 
-	/* Insert the DCIC the client has choosen (only for servers) */
+	/* Insert the DCID the QUIC client has choosen (only for listeners) */
 	if (objt_listener(conn->conn->target))
 		ebmb_insert(quic_initial_clients, &conn->idcid_node, conn->idcid.len);
 
-	/* Insert our SCID, the connection ID for the client. */
+	/* Insert our SCID, the connection ID for the QUIC client. */
 	ebmb_insert(quic_clients, &conn->scid_node, conn->scid.len);
 
 	/* Initialize the Initial level TLS encryption context. */
@@ -1610,6 +1685,13 @@ static int quic_new_conn_init(struct quic_conn *conn,
 	return 0;
 }
 
+/*
+ * Derive the initial secrets with <ctx> as QUIC TLS context which is the
+ * cryptographic context for the first encryption level (Initial) from
+ * <cid> connection ID with <cidlen> as length (in bytes) for a server or not
+ * depending on <server> boolean value.
+ * Return 1 if succeeded or 0 if not.
+ */
 static int quic_conn_derive_initial_secrets(struct quic_tls_ctx *ctx,
                                             const unsigned char *cid, size_t cidlen,
                                             int server)
@@ -1622,10 +1704,11 @@ static int quic_conn_derive_initial_secrets(struct quic_tls_ctx *ctx,
 	struct quic_tls_secrets *rx_ctx, *tx_ctx;
 
 
-	hexdump(cid, cidlen, "%s CID(%zu)\n", __func__, cidlen);
-	if (!quic_derive_initial_secret(ctx->md, initial_secret, sizeof initial_secret,
+	if (!quic_derive_initial_secret(ctx->md,
+	                                initial_secret, sizeof initial_secret,
 	                                cid, cidlen))
 		return 0;
+
 	if (!quic_tls_derive_initial_secrets(ctx->md,
 	                                     rx_init_sec, sizeof rx_init_sec,
 	                                     tx_init_sec, sizeof tx_init_sec,
@@ -1634,21 +1717,28 @@ static int quic_conn_derive_initial_secrets(struct quic_tls_ctx *ctx,
 
 	rx_ctx = &ctx->rx;
 	tx_ctx = &ctx->tx;
-	if (!quic_tls_derive_packet_protection_keys(ctx->aead, ctx->hp, ctx->md,
-	                                            rx_ctx->key, sizeof rx_ctx->key,
-	                                            rx_ctx->iv, sizeof rx_ctx->iv,
-	                                            rx_ctx->hp_key, sizeof rx_ctx->hp_key,
-	                                            rx_init_sec, sizeof rx_init_sec))
+	if (!quic_tls_derive_keys(ctx->aead, ctx->hp, ctx->md,
+	                          rx_ctx->key, sizeof rx_ctx->key,
+	                          rx_ctx->iv, sizeof rx_ctx->iv,
+	                          rx_ctx->hp_key, sizeof rx_ctx->hp_key,
+	                          rx_init_sec, sizeof rx_init_sec))
 		return 0;
-	if (!quic_tls_derive_packet_protection_keys(ctx->aead, ctx->hp, ctx->md,
-	                                            tx_ctx->key, sizeof tx_ctx->key,
-	                                            tx_ctx->iv, sizeof tx_ctx->iv,
-	                                            tx_ctx->hp_key, sizeof tx_ctx->hp_key,
-	                                            tx_init_sec, sizeof tx_init_sec))
+
+	if (!quic_tls_derive_keys(ctx->aead, ctx->hp, ctx->md,
+	                          tx_ctx->key, sizeof tx_ctx->key,
+	                          tx_ctx->iv, sizeof tx_ctx->iv,
+	                          tx_ctx->hp_key, sizeof tx_ctx->hp_key,
+	                          tx_init_sec, sizeof tx_init_sec))
 		return 0;
+
 	return 1;
 }
 
+/*
+ * Initialize a QUIC connection (quic_conn struct) to be attached to <conn>
+ * connection with <xprt_ctx> as address of the xprt context.
+ * Returns 1 if succeeded, 0 if not.
+ */
 static int quic_conn_init(struct connection *conn, void **xprt_ctx)
 {
 	struct quic_conn_ctx *ctx;
@@ -1921,7 +2011,7 @@ int quic_conn_prepare_srv_ctx(struct server *srv)
     return cfgerr;
 }
 
-/* transport-layer operations for QUIC sockets */
+/* transport-layer operations for QUIC connections. */
 static struct xprt_ops quic_conn = {
 	.snd_buf  = quic_conn_from_buf,
 	.rcv_buf  = quic_conn_to_buf,
@@ -1955,6 +2045,9 @@ static void __quic_conn_deinit(void)
 
 /*
  * Inspired from session_accept_fd().
+ * Instantiate a new connection (connection struct) to be attached to <quic_conn>
+ * QUIC connection of <l> listener.
+ * Returns 1 if succeeded, 0 if not.
  */
 static int quic_new_cli_conn(struct quic_conn *quic_conn,
                              struct listener *l, struct sockaddr_storage *saddr)
@@ -2292,6 +2385,13 @@ static ssize_t quic_packet_read(unsigned char **buf, const unsigned char *end,
 	return -1;
 }
 
+/*
+ * Read all the QUIC packets found in <buf> with <len> as length (typically a UDP
+ * datagram), <ctx> being the QUIC I/O handler context, depending on <listener>
+ * boolean value to distinguish the incoming (from listener) from outgoing (to severs)
+ * QUIC connections.
+ * Return the number of bytes read if succeded, -1 if not.
+ */
 static ssize_t quic_packets_read(char *buf, size_t len, int listener, void *ctx,
                                  struct sockaddr_storage *saddr, socklen_t *saddrlen)
 {
@@ -2316,20 +2416,6 @@ static ssize_t quic_packets_read(char *buf, size_t len, int listener, void *ctx,
 			pool_free(pool_head_quic_rx_packet, qpkt);
 			goto err;
 		}
-
-		/* XXX Servers SHOULD be able to read longer (than QUIC_CID_MAXLEN)
-		 * connection IDs from other QUIC versions in order to properly form a
-		 * version negotiation packet.
-		 */
-
-		/* https://tools.ietf.org/pdf/draft-ietf-quic-transport-22.pdf#53:
-		 *
-		 * Valid packets sent to clients always include a Destination Connection
-		 * ID that matches a value the client selects.  Clients that choose to
-		 * receive zero-length connection IDs can use the address/port tuple to
-		 * identify a connection.  Packets that don’t match an existing
-		 * connection are discarded.
-		 */
 		fprintf(stderr, "long header? %d packet type: 0x%02x \n", !!qpkt->long_header, qpkt->type);
 	} while (pos < end);
 
@@ -2392,6 +2478,12 @@ static int quic_build_packet_short_header(unsigned char **buf, const unsigned ch
 	return 1;
 }
 
+/*
+ * Apply QUIC header protection to the packet with <buf> as first byte address,
+ * <pn> as address of the Packet number field, <pnlen> being this field length
+ * with <aead> as AEAD cipher and <key> as secret key.
+ * Returns 1 if succeeded or 0 if failed.
+ */
 static int quic_apply_header_protection(unsigned char *buf, unsigned char *pn, size_t pnlen,
                                         const EVP_CIPHER *aead, const unsigned char *key)
 {
@@ -2408,7 +2500,6 @@ static int quic_apply_header_protection(unsigned char *buf, unsigned char *pn, s
 	if (!ctx)
 		return 0;
 
-	hexdump(pn + QUIC_PACKET_PN_MAXLEN, 16, "%s sample:\n", __func__);
 	if (!EVP_EncryptInit_ex(ctx, aead, NULL, key, pn + QUIC_PACKET_PN_MAXLEN) ||
 	    !EVP_EncryptUpdate(ctx, mask, &outlen, mask, sizeof mask) ||
 	    !EVP_EncryptFinal_ex(ctx, mask, &outlen))
@@ -2448,22 +2539,23 @@ static inline ssize_t quic_do_build_ack_frame(struct buffer *buf,
 /*
  * This function builds a clear handshake packet used during a QUIC TLS handshakes
  * into <wbuf> the current <wbuf> for <conn> QUIC connection with <qel> as QUIC
- * TLS encryption level for ougoing packets filling it with as much as CRYPTO
+ * TLS encryption level for outgoing packets filling it with as much as CRYPTO
  * data as possible from <offset> offset in the CRYPTO data stream. Note that
  * this offset value is updated by the length of the CRYPTO frame used to embed
- * the CRYPT data if this packet only if the packet is successfully built.
+ * the CRYPTO data if this packet and only if the packet is successfully built.
  * Return the length of the packet if succeeded minus QUIC_TLS_TAG_LEN, or -1 if
  * failed (not enough room in <wbuf> to build this packet plus QUIC_TLS_TAG_LEN
  * bytes).
  * The trailing QUIC_TLS_TAG_LEN bytes of this packet are not built. But they are
- * reserved so that after having successfully retured from this function, we are
- * sure there is enough room the build this AEAD tag. The position pointer of
- * <wbuf> may be safely incremented by QUIC_TLS_TAG_LEN. So, The <wbuf> position
- * will point one past the last byte of the payload after having built the
- * handshake packet with the confidence there is at least QUIC_TLS_TAG_LEN bytes
- * available packet to encrypt it.
- * This function also update the value <buf_pn> pointer to the packet number field
- * in this packet. <pn_len> will also have the packet number length as value.
+ * reserved so that to be sure there is enough room to build this AEAD TAG after
+ * having successfully returned from this function and to be sure the position
+ * pointer of <wbuf> may be safely incremented by QUIC_TLS_TAG_LEN. After having
+ * returned from this funciton, <wbuf> position will point one past the last
+ * byte of the payload with the confidence there is at least QUIC_TLS_TAG_LEN bytes
+ * available packet to encrypt this packet.
+ * This function also update the value of <buf_pn> pointer to point to the packet
+ * number field in this packet. <pn_len> will also have the packet number
+ * length as value.
  */
 static ssize_t quic_do_build_handshake_packet(struct q_buf *wbuf, int pkt_type,
                                               unsigned char **buf_pn, size_t *pn_len,
@@ -2593,8 +2685,8 @@ static ssize_t quic_do_build_handshake_packet(struct q_buf *wbuf, int pkt_type,
  * Build a handshake packet into <buf> packet buffer with <pkt_type> as packet
  * type for <qc> QUIC connection from CRYPTO data stream at <*offset> offset to
  * be encrypted at <qel> encryption level.
- * Return -2 if the packet could not be encrypted for any reason, -1 there was
- * not enough room in <buf> to build the packet, or the size of the packet
+ * Return -2 if the packet could not be encrypted for any reason, -1 if there was
+ * not enough room in <buf> to build the packet, or the size of the built packet
  * if succeeded.
  */
 static ssize_t quic_build_handshake_packet(struct q_buf *buf, struct quic_conn *qc, int pkt_type,
@@ -2778,6 +2870,11 @@ static int quic_send_app_packets(struct quic_conn_ctx *ctx)
 	return 1;
 }
 
+/*
+ * QUIC I/O handler for connection to local listeners or remove servers
+ * depending on <listener> boolean value, with <fd> as socket file
+ * descriptor and <ctx> as context.
+ */
 static size_t quic_conn_handler(int fd, void *ctx, int listener)
 {
 	ssize_t ret;
@@ -2803,16 +2900,11 @@ static size_t quic_conn_handler(int fd, void *ctx, int listener)
 			break;
 		}
 		else {
-			hexdump(buf->area, ret, "------------------------------------------------------------\n"
-			        "%s: %s recvfrom() (%ld)\n", __func__, listener ? "server" : "client", ret);
+			fprintf(stderr, "-------------------------------------------"
+			                "-----------------\n%s: %s recvfrom() (%ld)\n",
+			                __func__, listener ? "server" : "client", ret);
 			done = buf->data = ret;
-			/*
-			 * Senders MUST NOT coalesce QUIC packets for different connections into a single
-			 * UDP datagram. Receivers SHOULD ignore any subsequent packets with a different
-			 * Destination Connection ID than the first packet in the datagram.
-			 */
 			quic_packets_read(buf->area, buf->data, listener, ctx, &saddr, &saddrlen);
-			//fd_done_recv(fd);
 		}
 	} while (0);
 
@@ -2820,12 +2912,20 @@ static size_t quic_conn_handler(int fd, void *ctx, int listener)
 	return done;
 }
 
+/*
+ * QUIC I/O handler for connections to local listeners with <fd> as socket
+ * file descriptor.
+ */
 void quic_fd_handler(int fd)
 {
 	if (fdtab[fd].ev & FD_POLL_IN)
 		quic_conn_handler(fd, fdtab[fd].owner, 1);
 }
 
+/*
+ * QUIC I/O handler for connections to remote servers with <fd> as socket
+ * file descriptor.
+ */
 void quic_conn_fd_handler(int fd)
 {
 	if (fdtab[fd].ev & FD_POLL_IN)

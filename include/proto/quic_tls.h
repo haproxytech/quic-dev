@@ -39,12 +39,12 @@ int quic_tls_decrypt(unsigned char *buf, size_t len,
                      const EVP_CIPHER *aead,
                      const unsigned char *key, const unsigned char *iv);
 
-int quic_tls_derive_packet_protection_keys(const EVP_CIPHER *aead, const EVP_CIPHER *hp,
-                                           const EVP_MD *md,
-                                           unsigned char *key, size_t keylen,
-                                           unsigned char *iv, size_t ivlen,
-                                           unsigned char *hp_key, size_t hp_keylen,
-                                           const unsigned char *secret, size_t secretlen);
+int quic_tls_derive_keys(const EVP_CIPHER *aead, const EVP_CIPHER *hp,
+                         const EVP_MD *md,
+                         unsigned char *key, size_t keylen,
+                         unsigned char *iv, size_t ivlen,
+                         unsigned char *hp_key, size_t hp_keylen,
+                         const unsigned char *secret, size_t secretlen);
 
 int quic_aead_iv_build(unsigned char *iv, size_t ivlen,
                        unsigned char *aead_iv, size_t aead_ivlen, uint64_t pn);

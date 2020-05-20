@@ -151,12 +151,12 @@ int quic_hkdf_expand_label(const EVP_MD *md,
  * ->hp_key is the key to be derived for header protection.
  * Obviouly these keys have the same size becaused derived with the same TLS cryptographic context.
  */
-ssize_t quic_tls_derive_packet_protection_keys(const EVP_CIPHER *aead, const EVP_CIPHER *hp,
-                                               const EVP_MD *md,
-                                               unsigned char *key, size_t keylen,
-                                               unsigned char *iv, size_t ivlen,
-                                               unsigned char *hp_key, size_t hp_keylen,
-                                               const unsigned char *secret, size_t secretlen)
+ssize_t quic_tls_derive_keys(const EVP_CIPHER *aead, const EVP_CIPHER *hp,
+                             const EVP_MD *md,
+                             unsigned char *key, size_t keylen,
+                             unsigned char *iv, size_t ivlen,
+                             unsigned char *hp_key, size_t hp_keylen,
+                             const unsigned char *secret, size_t secretlen)
 {
 	size_t aead_keylen = (size_t)EVP_CIPHER_key_length(aead);
 	size_t aead_ivlen = (size_t)EVP_CIPHER_iv_length(aead);
