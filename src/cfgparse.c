@@ -3587,7 +3587,8 @@ out_uri_auth_compat:
 		/* Check the mux protocols, if any, for each listener and server
 		 * attached to the current proxy */
 		list_for_each_entry(bind_conf, &curproxy->conf.bind, by_fe) {
-			int mode = (1 << (curproxy->mode == PR_MODE_HTTP));
+			int mode = curproxy->mode == PR_MODE_HTTP ? 1 << 1 :
+				       curproxy->mode == PR_MODE_QUIC ? 1 << 2 : 1;
 			const struct mux_proto_list *mux_ent;
 
 			if (!bind_conf->mux_proto)
@@ -3612,7 +3613,8 @@ out_uri_auth_compat:
 			bind_conf->mux_proto = mux_ent;
 		}
 		for (newsrv = curproxy->srv; newsrv; newsrv = newsrv->next) {
-			int mode = (1 << (curproxy->mode == PR_MODE_HTTP));
+			int mode = curproxy->mode == PR_MODE_HTTP ? 1 << 1 :
+				       curproxy->mode == PR_MODE_QUIC ? 1 << 2 : 1;
 			const struct mux_proto_list *mux_ent;
 
 			if (!newsrv->mux_proto)
