@@ -218,6 +218,26 @@ int ha_quic_set_encryption_secrets(SSL *ssl, enum ssl_encryption_level_t level,
 		fprintf(stderr, "%s: TX key derivation failed\n", __func__);
 		return 0;
 	}
+
+	if (objt_server(conn->target) && level == ssl_encryption_application) {
+		struct quic_transport_params *tp = &conn->quic_conn->rx_tps;
+		uint32_t version = conn->quic_conn->version;
+		const unsigned char *buf;
+		size_t buflen;
+
+		SSL_get_peer_quic_transport_params(ssl, &buf, &buflen);
+		if (!buflen)
+			return 0;
+
+		if (version >= QUIC_PROTOCOL_VERSION_DRAFT_27) {
+			if (!quic_transport_params_decode_draft27(tp, 1, buf, buf + buflen))
+				return 0;
+		}
+		else if (!quic_transport_params_decode(tp, 1, buf, buf + buflen)) {
+			return 0;
+		}
+	}
+
 	return 1;
 }
 
