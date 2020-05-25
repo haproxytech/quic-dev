@@ -484,13 +484,14 @@ static inline int quic_transport_param_decode(struct quic_transport_params *p, i
 
 	switch (type) {
 	case QUIC_TP_ORIGINAL_DESTINATION_CONNECTION_ID:
-		if (!server || len != sizeof p->original_connection_id.data)
+		if (!server || len >= sizeof p->original_destination_connection_id.data)
 			return 0;
 
-		memcpy(p->original_connection_id.data, *buf, len);
-		p->original_connection_id.len = len;
+		if (len)
+			memcpy(p->original_destination_connection_id.data, *buf, len);
+		p->original_destination_connection_id.len = len;
 		*buf += len;
-		p->with_original_connection_id = 1;
+		p->original_destination_connection_id_present = 1;
 		break;
 	case QUIC_TP_STATELESS_RESET_TOKEN:
 		if (!server || len != sizeof p->stateless_reset_token)
@@ -657,11 +658,10 @@ static inline int quic_transport_params_encode(unsigned char *buf, const unsigne
 
 	head = pos = buf;
 	if (server) {
-		if (p->with_original_connection_id &&
-			!quic_transport_param_enc_mem(&pos, end,
-			                              QUIC_TP_ORIGINAL_DESTINATION_CONNECTION_ID,
-			                              p->original_connection_id.data,
-			                              p->original_connection_id.len))
+		if (!quic_transport_param_enc_mem(&pos, end,
+		                                  QUIC_TP_ORIGINAL_DESTINATION_CONNECTION_ID,
+		                                  p->original_destination_connection_id.data,
+		                                  p->original_destination_connection_id.len))
 			return 0;
 		if (p->with_stateless_reset_token &&
 			!quic_transport_param_enc_mem(&pos, end, QUIC_TP_STATELESS_RESET_TOKEN,
@@ -763,6 +763,10 @@ static inline int quic_transport_params_decode(struct quic_transport_params *p, 
 		if (!quic_transport_param_decode(p, server, type, &pos, len))
 			return 0;
 	}
+
+	/* A server MUST send original_destination_connection_id transport parameter. */
+	if (server && !p->original_destination_connection_id_present)
+		return 0;
 
 	return 1;
 }
