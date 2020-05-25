@@ -400,84 +400,6 @@ static inline void quic_transport_params_init(struct quic_transport_params *p, i
 }
 
 /*
- * Encode <type> and <len> 16bits values in <buf>.
- * It is the responsability of the caller to check there is enough room in
- * buf to encode these values.
- */
-static inline void quic_transport_param_encode_type_len(unsigned char **buf, const unsigned char *end,
-														uint16_t type, uint16_t len)
-{
-	write_n16(*buf, type);
-	*buf += sizeof type;
-	write_n16(*buf, len);
-	*buf += sizeof len;
-}
-
-/*
- * Decode the 16bits type and length values of a QUIC transport parameter in <type> and <len>
- * encoded in a data stream with <buf> as current position address.
- * Move forward this position to the next data stream field to be parsed after <type> and <len>.
- * It is the responsability of the caller to check there is enough room in
- * <*buf> to decode these values.
- */
-static inline void quic_transport_param_decode_type_len(uint16_t *type, uint16_t *len,
-                                                        const unsigned char **buf, const unsigned char *end)
-{
-	*type = read_n16(*buf);
-	*buf += sizeof *type;
-	*len = read_n16(*buf);
-	*buf += sizeof *len;
-}
-
-/*
- * Encode <param> bytes tream with <type> as type and <length> as length in buf.
- * Returns 1 if succeded, 0 if not.
- */
-static inline int quic_transport_param_enc_mem(unsigned char **buf, const unsigned char *end, uint16_t type,
-                                               void *param, uint16_t length)
-{
-	if (end - *buf < sizeof type + sizeof length + length)
-		return 0;
-
-	quic_transport_param_encode_type_len(buf, end, type, length);
-	memcpy(*buf, param, length);
-	*buf += length;
-
-	return 1;
-}
-
-/*
- * Encode <val> 64bits value as variable length integer in <buf>.
- * Returns 1 if succeeded, 0 if not.
- */
-static inline int quic_transport_param_enc_int(unsigned char **buf, const unsigned char *end,
-                                               uint16_t type, uint64_t val)
-{
-	uint16_t len;
-	unsigned int shift;
-	unsigned char size_bits, *head;
-
-	len = quic_int_getsize(val);
-	if (!len || end - *buf < len + sizeof type + sizeof len)
-		return 0;
-
-	/* Encode the type and the length of <val> */
-	quic_transport_param_encode_type_len(buf, end, type, len);
-
-	/* set the bits of byte#0 which gives the length of the encoded integer */
-	size_bits = my_log2(len) << QUIC_VARINT_BYTE_0_SHIFT;
-	shift = (len - 1) * 8;
-	head = *buf;
-	while (len--) {
-		*(*buf)++ = val >> shift;
-		shift -= 8;
-	}
-	*head |= size_bits;
-
-	return 1;
-}
-
-/*
  * Encode <addr> preferred address transport parameter in <buf> without its "type+len" prefix.
  * Note that the IP addresses must be encoded in network byte order.
  * So ->ipv4_addr and ->ipv6_addr, which are buffers, must contained
@@ -510,37 +432,8 @@ static inline void quic_transport_param_enc_pref_addr_val(unsigned char **buf, c
 	*buf += sizeof addr->stateless_reset_token;
 }
 
-/*
- * Encode <addr> preferred address in <buf>.
- * Note that the IP addresses must be encoded in network byte order.
- * So ->ipv4_addr and ->ipv6_addr, which are buffers, must contained
- * values already encoded in network byte order.
- */
-static inline int quic_transport_param_enc_pref_addr(unsigned char **buf, const unsigned char *end,
-                                                     uint16_t type, struct preferred_address *addr)
-{
-	uint16_t addr_len = 0;
-
-	addr_len += sizeof addr->ipv4_port + sizeof addr->ipv4_addr;
-	addr_len += sizeof addr->ipv6_port + sizeof addr->ipv6_addr;
-	addr_len += sizeof_quic_cid(&addr->cid);
-	addr_len += sizeof addr->stateless_reset_token;
-
-	if (end - *buf < addr_len + sizeof type + sizeof addr_len)
-		return 0;
-
-	write_n16(*buf, QUIC_TP_PREFERRED_ADDRESS);
-	*buf += sizeof(uint16_t);
-	write_n16(*buf, addr_len);
-	*buf += sizeof(uint16_t);
-
-	quic_transport_param_enc_pref_addr_val(buf, end, addr);
-
-	return 1;
-}
-
 static inline int quic_transport_param_dec_pref_addr(struct preferred_address *addr,
-													 const unsigned char **buf, const unsigned char *end)
+                                                     const unsigned char **buf, const unsigned char *end)
 {
 	ssize_t addr_len;
 
