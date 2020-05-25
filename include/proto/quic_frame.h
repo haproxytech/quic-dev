@@ -167,14 +167,24 @@ static int inline quic_build_ack_frame(unsigned char **buf, const unsigned char 
                                        struct quic_frame *frm)
 {
 	struct quic_tx_ack *tx_ack = &frm->tx_ack;
-	struct quic_ack_range *ack_range =
-		LIST_ELEM(tx_ack->ack_ranges->list.n, struct quic_ack_range *, list);
+	struct quic_ack_range *ack_range, *next_ack_range;
 
+	ack_range =  LIST_NEXT(&tx_ack->ack_ranges->list, struct quic_ack_range *, list);
 	if (!quic_enc_int(buf, end, ack_range->last) ||
 	    !quic_enc_int(buf, end, tx_ack->ack_delay) ||
 	    !quic_enc_int(buf, end, tx_ack->ack_ranges->sz - 1) ||
 	    !quic_enc_int(buf, end, ack_range->last - ack_range->first))
 		return 0;
+
+	next_ack_range = LIST_NEXT(&ack_range->list, struct quic_ack_range *, list);
+	while (&next_ack_range->list != &tx_ack->ack_ranges->list) {
+		if (!quic_enc_int(buf, end, ack_range->first - next_ack_range->last - 2) ||
+		    !quic_enc_int(buf, end, next_ack_range->last - next_ack_range->first))
+			return 0;
+
+		ack_range = next_ack_range;
+		next_ack_range = LIST_NEXT(&ack_range->list, struct quic_ack_range *, list);
+	}
 
 	return 1;
 }
