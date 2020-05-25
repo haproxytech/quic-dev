@@ -228,7 +228,7 @@ int ha_quic_set_encryption_secrets(SSL *ssl, enum ssl_encryption_level_t level,
 		if (!buflen)
 			return 0;
 
-		if (!quic_transport_params_decode_draft27(tp, 1, buf, buf + buflen))
+		if (!quic_transport_params_decode(tp, 1, buf, buf + buflen))
 			return 0;
 	}
 
@@ -1826,9 +1826,9 @@ static int quic_conn_init(struct connection *conn, void **xprt_ctx)
 		}
 
 		srv->enc_quic_params_len =
-			quic_transport_params_encode_draft27(srv->enc_quic_params,
-			                                     srv->enc_quic_params + sizeof srv->enc_quic_params,
-			                                     &srv->quic_params, 0);
+			quic_transport_params_encode(srv->enc_quic_params,
+			                             srv->enc_quic_params + sizeof srv->enc_quic_params,
+			                             &srv->quic_params, 0);
 		if (!srv->enc_quic_params_len) {
 			fprintf(stderr, "QUIC transport parameters encoding failed");
 			goto err;
@@ -1847,9 +1847,9 @@ static int quic_conn_init(struct connection *conn, void **xprt_ctx)
 			goto err;
 
 		bc->enc_quic_params_len =
-			quic_transport_params_encode_draft27(bc->enc_quic_params,
-			                                     bc->enc_quic_params + sizeof bc->enc_quic_params,
-			                                     &bc->quic_params, 1);
+			quic_transport_params_encode(bc->enc_quic_params,
+			                             bc->enc_quic_params + sizeof bc->enc_quic_params,
+			                             &bc->quic_params, 1);
 		if (!bc->enc_quic_params_len) {
 			fprintf(stderr, "QUIC transport parameters encoding failed");
 			goto err;

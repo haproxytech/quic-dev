@@ -2175,7 +2175,7 @@ int ssl_sock_switchctx_cbk(SSL *ssl, int *al, void *arg)
 #endif
 			goto abort;
 
-		if (!quic_transport_params_decode_draft27(tp, 0, extension_data, extension_data + extension_len))
+		if (!quic_transport_params_decode(tp, 0, extension_data, extension_data + extension_len))
 			goto abort;
 	}
 #endif

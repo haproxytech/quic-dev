@@ -756,8 +756,8 @@ static inline int quic_transport_param_enc_pref_addr_draft27(unsigned char **buf
 	return 1;
 }
 
-static inline int quic_transport_params_encode_draft27(unsigned char *buf, const unsigned char *end,
-                                                       struct quic_transport_params *p, int server)
+static inline int quic_transport_params_encode(unsigned char *buf, const unsigned char *end,
+                                               struct quic_transport_params *p, int server)
 {
 	unsigned char *head;
 	unsigned char *pos;
@@ -849,8 +849,8 @@ static inline int quic_transport_params_encode_draft27(unsigned char *buf, const
 	return pos - head;
 }
 
-static inline int quic_transport_params_decode_draft27(struct quic_transport_params *p, int server,
-                                                       const unsigned char *buf, const unsigned char *end)
+static inline int quic_transport_params_decode(struct quic_transport_params *p, int server,
+                                               const unsigned char *buf, const unsigned char *end)
 {
 	const unsigned char *pos;
 
