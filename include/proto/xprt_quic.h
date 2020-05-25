@@ -483,7 +483,7 @@ static inline int quic_transport_param_decode(struct quic_transport_params *p, i
 	const unsigned char *end = *buf + len;
 
 	switch (type) {
-	case QUIC_TP_ORIGINAL_CONNECTION_ID:
+	case QUIC_TP_ORIGINAL_DESTINATION_CONNECTION_ID:
 		if (!server || len != sizeof p->original_connection_id.data)
 			return 0;
 
@@ -658,7 +658,8 @@ static inline int quic_transport_params_encode(unsigned char *buf, const unsigne
 	head = pos = buf;
 	if (server) {
 		if (p->with_original_connection_id &&
-			!quic_transport_param_enc_mem(&pos, end, QUIC_TP_ORIGINAL_CONNECTION_ID,
+			!quic_transport_param_enc_mem(&pos, end,
+			                              QUIC_TP_ORIGINAL_DESTINATION_CONNECTION_ID,
 			                              p->original_connection_id.data,
 			                              p->original_connection_id.len))
 			return 0;
