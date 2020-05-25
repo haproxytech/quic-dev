@@ -569,8 +569,8 @@ static inline int quic_transport_param_decode(struct quic_transport_params *p, i
  * Encode <type> and <len> variable length values in <buf>.
  * Returns 1 if succeeded, 0 if not.
  */
-static inline int quic_transport_param_encode_type_len_draft27(unsigned char **buf, const unsigned char *end,
-                                                               uint64_t type, uint64_t len)
+static inline int quic_transport_param_encode_type_len(unsigned char **buf, const unsigned char *end,
+                                                       uint64_t type, uint64_t len)
 {
 	return quic_enc_int(buf, end, type) && quic_enc_int(buf, end, len);
 }
@@ -581,8 +581,8 @@ static inline int quic_transport_param_encode_type_len_draft27(unsigned char **b
  * Move forward this position to the next data stream field to be parsed after <type> and <len>.
  * Returns 1 if succeeded, 0 if not.
  */
-static inline int quic_transport_param_decode_type_len_draft27(uint64_t *type, uint64_t *len,
-                                                               const unsigned char **buf, const unsigned char *end)
+static inline int quic_transport_param_decode_type_len(uint64_t *type, uint64_t *len,
+                                                       const unsigned char **buf, const unsigned char *end)
 {
 	return quic_dec_int(type, buf, end) && quic_dec_int(len, buf, end);
 }
@@ -591,10 +591,10 @@ static inline int quic_transport_param_decode_type_len_draft27(uint64_t *type, u
  * Encode <param> bytes stream with <type> as type and <length> as length in buf.
  * Returns 1 if succeded, 0 if not.
  */
-static inline int quic_transport_param_enc_mem_draft27(unsigned char **buf, const unsigned char *end,
-                                                       uint64_t type, void *param, uint64_t length)
+static inline int quic_transport_param_enc_mem(unsigned char **buf, const unsigned char *end,
+                                               uint64_t type, void *param, uint64_t length)
 {
-	if (!quic_transport_param_encode_type_len_draft27(buf, end, type, length))
+	if (!quic_transport_param_encode_type_len(buf, end, type, length))
 		return 0;
 
 	if (end - *buf < length)
@@ -610,14 +610,14 @@ static inline int quic_transport_param_enc_mem_draft27(unsigned char **buf, cons
  * Encode <val> 64bits value as variable length integer in <buf>.
  * Returns 1 if succeeded, 0 if not.
  */
-static inline int quic_transport_param_enc_int_draft27(unsigned char **buf, const unsigned char *end,
-                                                       uint64_t type, uint64_t val)
+static inline int quic_transport_param_enc_int(unsigned char **buf, const unsigned char *end,
+                                               uint64_t type, uint64_t val)
 {
 	size_t len;
 
 	len = quic_int_getsize(val);
 
-	return len && quic_transport_param_encode_type_len_draft27(buf, end, type, len) &&
+	return len && quic_transport_param_encode_type_len(buf, end, type, len) &&
 		quic_enc_int(buf, end, val);
 }
 
@@ -628,8 +628,8 @@ static inline int quic_transport_param_enc_int_draft27(unsigned char **buf, cons
  * values already encoded in network byte order.
  * Returns 1 if succeeded, 0 if not.
  */
-static inline int quic_transport_param_enc_pref_addr_draft27(unsigned char **buf, const unsigned char *end,
-                                                             struct preferred_address *addr)
+static inline int quic_transport_param_enc_pref_addr(unsigned char **buf, const unsigned char *end,
+                                                     struct preferred_address *addr)
 {
 	uint64_t addr_len = 0;
 
@@ -638,7 +638,7 @@ static inline int quic_transport_param_enc_pref_addr_draft27(unsigned char **buf
 	addr_len += sizeof_quic_cid(&addr->cid);
 	addr_len += sizeof addr->stateless_reset_token;
 
-	if (!quic_transport_param_encode_type_len_draft27(buf, end, QUIC_TP_PREFERRED_ADDRESS, addr_len))
+	if (!quic_transport_param_encode_type_len(buf, end, QUIC_TP_PREFERRED_ADDRESS, addr_len))
 		return 0;
 
 	if (end - *buf < addr_len)
@@ -658,22 +658,22 @@ static inline int quic_transport_params_encode(unsigned char *buf, const unsigne
 	head = pos = buf;
 	if (server) {
 		if (p->with_original_connection_id &&
-			!quic_transport_param_enc_mem_draft27(&pos, end, QUIC_TP_ORIGINAL_CONNECTION_ID,
-			                                      p->original_connection_id.data,
-			                                      p->original_connection_id.len))
+			!quic_transport_param_enc_mem(&pos, end, QUIC_TP_ORIGINAL_CONNECTION_ID,
+			                              p->original_connection_id.data,
+			                              p->original_connection_id.len))
 			return 0;
 		if (p->with_stateless_reset_token &&
-			!quic_transport_param_enc_mem_draft27(&pos, end, QUIC_TP_STATELESS_RESET_TOKEN,
-			                                      p->stateless_reset_token,
-			                                      sizeof p->stateless_reset_token))
+			!quic_transport_param_enc_mem(&pos, end, QUIC_TP_STATELESS_RESET_TOKEN,
+			                              p->stateless_reset_token,
+			                              sizeof p->stateless_reset_token))
 			return 0;
 		if (p->with_preferred_address &&
-			!quic_transport_param_enc_pref_addr_draft27(&pos, end, &p->preferred_address))
+			!quic_transport_param_enc_pref_addr(&pos, end, &p->preferred_address))
 			return 0;
 	}
 
 	if (p->idle_timeout &&
-	    !quic_transport_param_enc_int_draft27(&pos, end, QUIC_TP_IDLE_TIMEOUT, p->idle_timeout))
+	    !quic_transport_param_enc_int(&pos, end, QUIC_TP_IDLE_TIMEOUT, p->idle_timeout))
 		return 0;
 
 	/*
@@ -681,35 +681,35 @@ static inline int quic_transport_params_encode(unsigned char *buf, const unsigne
 	 * of the default value.
 	 */
 	if (p->max_packet_size != QUIC_DFLT_MAX_PACKET_SIZE &&
-	    !quic_transport_param_enc_int_draft27(&pos, end, QUIC_TP_MAX_PACKET_SIZE, p->max_packet_size))
+	    !quic_transport_param_enc_int(&pos, end, QUIC_TP_MAX_PACKET_SIZE, p->max_packet_size))
 		return 0;
 
 	if (p->initial_max_data &&
-	    !quic_transport_param_enc_int_draft27(&pos, end, QUIC_TP_INITIAL_MAX_DATA, p->initial_max_data))
+	    !quic_transport_param_enc_int(&pos, end, QUIC_TP_INITIAL_MAX_DATA, p->initial_max_data))
 	    return 0;
 
 	if (p->initial_max_stream_data_bidi_local &&
-	    !quic_transport_param_enc_int_draft27(&pos, end, QUIC_TP_INITIAL_MAX_STREAM_DATA_BIDI_LOCAL,
+	    !quic_transport_param_enc_int(&pos, end, QUIC_TP_INITIAL_MAX_STREAM_DATA_BIDI_LOCAL,
 	                                          p->initial_max_stream_data_bidi_local))
 	    return 0;
 
 	if (p->initial_max_stream_data_bidi_remote &&
-	    !quic_transport_param_enc_int_draft27(&pos, end, QUIC_TP_INITIAL_MAX_STREAM_DATA_BIDI_REMOTE,
+	    !quic_transport_param_enc_int(&pos, end, QUIC_TP_INITIAL_MAX_STREAM_DATA_BIDI_REMOTE,
 	                                          p->initial_max_stream_data_bidi_remote))
 	    return 0;
 
 	if (p->initial_max_stream_data_uni &&
-	    !quic_transport_param_enc_int_draft27(&pos, end, QUIC_TP_INITIAL_MAX_STREAM_DATA_UNI,
+	    !quic_transport_param_enc_int(&pos, end, QUIC_TP_INITIAL_MAX_STREAM_DATA_UNI,
 	                                          p->initial_max_stream_data_uni))
 	    return 0;
 
 	if (p->initial_max_streams_bidi &&
-	    !quic_transport_param_enc_int_draft27(&pos, end, QUIC_TP_INITIAL_MAX_STREAMS_BIDI,
+	    !quic_transport_param_enc_int(&pos, end, QUIC_TP_INITIAL_MAX_STREAMS_BIDI,
 	                                          p->initial_max_streams_bidi))
 	    return 0;
 
 	if (p->initial_max_streams_uni &&
-	    !quic_transport_param_enc_int_draft27(&pos, end, QUIC_TP_INITIAL_MAX_STREAMS_UNI,
+	    !quic_transport_param_enc_int(&pos, end, QUIC_TP_INITIAL_MAX_STREAMS_UNI,
 	                                          p->initial_max_streams_uni))
 	    return 0;
 
@@ -718,7 +718,7 @@ static inline int quic_transport_params_encode(unsigned char *buf, const unsigne
 	 * of the default value.
 	 */
 	if (p->ack_delay_exponent != QUIC_DFLT_ACK_DELAY_COMPONENT  &&
-	    !quic_transport_param_enc_int_draft27(&pos, end, QUIC_TP_ACK_DELAY_EXPONENT, p->ack_delay_exponent))
+	    !quic_transport_param_enc_int(&pos, end, QUIC_TP_ACK_DELAY_EXPONENT, p->ack_delay_exponent))
 	    return 0;
 
 	/*
@@ -726,16 +726,16 @@ static inline int quic_transport_params_encode(unsigned char *buf, const unsigne
 	 * of the default value.
 	 */
 	if (p->max_ack_delay != QUIC_DFLT_MAX_ACK_DELAY &&
-	    !quic_transport_param_enc_int_draft27(&pos, end, QUIC_TP_MAX_ACK_DELAY, p->max_ack_delay))
+	    !quic_transport_param_enc_int(&pos, end, QUIC_TP_MAX_ACK_DELAY, p->max_ack_delay))
 	    return 0;
 
 	/* 0-length value */
 	if (p->disable_active_migration &&
-	    !quic_transport_param_encode_type_len_draft27(&pos, end, QUIC_TP_DISABLE_ACTIVE_MIGRATION, 0))
+	    !quic_transport_param_encode_type_len(&pos, end, QUIC_TP_DISABLE_ACTIVE_MIGRATION, 0))
 		return 0;
 
 	if (p->active_connection_id_limit &&
-	    !quic_transport_param_enc_int_draft27(&pos, end, QUIC_TP_ACTIVE_CONNECTION_ID_LIMIT,
+	    !quic_transport_param_enc_int(&pos, end, QUIC_TP_ACTIVE_CONNECTION_ID_LIMIT,
 	                                          p->active_connection_id_limit))
 	    return 0;
 
@@ -753,7 +753,7 @@ static inline int quic_transport_params_decode(struct quic_transport_params *p, 
 	while (pos != end) {
 		uint64_t type, len;
 
-		if (!quic_transport_param_decode_type_len_draft27(&type, &len, &pos, end))
+		if (!quic_transport_param_decode_type_len(&type, &len, &pos, end))
 			return 0;
 
 		if (end - pos < len)
