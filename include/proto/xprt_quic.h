@@ -601,7 +601,8 @@ static inline int quic_transport_param_enc_mem(unsigned char **buf, const unsign
 	if (end - *buf < length)
 		return 0;
 
-	memcpy(*buf, param, length);
+	if (length)
+		memcpy(*buf, param, length);
 	*buf += length;
 
 	return 1;
