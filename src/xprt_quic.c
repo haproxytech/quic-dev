@@ -1641,9 +1641,9 @@ static int quic_new_conn_init(struct quic_conn *conn,
 	/* QUIC Server (or listener). */
 	if (objt_listener(conn->conn->target)) {
 		/* Copy the initial DCID. */
-		conn->idcid.len = dcid_len;
-		if (conn->idcid.len)
-			memcpy(conn->idcid.data, dcid, dcid_len);
+		conn->odcid.len = dcid_len;
+		if (conn->odcid.len)
+			memcpy(conn->odcid.data, dcid, dcid_len);
 
 		/* Copy the SCID as our DCID for this connection. */
 		if (scid_len)
@@ -1669,7 +1669,7 @@ static int quic_new_conn_init(struct quic_conn *conn,
 
 	/* Insert the DCID the QUIC client has choosen (only for listeners) */
 	if (objt_listener(conn->conn->target))
-		ebmb_insert(quic_initial_clients, &conn->idcid_node, conn->idcid.len);
+		ebmb_insert(quic_initial_clients, &conn->odcid_node, conn->odcid.len);
 
 	/* Insert our SCID, the connection ID for the QUIC client. */
 	ebmb_insert(quic_clients, &conn->scid_node, conn->scid.len);
@@ -2253,7 +2253,7 @@ static ssize_t quic_packet_read(unsigned char **buf, const unsigned char *end,
 		}
 		else {
 			if (l && qpkt->type == QUIC_PACKET_TYPE_INITIAL)
-				conn = ebmb_entry(node, struct quic_conn, idcid_node);
+				conn = ebmb_entry(node, struct quic_conn, odcid_node);
 			else
 				conn = ebmb_entry(node, struct quic_conn, scid_node);
 		}

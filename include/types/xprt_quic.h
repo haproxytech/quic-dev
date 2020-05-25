@@ -277,9 +277,12 @@ struct quic_enc_level {
 struct quic_conn {
 	uint32_t version;
 
-	/* Initial DCID (comming with first Initial packets) */
-	struct ebmb_node idcid_node;
-	struct quic_cid idcid;
+	/*
+	 * Original Destination Connection ID  (comming with first client Initial packets).
+	 * Used only by servers.
+	 */
+	struct ebmb_node odcid_node;
+	struct quic_cid odcid;
 
 	struct quic_cid dcid;
 	struct ebmb_node scid_node;
