@@ -1642,15 +1642,18 @@ static int quic_new_conn_init(struct quic_conn *conn,
 	if (objt_listener(conn->conn->target)) {
 		/* Copy the initial DCID. */
 		conn->idcid.len = dcid_len;
-		memcpy(conn->idcid.data, dcid, dcid_len);
+		if (conn->idcid.len)
+			memcpy(conn->idcid.data, dcid, dcid_len);
 
 		/* Copy the SCID as our DCID for this connection. */
-		memcpy(conn->dcid.data, scid, scid_len);
+		if (scid_len)
+			memcpy(conn->dcid.data, scid, scid_len);
 		conn->dcid.len = scid_len;
 	}
 	/* QUIC Client (outoging connection to servers) */
 	else {
-		memcpy(conn->dcid.data, dcid, dcid_len);
+		if (dcid_len)
+			memcpy(conn->dcid.data, dcid, dcid_len);
 		conn->dcid.len = dcid_len;
 	}
 
