@@ -22,8 +22,7 @@
 #ifndef _TYPES_QUIC_H
 #define _TYPES_QUIC_H
 
-#define QUIC_PROTOCOL_VERSION_DRAFT_25   0xff000019 /* draft-25 */
-#define QUIC_PROTOCOL_VERSION_DRAFT_27   0xff00001b /* draft-27 */
+#define QUIC_PROTOCOL_VERSION_DRAFT_28   0xff00001c /* draft-28 */
 
 #define QUIC_PACKET_MAXLEN      1252 /* (bytes) for IPv4, 1232 for IPv6 */
 
