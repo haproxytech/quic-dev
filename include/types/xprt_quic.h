@@ -73,7 +73,7 @@ struct preferred_address {
 #define QUIC_DFLT_MAX_ACK_DELAY          25 /* milliseconds */
 
 /* Types of QUIC transport parameters */
-#define QUIC_TP_ORIGINAL_CONNECTION_ID               0
+#define QUIC_TP_ORIGINAL_DESTINATION_CONNECTION_ID   0
 #define QUIC_TP_IDLE_TIMEOUT                         1
 #define QUIC_TP_STATELESS_RESET_TOKEN                2
 #define QUIC_TP_MAX_PACKET_SIZE                      3
