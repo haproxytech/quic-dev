@@ -861,19 +861,15 @@ static int quic_parse_handshake_packet(struct quic_rx_packet *qpkt, struct quic_
 
 		switch (frm.type) {
 		case QUIC_FT_CRYPTO:
-			if (frm.crypto.offset == qel->rx.crypto.offset) {
-				fprintf(stderr, "crypto frame as expected\n");
-				hexdump(frm.crypto.data, frm.crypto.len, "CRYPTO frame:\n");
-				if (SSL_provide_quic_data(ctx->ssl, SSL_quic_read_level(ctx->ssl),
-				                          frm.crypto.data, frm.crypto.len) != 1) {
-					fprintf(stderr, "%s SSL providing QUIC data error\n", __func__);
-				}
-				else {
-					qel->rx.crypto.offset += frm.crypto.len;
-					fprintf(stderr, "SSL_provide_quic_data() succeded \n");
-					qpkt->flags |= QUIC_FL_RX_PACKET_ACK_ELICITING;
-				}
-			}
+			if (frm.crypto.offset != qel->rx.crypto.offset)
+				qpkt->flags |= QUIC_FL_RX_PACKET_OUT_OF_ORDER;
+
+			/* Store the CRYPTO frame information. */
+			qpkt->crypto.offset = frm.crypto.offset;
+			qpkt->crypto.len = frm.crypto.len;
+			qpkt->crypto.data = frm.crypto.data;
+			/* ack-eliciting frame. */
+			qpkt->flags |= QUIC_FL_RX_PACKET_ACK_ELICITING;
 			break;
 		case QUIC_FT_PADDING:
 			if (pos != end) {
@@ -1313,30 +1309,41 @@ static int quic_conn_do_handshake(struct quic_conn_ctx *ctx)
 	qpkt_node = eb64_first(rx_qpkts);
 	while (qpkt_node) {
 		qpkt = eb64_entry(&qpkt_node->node, struct quic_rx_packet, pn_node);
-		if (!quic_packet_decrypt(qpkt, tls_ctx))
-			return 0;
+		if (!(qpkt->flags & QUIC_FL_RX_PACKET_OUT_OF_ORDER)) {
+		    if (!quic_packet_decrypt(qpkt, tls_ctx))
+				return 0;
 
-		if (!quic_parse_handshake_packet(qpkt, ctx, enc_level)) {
-			fprintf(stderr,  "Could not parse the packet frames\n");
-			return 0;
+			if (!quic_parse_handshake_packet(qpkt, ctx, enc_level)) {
+				fprintf(stderr,  "Could not parse the packet frames\n");
+				return 0;
+			}
+
+			if (qpkt->flags & QUIC_FL_RX_PACKET_ACK_ELICITING) {
+				enc_level->pktns->rx.nb_ack_eliciting++;
+				if (!(enc_level->pktns->rx.nb_ack_eliciting & 1))
+					enc_level->pktns->flags |= QUIC_FL_PKTNS_ACK_REQUIRED;
+			}
+
+			/* Update the largest packet number. */
+			if (qpkt->pn > enc_level->pktns->rx.largest_pn)
+				enc_level->pktns->rx.largest_pn = qpkt->pn;
+
+			/* Update the list of ranges to acknowledge. */
+			quic_update_ack_ranges_list(&enc_level->pktns->rx.ack_ranges, qpkt->pn);
 		}
-
-		if (qpkt->flags & QUIC_FL_RX_PACKET_ACK_ELICITING) {
-			enc_level->pktns->rx.nb_ack_eliciting++;
-			if (!(enc_level->pktns->rx.nb_ack_eliciting & 1))
-				enc_level->pktns->flags |= QUIC_FL_PKTNS_ACK_REQUIRED;
-		}
-
-		/* Update the largest packet number. */
-		if (qpkt->pn > enc_level->pktns->rx.largest_pn)
-			enc_level->pktns->rx.largest_pn = qpkt->pn;
-
-		/* Update the list of ranges to acknowledge. */
-		quic_update_ack_ranges_list(&enc_level->pktns->rx.ack_ranges, qpkt->pn);
-
 		qpkt_node = eb64_next(qpkt_node);
-		eb64_delete(&qpkt->pn_node);
-		pool_free(pool_head_quic_rx_packet, qpkt);
+		if (qpkt->crypto.offset == enc_level->rx.crypto.offset) {
+			fprintf(stderr, "crypto frame as expected\n");
+			hexdump(qpkt->crypto.data, qpkt->crypto.len, "CRYPTO frame:\n");
+			if (SSL_provide_quic_data(ctx->ssl, SSL_quic_read_level(ctx->ssl),
+									  qpkt->crypto.data, qpkt->crypto.len) != 1) {
+				fprintf(stderr, "%s SSL providing QUIC data error\n", __func__);
+				return 0;
+			}
+			enc_level->rx.crypto.offset += qpkt->crypto.len;
+			eb64_delete(&qpkt->pn_node);
+			pool_free(pool_head_quic_rx_packet, qpkt);
+		}
 	}
 
 	if (quic_conn->retransmit)

@@ -27,6 +27,7 @@
 #include <common/mini-clist.h>
 
 #include <types/quic.h>
+#include <types/quic_frame.h>
 #include <types/quic_tls.h>
 
 #include <eb64tree.h>
@@ -168,6 +169,8 @@ extern struct quic_transport_params quid_dflt_transport_params;
 
 /* Flag a received packet as being an ack-eliciting packet. */
 #define QUIC_FL_RX_PACKET_ACK_ELICITING (1UL << 0)
+/* Flag a received packet as being received out of order. */
+#define QUIC_FL_RX_PACKET_OUT_OF_ORDER  (1UL << 1)
 
 struct quic_rx_packet {
 	struct list list;
@@ -191,6 +194,7 @@ struct quic_rx_packet {
 	unsigned char data[QUIC_PACKET_MAXLEN];
 	struct eb64_node pn_node;
 	unsigned int flags;
+	struct quic_crypto crypto;
 };
 
 /*
