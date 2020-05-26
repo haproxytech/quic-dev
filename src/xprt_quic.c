@@ -2129,6 +2129,56 @@ static int quic_new_cli_conn(struct quic_conn *quic_conn,
 	return 0;
 }
 
+/*
+ * Parse into <qpkt> a long header located at <*buf> buffer, <end> begin a pointer to the end
+ * past one byte of this buffer.
+ */
+static inline int quic_packet_read_long_header(unsigned char **buf, const unsigned char *end,
+                                               struct quic_rx_packet *qpkt)
+{
+	unsigned char dcid_len, scid_len;
+
+	/* Version */
+	if (!quic_read_uint32(&qpkt->version, (const unsigned char **)buf, end))
+		return 0;
+
+	if (!qpkt->version) { /* XXX TO DO XXX Version negotiation packet */ };
+
+	/* Destination Connection ID Length */
+	dcid_len = *(*buf)++;
+	/* We want to be sure we can read <dcid_len> bytes and one more for <scid_len> value */
+	if (dcid_len > QUIC_CID_MAXLEN || end - *buf < dcid_len + 1)
+		/* XXX MUST BE DROPPED */
+		return 0;
+
+	if (dcid_len) {
+		/*
+		 * Check that the length of this received DCID matches the CID lengths
+		 * of our implementation for non Initials packets only.
+		 */
+		if (qpkt->type != QUIC_PACKET_TYPE_INITIAL && dcid_len != QUIC_CID_LEN)
+			return 0;
+
+		memcpy(qpkt->dcid.data, *buf, dcid_len);
+	}
+
+	qpkt->dcid.len = dcid_len;
+	*buf += dcid_len;
+
+	/* Source Connection ID Length */
+	scid_len = *(*buf)++;
+	if (scid_len > QUIC_CID_MAXLEN || end - *buf < scid_len)
+		/* XXX MUST BE DROPPED */
+		return 0;
+
+	if (scid_len)
+		memcpy(qpkt->scid.data, *buf, scid_len);
+	qpkt->scid.len = scid_len;
+	*buf += scid_len;
+
+	return 1;
+}
+
 typedef ssize_t qpkt_read_func(unsigned char **buf,
                                const unsigned char *end,
                                struct quic_rx_packet *qpkt, void *ctx,
@@ -2140,7 +2190,6 @@ static ssize_t quic_server_packet_read(unsigned char **buf, const unsigned char 
                                        struct sockaddr_storage *saddr, socklen_t *saddrlen)
 {
 	unsigned char *beg;
-	unsigned char dcid_len, scid_len;
 	uint64_t len;
 	unsigned char *pn = NULL; /* Packet number */
 	struct quic_conn *conn;
@@ -2159,7 +2208,6 @@ static ssize_t quic_server_packet_read(unsigned char **buf, const unsigned char 
 		/* XXX TO BE DISCARDED */
 		goto err;
 
-	dcid_len = 0;
 	srv_conn = ctx;
 	beg = *buf;
 	/* Header form */
@@ -2169,43 +2217,8 @@ static ssize_t quic_server_packet_read(unsigned char **buf, const unsigned char 
 	if (qpkt->long_header) {
 		size_t cid_lookup_len;
 
-		/* Version */
-	    if (!quic_read_uint32(&qpkt->version, (const unsigned char **)buf, end))
+		if (!quic_packet_read_long_header(buf, end, qpkt))
 			goto err;
-
-	    if (!qpkt->version) { /* XXX TO DO XXX Version negotiation packet */ };
-
-		/* Destination Connection ID Length */
-		dcid_len = *(*buf)++;
-		/* We want to be sure we can read <dcid_len> bytes and one more for <scid_len> value */
-		if (dcid_len > QUIC_CID_MAXLEN || end - *buf < dcid_len + 1)
-			/* XXX MUST BE DROPPED */
-			goto err;
-
-		if (dcid_len) {
-			/*
-			 * Check that the length of this received DCID matches the CID lengths
-			 * of our implementation for non Initials packets only.
-			 */
-			if (qpkt->type != QUIC_PACKET_TYPE_INITIAL && dcid_len != QUIC_CID_LEN)
-				goto err;
-
-			memcpy(qpkt->dcid.data, *buf, dcid_len);
-		}
-
-		qpkt->dcid.len = dcid_len;
-		*buf += dcid_len;
-
-		/* Source Connection ID Length */
-		scid_len = *(*buf)++;
-		if (scid_len > QUIC_CID_MAXLEN || end - *buf < scid_len)
-			/* XXX MUST BE DROPPED */
-			goto err;
-
-		if (scid_len)
-			memcpy(qpkt->scid.data, *buf, scid_len);
-		qpkt->scid.len = scid_len;
-		*buf += scid_len;
 
 		/* For Initial packets, and for servers (QUIC clients connections),
 		 * there is no Initial connection IDs storage.
@@ -2349,7 +2362,6 @@ static ssize_t quic_listener_packet_read(unsigned char **buf, const unsigned cha
                                          struct sockaddr_storage *saddr, socklen_t *saddrlen)
 {
 	unsigned char *beg;
-	unsigned char dcid_len, scid_len;
 	uint64_t len;
 	unsigned char *pn = NULL; /* Packet number */
 	struct quic_conn *conn;
@@ -2369,7 +2381,6 @@ static ssize_t quic_listener_packet_read(unsigned char **buf, const unsigned cha
 		goto err;
 
 	l = ctx;
-	dcid_len = 0;
 	beg = *buf;
 	/* Header form */
 	qpkt->long_header = **buf & QUIC_PACKET_LONG_HEADER_BIT;
@@ -2377,34 +2388,12 @@ static ssize_t quic_listener_packet_read(unsigned char **buf, const unsigned cha
 	qpkt->type = (*(*buf)++ >> QUIC_PACKET_TYPE_SHIFT) & QUIC_PACKET_TYPE_BITMASK;
 	if (qpkt->long_header) {
 		size_t cid_lookup_len;
+		unsigned char dcid_len;
 
-		/* Version */
-	    if (!quic_read_uint32(&qpkt->version, (const unsigned char **)buf, end))
+		if (!quic_packet_read_long_header(buf, end, qpkt))
 			goto err;
 
-	    if (!qpkt->version) { /* XXX TO DO XXX Version negotiation packet */ };
-
-		/* Destination Connection ID Length */
-		dcid_len = *(*buf)++;
-		/* We want to be sure we can read <dcid_len> bytes and one more for <scid_len> value */
-		if (dcid_len > QUIC_CID_MAXLEN || end - *buf < dcid_len + 1)
-			/* XXX MUST BE DROPPED */
-			goto err;
-
-		if (dcid_len) {
-			/*
-			 * Check that the length of this received DCID matches the CID lengths
-			 * of our implementation for non Initials packets only.
-			 */
-			if (qpkt->type != QUIC_PACKET_TYPE_INITIAL && dcid_len != QUIC_CID_LEN)
-				goto err;
-
-			memcpy(qpkt->dcid.data, *buf, dcid_len);
-		}
-
-		qpkt->dcid.len = dcid_len;
-		*buf += dcid_len;
-
+		dcid_len = qpkt->dcid.len;
 		/*
 		 * DCIDs of first packets coming from clients may have the same values.
 		 * Let's distinguish them concatenating the socket addresses to the DCIDs.
@@ -2413,17 +2402,6 @@ static ssize_t quic_listener_packet_read(unsigned char **buf, const unsigned cha
 			memcpy(qpkt->dcid.data + qpkt->dcid.len, saddr, sizeof *saddr);
 			qpkt->dcid.len += sizeof *saddr;
 		}
-
-		/* Source Connection ID Length */
-		scid_len = *(*buf)++;
-		if (scid_len > QUIC_CID_MAXLEN || end - *buf < scid_len)
-			/* XXX MUST BE DROPPED */
-			goto err;
-
-		if (scid_len)
-			memcpy(qpkt->scid.data, *buf, scid_len);
-		qpkt->scid.len = scid_len;
-		*buf += scid_len;
 
 		/* For Initial packets, and for servers (QUIC clients connections),
 		 * there is no Initial connection IDs storage.
