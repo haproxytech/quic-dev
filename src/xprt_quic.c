@@ -2129,9 +2129,15 @@ static int quic_new_cli_conn(struct quic_conn *quic_conn,
 	return 0;
 }
 
-static ssize_t quic_packet_read(unsigned char **buf, const unsigned char *end,
-                                struct quic_rx_packet *qpkt, int listener, void *ctx,
-                                struct sockaddr_storage *saddr, socklen_t *saddrlen)
+typedef ssize_t qpkt_read_func(unsigned char **buf,
+                               const unsigned char *end,
+                               struct quic_rx_packet *qpkt, void *ctx,
+                               struct sockaddr_storage *saddr,
+                               socklen_t *saddrlen);
+
+static ssize_t quic_server_packet_read(unsigned char **buf, const unsigned char *end,
+                                       struct quic_rx_packet *qpkt, void *ctx,
+                                       struct sockaddr_storage *saddr, socklen_t *saddrlen)
 {
 	unsigned char *beg;
 	unsigned char dcid_len, scid_len;
@@ -2142,6 +2148,214 @@ static ssize_t quic_packet_read(unsigned char **buf, const unsigned char *end,
 	struct ebmb_node *node;
 	struct quic_enc_level *qel;
 	struct connection *srv_conn;
+	enum quic_tls_enc_level qpkt_enc_level;
+	struct quic_conn_ctx *conn_ctx;
+
+	if (end <= *buf)
+		goto err;
+
+	/* Fixed bit */
+	if (!(**buf & QUIC_PACKET_FIXED_BIT))
+		/* XXX TO BE DISCARDED */
+		goto err;
+
+	dcid_len = 0;
+	srv_conn = ctx;
+	beg = *buf;
+	/* Header form */
+	qpkt->long_header = **buf & QUIC_PACKET_LONG_HEADER_BIT;
+	/* Packet type XXX does not exist for short headers XXX */
+	qpkt->type = (*(*buf)++ >> QUIC_PACKET_TYPE_SHIFT) & QUIC_PACKET_TYPE_BITMASK;
+	if (qpkt->long_header) {
+		size_t cid_lookup_len;
+
+		/* Version */
+	    if (!quic_read_uint32(&qpkt->version, (const unsigned char **)buf, end))
+			goto err;
+
+	    if (!qpkt->version) { /* XXX TO DO XXX Version negotiation packet */ };
+
+		/* Destination Connection ID Length */
+		dcid_len = *(*buf)++;
+		/* We want to be sure we can read <dcid_len> bytes and one more for <scid_len> value */
+		if (dcid_len > QUIC_CID_MAXLEN || end - *buf < dcid_len + 1)
+			/* XXX MUST BE DROPPED */
+			goto err;
+
+		if (dcid_len) {
+			/*
+			 * Check that the length of this received DCID matches the CID lengths
+			 * of our implementation for non Initials packets only.
+			 */
+			if (qpkt->type != QUIC_PACKET_TYPE_INITIAL && dcid_len != QUIC_CID_LEN)
+				goto err;
+
+			memcpy(qpkt->dcid.data, *buf, dcid_len);
+		}
+
+		qpkt->dcid.len = dcid_len;
+		*buf += dcid_len;
+
+		/* Source Connection ID Length */
+		scid_len = *(*buf)++;
+		if (scid_len > QUIC_CID_MAXLEN || end - *buf < scid_len)
+			/* XXX MUST BE DROPPED */
+			goto err;
+
+		if (scid_len)
+			memcpy(qpkt->scid.data, *buf, scid_len);
+		qpkt->scid.len = scid_len;
+		*buf += scid_len;
+
+		/* For Initial packets, and for servers (QUIC clients connections),
+		 * there is no Initial connection IDs storage.
+		 */
+		if (qpkt->type == QUIC_PACKET_TYPE_INITIAL) {
+			cids = &((struct server *)__objt_server(srv_conn->target))->cids;
+			cid_lookup_len = qpkt->dcid.len;
+		}
+		else {
+			cids = &((struct server *)__objt_server(srv_conn->target))->cids;
+			cid_lookup_len = QUIC_CID_LEN;
+		}
+
+		node = ebmb_lookup(cids, qpkt->dcid.data, cid_lookup_len);
+		if (!node) {
+			fprintf(stderr, "Connection not found.\n");
+			goto err;
+		}
+		conn = ebmb_entry(node, struct quic_conn, scid_node);
+
+		if (qpkt->type == QUIC_PACKET_TYPE_INITIAL) {
+			conn->dcid.len = qpkt->scid.len;
+			if (qpkt->scid.len)
+				memcpy(conn->dcid.data, qpkt->scid.data, qpkt->scid.len);
+		}
+
+		if (qpkt->type == QUIC_PACKET_TYPE_INITIAL) {
+			uint64_t token_len;
+
+			if (!quic_dec_int(&token_len, (const unsigned char **)buf, end) || end - *buf < token_len)
+				goto err;
+
+			/* XXX TO DO XXX 0 value means "the token is not present".
+			 * A server which sends an Initial packet must not set the token.
+			 * So, a client which receives an Initial packet with a token
+			 * MUST discard the packet or generate a connection error with
+			 * PROTOCOL_VIOLATION as type.
+			 * The token must be provided in a Retry packet or NEW_TOKEN frame.
+			 */
+			qpkt->token_len = token_len;
+		}
+	}
+	else {
+		/* XXX TO DO: Short header XXX */
+		if (end - *buf < QUIC_CID_LEN) {
+			fprintf(stderr, "Too short short headder\n");
+			goto err;
+		}
+		cids = &((struct server *)__objt_server(srv_conn->target))->cids;
+		node = ebmb_lookup(cids, *buf, QUIC_CID_LEN);
+		if (!node) {
+			fprintf(stderr, "Unknonw connection ID\n");
+			goto err;
+		}
+
+		conn = ebmb_entry(node, struct quic_conn, scid_node);
+		*buf += QUIC_CID_LEN;
+	}
+
+	/*
+	 * Only packets packets with long headers and not RETRY or VERSION as type
+	 * have a length field.
+	 */
+	if (qpkt->long_header && qpkt->type != QUIC_PACKET_TYPE_RETRY && qpkt->version) {
+		if (!quic_dec_int(&len, (const unsigned char **)buf, end) || end - *buf < len) {
+			fprintf(stderr, "Could not decode the packet length or too short packet (%zu, %zu)\n", len, end - *buf);
+			goto err;
+		}
+		qpkt->len = len;
+	}
+	else if (!qpkt->long_header) {
+		/* A short packet is the last one of an UDP datagram. */
+		qpkt->len = end - *buf;
+	}
+	fprintf(stderr, "%s packet length: %zu\n", __func__, qpkt->len);
+
+	/*
+	 * The packet number is here. This is also the start minus QUIC_PACKET_PN_MAXLEN
+	 * of the sample used to add/remove the header protection.
+	 */
+	pn = *buf;
+
+	if (pn - beg + qpkt->len > sizeof qpkt->data) {
+		fprintf(stderr, "Too big packet %zu\n", pn - beg + qpkt->len);
+		goto err;
+	}
+
+	if (qpkt->long_header)
+		qpkt_enc_level = quic_packet_type_enc_level(qpkt->type);
+	else
+		qpkt_enc_level = QUIC_TLS_ENC_LEVEL_APP;
+	qel = &conn->enc_levels[qpkt_enc_level];
+
+	if (qel->tls_ctx.hp) {
+		/*
+		 * Note that the following function enables us to unprotect the packet number
+		 * and its length subsequently used to decrypt the entire packets.
+		 */
+		if (!quic_remove_header_protection(qpkt, &qel->tls_ctx, qel->pktns->rx.largest_pn,
+		                                   pn, beg, end)) {
+			fprintf(stderr, "Could not remove packet header protection\n");
+			goto err;
+		}
+
+		fprintf(stderr, "%s inserting packet number: %lu enc. level: %d\n",
+				__func__, qpkt->pn, qpkt_enc_level);
+
+		/* Store the packet */
+		qpkt->pn_node.key = qpkt->pn;
+		eb64_insert(&qel->rx.qpkts, &qpkt->pn_node);
+		/* The AAD includes the packet number field found at <pn>. */
+		qpkt->aad_len = pn - beg + qpkt->pnl;
+	}
+	else {
+		fprintf(stderr, "packet header protection was not "
+		        "removed (enc. level %d)\n", qpkt_enc_level);
+		qpkt->pn_offset = pn - beg;
+		LIST_ADDQ(&qel->rx.pqpkts, &qpkt->list);
+	}
+
+	/* The length of the packet includes the packet number field. */
+	qpkt->len += pn - beg;
+	memcpy(qpkt->data, beg, qpkt->len);
+	/* Updtate the offset of <*buf> for the next QUIC packet. */
+	*buf = beg + qpkt->len;
+
+	conn_ctx = conn->conn->xprt_ctx;
+	/* Wake the tasklet of the QUIC connection packet handler. */
+	if (conn_ctx)
+		tasklet_wakeup(conn_ctx->wait_event.tasklet);
+
+	return qpkt->len;
+
+ err:
+	fprintf(stderr, "%s failed\n", __func__);
+	return -1;
+}
+
+static ssize_t quic_listener_packet_read(unsigned char **buf, const unsigned char *end,
+                                         struct quic_rx_packet *qpkt, void *ctx,
+                                         struct sockaddr_storage *saddr, socklen_t *saddrlen)
+{
+	unsigned char *beg;
+	unsigned char dcid_len, scid_len;
+	uint64_t len;
+	unsigned char *pn = NULL; /* Packet number */
+	struct quic_conn *conn;
+	struct eb_root *cids;
+	struct ebmb_node *node;
+	struct quic_enc_level *qel;
 	struct listener *l;
 	enum quic_tls_enc_level qpkt_enc_level;
 	struct quic_conn_ctx *conn_ctx;
@@ -2154,9 +2368,7 @@ static ssize_t quic_packet_read(unsigned char **buf, const unsigned char *end,
 		/* XXX TO BE DISCARDED */
 		goto err;
 
-	l = listener ? ctx : NULL;
-	srv_conn = listener ? NULL : ctx;
-
+	l = ctx;
 	dcid_len = 0;
 	beg = *buf;
 	/* Header form */
@@ -2197,7 +2409,7 @@ static ssize_t quic_packet_read(unsigned char **buf, const unsigned char *end,
 		 * DCIDs of first packets coming from clients may have the same values.
 		 * Let's distinguish them concatenating the socket addresses to the DCIDs.
 		 */
-		if (l && qpkt->type == QUIC_PACKET_TYPE_INITIAL) {
+		if (qpkt->type == QUIC_PACKET_TYPE_INITIAL) {
 			memcpy(qpkt->dcid.data + qpkt->dcid.len, saddr, sizeof *saddr);
 			qpkt->dcid.len += sizeof *saddr;
 		}
@@ -2217,11 +2429,11 @@ static ssize_t quic_packet_read(unsigned char **buf, const unsigned char *end,
 		 * there is no Initial connection IDs storage.
 		 */
 		if (qpkt->type == QUIC_PACKET_TYPE_INITIAL) {
-			cids = l ? &l->icids : &((struct server *)__objt_server(srv_conn->target))->cids;
+			cids = &l->icids;
 			cid_lookup_len = qpkt->dcid.len;
 		}
 		else {
-			cids = l ? &l->cids : &((struct server *)__objt_server(srv_conn->target))->cids;
+			cids = &l->cids;
 			cid_lookup_len = QUIC_CID_LEN;
 		}
 
@@ -2229,7 +2441,7 @@ static ssize_t quic_packet_read(unsigned char **buf, const unsigned char *end,
 		if (!node) {
 			struct quic_cid *odcid;
 
-			if (!l || qpkt->type != QUIC_PACKET_TYPE_INITIAL) {
+			if (qpkt->type != QUIC_PACKET_TYPE_INITIAL) {
 				fprintf(stderr, "Connection not found.\n");
 				goto err;
 			}
@@ -2244,7 +2456,8 @@ static ssize_t quic_packet_read(unsigned char **buf, const unsigned char *end,
 			}
 
 			if (!quic_new_conn_init(conn, &l->icids, &l->cids,
-			                        qpkt->dcid.data, cid_lookup_len, qpkt->scid.data, qpkt->scid.len))
+			                        qpkt->dcid.data, cid_lookup_len,
+			                        qpkt->scid.data, qpkt->scid.len))
 				goto err;
 
 			odcid = &conn->params.original_destination_connection_id;
@@ -2266,16 +2479,10 @@ static ssize_t quic_packet_read(unsigned char **buf, const unsigned char *end,
 			SSL_set_quic_transport_params(conn_ctx->ssl, conn->enc_params, conn->enc_params_len);
 		}
 		else {
-			if (l && qpkt->type == QUIC_PACKET_TYPE_INITIAL)
+			if (qpkt->type == QUIC_PACKET_TYPE_INITIAL)
 				conn = ebmb_entry(node, struct quic_conn, odcid_node);
 			else
 				conn = ebmb_entry(node, struct quic_conn, scid_node);
-		}
-
-		if (!l && qpkt->type == QUIC_PACKET_TYPE_INITIAL) {
-			conn->dcid.len = qpkt->scid.len;
-			if (qpkt->scid.len)
-				memcpy(conn->dcid.data, qpkt->scid.data, qpkt->scid.len);
 		}
 
 		if (qpkt->type == QUIC_PACKET_TYPE_INITIAL) {
@@ -2297,7 +2504,7 @@ static ssize_t quic_packet_read(unsigned char **buf, const unsigned char *end,
 			 * NOTE: the socket address it concatenated to the destination ID choosen by the client
 			 * for Initial packets.
 			 */
-			if (l && !ctx->hp) {
+			if (!ctx->hp) {
 				quic_initial_tls_ctx_init(ctx);
 				if (!quic_conn_derive_initial_secrets(ctx, qpkt->dcid.data, qpkt->dcid.len - sizeof *saddr, 1)) {
 					fprintf(stderr, "Could not derive initial secrets\n");
@@ -2312,7 +2519,7 @@ static ssize_t quic_packet_read(unsigned char **buf, const unsigned char *end,
 			fprintf(stderr, "Too short short headder\n");
 			goto err;
 		}
-		cids = l ? &l->cids : &((struct server *)__objt_server(srv_conn->target))->cids;
+		cids = &l->cids;
 		node = ebmb_lookup(cids, *buf, QUIC_CID_LEN);
 		if (!node) {
 			fprintf(stderr, "Unknonw connection ID\n");
@@ -2391,59 +2598,17 @@ static ssize_t quic_packet_read(unsigned char **buf, const unsigned char *end,
 
 	/* Update the state if needed. */
 	conn_ctx = conn->conn->xprt_ctx;
-	if (l) {
-		if (conn_ctx->state == QUIC_HS_ST_SERVER_INITIAL && qpkt->type == QUIC_PACKET_TYPE_HANDSHAKE)
-			conn_ctx->state = QUIC_HS_ST_SERVER_HANSHAKE;
-	}
+	if (conn_ctx->state == QUIC_HS_ST_SERVER_INITIAL && qpkt->type == QUIC_PACKET_TYPE_HANDSHAKE)
+		conn_ctx->state = QUIC_HS_ST_SERVER_HANSHAKE;
 
 	/* Wake the tasklet of the QUIC connection packet handler. */
-	if (conn->conn && conn->conn->xprt_ctx)
-		tasklet_wakeup(((struct quic_conn_ctx *)conn->conn->xprt_ctx)->wait_event.tasklet);
+	if (conn_ctx)
+		tasklet_wakeup(conn_ctx->wait_event.tasklet);
 
 	return qpkt->len;
 
  err:
 	fprintf(stderr, "%s failed\n", __func__);
-	return -1;
-}
-
-/*
- * Read all the QUIC packets found in <buf> with <len> as length (typically a UDP
- * datagram), <ctx> being the QUIC I/O handler context, depending on <listener>
- * boolean value to distinguish the incoming (from listener) from outgoing (to severs)
- * QUIC connections.
- * Return the number of bytes read if succeded, -1 if not.
- */
-static ssize_t quic_packets_read(char *buf, size_t len, int listener, void *ctx,
-                                 struct sockaddr_storage *saddr, socklen_t *saddrlen)
-{
-	unsigned char *pos;
-	const unsigned char *end;
-
-	pos = (unsigned char *)buf;
-	end = pos + len;
-
-	do {
-		int ret;
-		struct quic_rx_packet *qpkt;
-
-		qpkt = pool_alloc(pool_head_quic_rx_packet);
-		if (!qpkt) {
-			fprintf(stderr, "Not enough memory to allocate a new packet\n");
-			goto err;
-		}
-
-		ret = quic_packet_read(&pos, end, qpkt, listener, ctx, saddr, saddrlen);
-		if (ret == -1) {
-			pool_free(pool_head_quic_rx_packet, qpkt);
-			goto err;
-		}
-		fprintf(stderr, "long header? %d packet type: 0x%02x \n", !!qpkt->long_header, qpkt->type);
-	} while (pos < end);
-
-	return pos - (unsigned char *)buf;
-
- err:
 	return -1;
 }
 
@@ -2893,25 +3058,63 @@ static int quic_send_app_packets(struct quic_conn_ctx *ctx)
 }
 
 /*
+ * Read all the QUIC packets found in <buf> with <len> as length (typically a UDP
+ * datagram), <ctx> being the QUIC I/O handler context, from QUIC connections,
+ * calling <func> function;
+ * Return the number of bytes read if succeded, -1 if not.
+ */
+static ssize_t quic_packets_read(char *buf, size_t len, void *ctx,
+                                 struct sockaddr_storage *saddr, socklen_t *saddrlen,
+                                 qpkt_read_func *func)
+{
+	unsigned char *pos;
+	const unsigned char *end;
+
+	pos = (unsigned char *)buf;
+	end = pos + len;
+
+	do {
+		int ret;
+		struct quic_rx_packet *qpkt;
+
+		qpkt = pool_alloc(pool_head_quic_rx_packet);
+		if (!qpkt) {
+			fprintf(stderr, "Not enough memory to allocate a new packet\n");
+			goto err;
+		}
+
+		ret = func(&pos, end, qpkt, ctx, saddr, saddrlen);
+		if (ret == -1) {
+			pool_free(pool_head_quic_rx_packet, qpkt);
+			goto err;
+		}
+		fprintf(stderr, "long header? %d packet type: 0x%02x \n", !!qpkt->long_header, qpkt->type);
+	} while (pos < end);
+
+	return pos - (unsigned char *)buf;
+
+ err:
+	return -1;
+}
+
+/*
  * QUIC I/O handler for connection to local listeners or remove servers
  * depending on <listener> boolean value, with <fd> as socket file
  * descriptor and <ctx> as context.
  */
-static size_t quic_conn_handler(int fd, void *ctx, int listener)
+static size_t quic_conn_handler(int fd, void *ctx, qpkt_read_func *func)
 {
 	ssize_t ret;
 	size_t done = 0;
 	struct buffer *buf = get_trash_chunk();
+	/* Source address */
+	struct sockaddr_storage saddr = {0};
+	socklen_t saddrlen = sizeof saddr;
 
 	if (!fd_recv_ready(fd))
 		return 0;
 
 	do {
-		/* Source address */
-		struct sockaddr_storage saddr = {0};
-		socklen_t saddrlen;
-
-		saddrlen = sizeof saddr;
 		ret = recvfrom(fd, buf->area, buf->size, 0,
 		               (struct sockaddr *)&saddr, &saddrlen);
 		if (ret < 0) {
@@ -2919,16 +3122,16 @@ static size_t quic_conn_handler(int fd, void *ctx, int listener)
 				continue;
 			if (errno == EAGAIN)
 				fd_cant_recv(fd);
-			break;
-		}
-		else {
-			fprintf(stderr, "-------------------------------------------"
-			                "-----------------\n%s: %s recvfrom() (%ld)\n",
-			                __func__, listener ? "server" : "client", ret);
-			done = buf->data = ret;
-			quic_packets_read(buf->area, buf->data, listener, ctx, &saddr, &saddrlen);
+			goto out;
 		}
 	} while (0);
+
+	fprintf(stderr, "-------------------------------------------"
+					"-----------------\n%s: recvfrom() server (%ld)\n",
+					__func__, ret);
+
+	done = buf->data = ret;
+	quic_packets_read(buf->area, buf->data, ctx, &saddr, &saddrlen, func);
 
  out:
 	return done;
@@ -2941,7 +3144,7 @@ static size_t quic_conn_handler(int fd, void *ctx, int listener)
 void quic_fd_handler(int fd)
 {
 	if (fdtab[fd].ev & FD_POLL_IN)
-		quic_conn_handler(fd, fdtab[fd].owner, 1);
+		quic_conn_handler(fd, fdtab[fd].owner, &quic_listener_packet_read);
 }
 
 /*
@@ -2951,7 +3154,7 @@ void quic_fd_handler(int fd)
 void quic_conn_fd_handler(int fd)
 {
 	if (fdtab[fd].ev & FD_POLL_IN)
-		quic_conn_handler(fd, fdtab[fd].owner, 0);
+		quic_conn_handler(fd, fdtab[fd].owner, &quic_server_packet_read);
 }
 
 /*
