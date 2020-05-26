@@ -88,6 +88,7 @@ struct preferred_address {
 #define QUIC_TP_DISABLE_ACTIVE_MIGRATION            12
 #define QUIC_TP_PREFERRED_ADDRESS                   13
 #define QUIC_TP_ACTIVE_CONNECTION_ID_LIMIT          14
+#define QUIC_TP_INITIAL_SOURCE_CONNECTION_ID        15
 
 /*
  * These defines are not for transport parameter type, but the maximum accepted value for
@@ -120,6 +121,7 @@ struct quic_transport_params {
 	uint8_t with_stateless_reset_token;
 	uint8_t with_preferred_address;
 	uint8_t original_destination_connection_id_present;
+	uint8_t initial_source_connection_id_present;
 
 	uint8_t stateless_reset_token[QUIC_STATELESS_RESET_TOKEN_LEN]; /* Forbidden for clients */
 	/*
@@ -127,6 +129,8 @@ struct quic_transport_params {
 	 * When received by clients, must be set to 1 if present.
 	 */
 	struct quic_cid original_destination_connection_id;            /* Forbidden for clients */
+	/* MUST be present both for servers and clients. */
+	struct quic_cid initial_source_connection_id;
 	struct preferred_address preferred_address;                    /* Forbidden for clients */
 };
 

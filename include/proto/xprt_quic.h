@@ -493,6 +493,16 @@ static inline int quic_transport_param_decode(struct quic_transport_params *p, i
 		*buf += len;
 		p->original_destination_connection_id_present = 1;
 		break;
+	case QUIC_TP_INITIAL_SOURCE_CONNECTION_ID:
+		if (len >= sizeof p->initial_source_connection_id.data)
+			return 0;
+
+		if (len)
+			memcpy(p->initial_source_connection_id.data, *buf, len);
+		p->initial_source_connection_id.len = len;
+		*buf += len;
+		p->initial_source_connection_id_present = 1;
+		break;
 	case QUIC_TP_STATELESS_RESET_TOKEN:
 		if (!server || len != sizeof p->stateless_reset_token)
 			return 0;
@@ -674,6 +684,12 @@ static inline int quic_transport_params_encode(unsigned char *buf, const unsigne
 			return 0;
 	}
 
+	if (!quic_transport_param_enc_mem(&pos, end,
+	                                  QUIC_TP_INITIAL_SOURCE_CONNECTION_ID,
+	                                  p->initial_source_connection_id.data,
+	                                  p->initial_source_connection_id.len))
+		return 0;
+
 	if (p->idle_timeout &&
 	    !quic_transport_param_enc_int(&pos, end, QUIC_TP_IDLE_TIMEOUT, p->idle_timeout))
 		return 0;
@@ -765,8 +781,12 @@ static inline int quic_transport_params_decode(struct quic_transport_params *p, 
 			return 0;
 	}
 
-	/* A server MUST send original_destination_connection_id transport parameter. */
-	if (server && !p->original_destination_connection_id_present)
+	/*
+	 * A server MUST send original_destination_connection_id transport parameter.
+	 * initial_source_connection_id must be present both for server and client.
+	 */
+	if ((server && !p->original_destination_connection_id_present) ||
+	    !p->initial_source_connection_id_present)
 		return 0;
 
 	return 1;

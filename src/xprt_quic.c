@@ -1827,6 +1827,10 @@ static int quic_conn_init(struct connection *conn, void **xprt_ctx)
 			goto err;
 		}
 
+		/* Copy the initial source connection ID. */
+		memcpy(srv->quic_params.initial_source_connection_id.data,
+		       conn->quic_conn->scid.data, conn->quic_conn->scid.len);
+		srv->quic_params.initial_source_connection_id.len = conn->quic_conn->scid.len;
 		srv->enc_quic_params_len =
 			quic_transport_params_encode(srv->enc_quic_params,
 			                             srv->enc_quic_params + sizeof srv->enc_quic_params,
