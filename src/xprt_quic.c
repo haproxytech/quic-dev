@@ -1852,18 +1852,6 @@ static int quic_conn_init(struct connection *conn, void **xprt_ctx)
 		                          &ctx->ssl, &ctx->bio, ha_quic_meth, ctx) == -1)
 			goto err;
 
-#if 0
-		bc->enc_quic_params_len =
-			quic_transport_params_encode(bc->enc_quic_params,
-			                             bc->enc_quic_params + sizeof bc->enc_quic_params,
-			                             &bc->quic_params, 1);
-		if (!bc->enc_quic_params_len) {
-			fprintf(stderr, "QUIC transport parameters encoding failed");
-			goto err;
-		}
-		conn->params = bc->params;
-		SSL_set_quic_transport_params(ctx->ssl, bc->enc_quic_params, bc->enc_quic_params_len);
-#endif
 		SSL_set_accept_state(ctx->ssl);
 	}
 
