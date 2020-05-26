@@ -332,8 +332,6 @@ struct server {
 #endif
 #ifdef USE_QUIC
 	struct quic_transport_params quic_params;          /* QUIC transport parameters */
-	unsigned char enc_quic_params[QUIC_TP_MAX_ENCLEN]; /* encoded QUIC transport parameters */
-	size_t enc_quic_params_len;                        /* Length of the encoded QUIC transport parameters */
 	struct eb_root cids;
 #endif
 	struct dns_srvrq *srvrq;		/* Pointer representing the DNS SRV requeest, if any */

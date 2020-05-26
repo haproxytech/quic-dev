@@ -1473,7 +1473,7 @@ static int quic_conn_remove_xprt(struct connection *conn, void *xprt_ctx, void *
 /*
  * Allocate a new QUIC connection and return it if succeeded, NULL if not.
  */
-static struct quic_conn *quic_new_conn(uint32_t version, struct quic_transport_params *tps)
+static struct quic_conn *quic_new_conn(uint32_t version)
 {
 	struct quic_conn *quic_conn;
 
@@ -1481,7 +1481,6 @@ static struct quic_conn *quic_new_conn(uint32_t version, struct quic_transport_p
 	if (quic_conn) {
 		memset(quic_conn, 0, sizeof *quic_conn);
 		quic_conn->version = version;
-		quic_conn->tx_tps = tps;
 	}
 
 	return quic_conn;
@@ -1799,20 +1798,22 @@ static int quic_conn_init(struct connection *conn, void **xprt_ctx)
 		struct server *srv = __objt_server(conn->target);
 		unsigned char dcid[QUIC_CID_LEN];
 		struct quic_tls_ctx *tls_ctx;
+		struct quic_conn *quic_conn;
 
 		if (RAND_bytes(dcid, sizeof dcid) != 1)
 			goto err;
 
-		conn->quic_conn = quic_new_conn(QUIC_PROTOCOL_VERSION_DRAFT_28, &srv->quic_params);
+		conn->quic_conn = quic_new_conn(QUIC_PROTOCOL_VERSION_DRAFT_28);
 		if (!conn->quic_conn)
 			goto err;
 
-		conn->quic_conn->conn = conn;
-		if (!quic_new_conn_init(conn->quic_conn, NULL, &srv->cids,
+		quic_conn = conn->quic_conn;
+		quic_conn->conn = conn;
+		if (!quic_new_conn_init(quic_conn, NULL, &srv->cids,
 		                        dcid, sizeof dcid, NULL, 0))
 			goto err;
 
-		tls_ctx = &conn->quic_conn->enc_levels[QUIC_TLS_ENC_LEVEL_INITIAL].tls_ctx;
+		tls_ctx = &quic_conn->enc_levels[QUIC_TLS_ENC_LEVEL_INITIAL].tls_ctx;
 		quic_initial_tls_ctx_init(tls_ctx);
 		if (!quic_conn_derive_initial_secrets(tls_ctx, dcid, sizeof dcid, 0)) {
 			fprintf(stderr, "Could not derive initial secrets\n");
@@ -1827,19 +1828,18 @@ static int quic_conn_init(struct connection *conn, void **xprt_ctx)
 			goto err;
 		}
 
+		quic_conn->params = srv->quic_params;
 		/* Copy the initial source connection ID. */
-		memcpy(srv->quic_params.initial_source_connection_id.data,
-		       conn->quic_conn->scid.data, conn->quic_conn->scid.len);
-		srv->quic_params.initial_source_connection_id.len = conn->quic_conn->scid.len;
-		srv->enc_quic_params_len =
-			quic_transport_params_encode(srv->enc_quic_params,
-			                             srv->enc_quic_params + sizeof srv->enc_quic_params,
-			                             &srv->quic_params, 0);
-		if (!srv->enc_quic_params_len) {
+		quic_cid_cpy(&quic_conn->params.initial_source_connection_id, &quic_conn->scid);
+		quic_conn->enc_params_len =
+			quic_transport_params_encode(quic_conn->enc_params,
+			                             quic_conn->enc_params + sizeof quic_conn->enc_params,
+			                             &quic_conn->params, 0);
+		if (!quic_conn->enc_params_len) {
 			fprintf(stderr, "QUIC transport parameters encoding failed");
 			goto err;
 		}
-		SSL_set_quic_transport_params(ctx->ssl, srv->enc_quic_params, srv->enc_quic_params_len);
+		SSL_set_quic_transport_params(ctx->ssl, quic_conn->enc_params, quic_conn->enc_params_len);
 		SSL_set_connect_state(ctx->ssl);
 	}
 	else if (objt_listener(conn->target)) {
@@ -1852,6 +1852,7 @@ static int quic_conn_init(struct connection *conn, void **xprt_ctx)
 		                          &ctx->ssl, &ctx->bio, ha_quic_meth, ctx) == -1)
 			goto err;
 
+#if 0
 		bc->enc_quic_params_len =
 			quic_transport_params_encode(bc->enc_quic_params,
 			                             bc->enc_quic_params + sizeof bc->enc_quic_params,
@@ -1860,7 +1861,9 @@ static int quic_conn_init(struct connection *conn, void **xprt_ctx)
 			fprintf(stderr, "QUIC transport parameters encoding failed");
 			goto err;
 		}
+		conn->params = bc->params;
 		SSL_set_quic_transport_params(ctx->ssl, bc->enc_quic_params, bc->enc_quic_params_len);
+#endif
 		SSL_set_accept_state(ctx->ssl);
 	}
 
@@ -2236,12 +2239,14 @@ static ssize_t quic_packet_read(unsigned char **buf, const unsigned char *end,
 
 		node = ebmb_lookup(cids, qpkt->dcid.data, cid_lookup_len);
 		if (!node) {
+			struct quic_cid *odcid;
+
 			if (!l || qpkt->type != QUIC_PACKET_TYPE_INITIAL) {
 				fprintf(stderr, "Connection not found.\n");
 				goto err;
 			}
 
-			conn =  quic_new_conn(qpkt->version, &l->bind_conf->quic_params);
+			conn =  quic_new_conn(qpkt->version);
 			if (!conn)
 				goto err;
 
@@ -2253,6 +2258,24 @@ static ssize_t quic_packet_read(unsigned char **buf, const unsigned char *end,
 			if (!quic_new_conn_init(conn, &l->icids, &l->cids,
 			                        qpkt->dcid.data, cid_lookup_len, qpkt->scid.data, qpkt->scid.len))
 				goto err;
+
+			odcid = &conn->params.original_destination_connection_id;
+			/* Copy the transport parameters. */
+			conn->params = l->bind_conf->quic_params;
+			/* Copy original_destination_connection_id transport parameter. */
+			memcpy(odcid->data, &qpkt->dcid, dcid_len);
+			odcid->len = dcid_len;
+			/* Copy the initial source connection ID. */
+			quic_cid_cpy(&conn->params.initial_source_connection_id, &conn->scid);
+			conn->enc_params_len =
+				quic_transport_params_encode(conn->enc_params,
+				                             conn->enc_params + sizeof conn->enc_params,
+				                             &conn->params, 1);
+			if (!conn->enc_params_len)
+				goto err;
+
+			conn_ctx = conn->conn->xprt_ctx;
+			SSL_set_quic_transport_params(conn_ctx->ssl, conn->enc_params, conn->enc_params_len);
 		}
 		else {
 			if (l && qpkt->type == QUIC_PACKET_TYPE_INITIAL)

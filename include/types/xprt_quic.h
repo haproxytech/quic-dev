@@ -285,6 +285,11 @@ struct quic_enc_level {
 struct quic_conn {
 	uint32_t version;
 
+	/* Transport parameters. */
+	struct quic_transport_params params;
+	unsigned char enc_params[QUIC_TP_MAX_ENCLEN]; /* encoded QUIC transport parameters */
+	size_t enc_params_len;
+
 	/*
 	 * Original Destination Connection ID  (comming with first client Initial packets).
 	 * Used only by servers.
@@ -299,7 +304,6 @@ struct quic_conn {
 
 	struct quic_enc_level enc_levels[QUIC_TLS_ENC_LEVEL_MAX];
 
-	struct quic_transport_params *tx_tps;
 	struct quic_transport_params rx_tps;
 
 	struct quic_pktns pktns[QUIC_TLS_PKTNS_MAX];

@@ -45,6 +45,17 @@ static inline size_t sizeof_quic_cid(const struct quic_cid *cid)
 	return sizeof cid->len + cid->len;
 }
 
+/*
+ * Copy <src> QUIC CID to <dst>.
+ * This is the responsability of the caller to check there is enough
+ * room in <dst> to copy <src>.
+ * Always succeeds.
+ */
+static inline void quic_cid_cpy(struct quic_cid *dst, const struct quic_cid *src)
+{
+	memcpy(dst->data, src->data, src->len);
+	dst->len = src->len;
+}
 
 /*
  * Free the CIDs attached to a QUIC connection.
