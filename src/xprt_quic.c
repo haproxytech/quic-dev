@@ -1798,10 +1798,9 @@ static int quic_conn_init(struct connection *conn, void **xprt_ctx)
 	if (objt_server(conn->target)) {
 		struct server *srv = __objt_server(conn->target);
 		unsigned char dcid[QUIC_CID_LEN];
-		unsigned char scid[QUIC_CID_LEN];
 		struct quic_tls_ctx *tls_ctx;
 
-		if (RAND_bytes(dcid, sizeof dcid) != 1 || RAND_bytes(scid, sizeof scid) != 1)
+		if (RAND_bytes(dcid, sizeof dcid) != 1)
 			goto err;
 
 		conn->quic_conn = quic_new_conn(QUIC_PROTOCOL_VERSION_DRAFT_28, &srv->quic_params);
@@ -1810,7 +1809,7 @@ static int quic_conn_init(struct connection *conn, void **xprt_ctx)
 
 		conn->quic_conn->conn = conn;
 		if (!quic_new_conn_init(conn->quic_conn, NULL, &srv->cids,
-		                        dcid, sizeof dcid, scid, sizeof scid))
+		                        dcid, sizeof dcid, NULL, 0))
 			goto err;
 
 		tls_ctx = &conn->quic_conn->enc_levels[QUIC_TLS_ENC_LEVEL_INITIAL].tls_ctx;
