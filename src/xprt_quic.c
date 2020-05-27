@@ -2179,6 +2179,75 @@ static inline int quic_packet_read_long_header(unsigned char **buf, const unsign
 	return 1;
 }
 
+/*
+ * Parse the payload of a QUIC packet into <qpkt> from <*buf> buffer,
+ * <end> being a pointer to one byte past the end of this buffer,
+ * for <conn> QUIC connection.
+ * Returns 1 if succeeded, 0 if not.
+ */
+static inline int quic_packet_read_payload(struct quic_rx_packet *qpkt,
+                                           unsigned char **buf,
+                                           unsigned char *beg,
+                                           const unsigned char *end,
+                                           struct quic_conn *conn)
+{
+	unsigned char *pn = NULL; /* Packet number field */
+	enum quic_tls_enc_level tel;
+	struct quic_enc_level *qel;
+
+	/*
+	 * The packet number is here. This is also the start minus
+	 * QUIC_PACKET_PN_MAXLEN of the sample used to add/remove the header
+	 * protection.
+	 */
+	pn = *buf;
+	if (pn - beg + qpkt->len > sizeof qpkt->data) {
+		fprintf(stderr, "Too big packet %zu\n", pn - beg + qpkt->len);
+		return 0;
+	}
+
+	tel = qpkt->long_header ?
+		quic_packet_type_enc_level(qpkt->type) : QUIC_TLS_ENC_LEVEL_APP;
+	qel = &conn->enc_levels[tel];
+
+	if (qel->tls_ctx.hp) {
+		/*
+		 * Note that the following function enables us to unprotect the packet
+		 * number and its length subsequently used to decrypt the entire
+		 * packets.
+		 */
+		if (!quic_remove_header_protection(qpkt, &qel->tls_ctx,
+		                                   qel->pktns->rx.largest_pn,
+		                                   pn, beg, end)) {
+			fprintf(stderr, "Could not remove packet header protection\n");
+			return 0;
+		}
+
+		fprintf(stderr, "%s inserting packet number: %lu enc. level: %d\n",
+				__func__, qpkt->pn, tel);
+
+		/* Store the packet */
+		qpkt->pn_node.key = qpkt->pn;
+		eb64_insert(&qel->rx.qpkts, &qpkt->pn_node);
+		/* The AAD includes the packet number field found at <pn>. */
+		qpkt->aad_len = pn - beg + qpkt->pnl;
+	}
+	else {
+		fprintf(stderr, "packet header protection was not "
+		        "removed (enc. level %d)\n", tel);
+		qpkt->pn_offset = pn - beg;
+		LIST_ADDQ(&qel->rx.pqpkts, &qpkt->list);
+	}
+
+	/* The length of the packet includes the packet number field. */
+	qpkt->len += pn - beg;
+	memcpy(qpkt->data, beg, qpkt->len);
+	/* Updtate the offset of <*buf> for the next QUIC packet. */
+	*buf = beg + qpkt->len;
+
+	return 1;
+}
+
 typedef ssize_t qpkt_read_func(unsigned char **buf,
                                const unsigned char *end,
                                struct quic_rx_packet *qpkt, void *ctx,
@@ -2191,13 +2260,10 @@ static ssize_t quic_server_packet_read(unsigned char **buf, const unsigned char 
 {
 	unsigned char *beg;
 	uint64_t len;
-	unsigned char *pn = NULL; /* Packet number */
 	struct quic_conn *conn;
 	struct eb_root *cids;
 	struct ebmb_node *node;
-	struct quic_enc_level *qel;
 	struct connection *srv_conn;
-	enum quic_tls_enc_level qpkt_enc_level;
 	struct quic_conn_ctx *conn_ctx;
 
 	if (end <= *buf)
@@ -2295,55 +2361,8 @@ static ssize_t quic_server_packet_read(unsigned char **buf, const unsigned char 
 	}
 	fprintf(stderr, "%s packet length: %zu\n", __func__, qpkt->len);
 
-	/*
-	 * The packet number is here. This is also the start minus QUIC_PACKET_PN_MAXLEN
-	 * of the sample used to add/remove the header protection.
-	 */
-	pn = *buf;
-
-	if (pn - beg + qpkt->len > sizeof qpkt->data) {
-		fprintf(stderr, "Too big packet %zu\n", pn - beg + qpkt->len);
+	if (!quic_packet_read_payload(qpkt, buf, beg, end, conn))
 		goto err;
-	}
-
-	if (qpkt->long_header)
-		qpkt_enc_level = quic_packet_type_enc_level(qpkt->type);
-	else
-		qpkt_enc_level = QUIC_TLS_ENC_LEVEL_APP;
-	qel = &conn->enc_levels[qpkt_enc_level];
-
-	if (qel->tls_ctx.hp) {
-		/*
-		 * Note that the following function enables us to unprotect the packet number
-		 * and its length subsequently used to decrypt the entire packets.
-		 */
-		if (!quic_remove_header_protection(qpkt, &qel->tls_ctx, qel->pktns->rx.largest_pn,
-		                                   pn, beg, end)) {
-			fprintf(stderr, "Could not remove packet header protection\n");
-			goto err;
-		}
-
-		fprintf(stderr, "%s inserting packet number: %lu enc. level: %d\n",
-				__func__, qpkt->pn, qpkt_enc_level);
-
-		/* Store the packet */
-		qpkt->pn_node.key = qpkt->pn;
-		eb64_insert(&qel->rx.qpkts, &qpkt->pn_node);
-		/* The AAD includes the packet number field found at <pn>. */
-		qpkt->aad_len = pn - beg + qpkt->pnl;
-	}
-	else {
-		fprintf(stderr, "packet header protection was not "
-		        "removed (enc. level %d)\n", qpkt_enc_level);
-		qpkt->pn_offset = pn - beg;
-		LIST_ADDQ(&qel->rx.pqpkts, &qpkt->list);
-	}
-
-	/* The length of the packet includes the packet number field. */
-	qpkt->len += pn - beg;
-	memcpy(qpkt->data, beg, qpkt->len);
-	/* Updtate the offset of <*buf> for the next QUIC packet. */
-	*buf = beg + qpkt->len;
 
 	conn_ctx = conn->conn->xprt_ctx;
 	/* Wake the tasklet of the QUIC connection packet handler. */
@@ -2363,13 +2382,10 @@ static ssize_t quic_listener_packet_read(unsigned char **buf, const unsigned cha
 {
 	unsigned char *beg;
 	uint64_t len;
-	unsigned char *pn = NULL; /* Packet number */
 	struct quic_conn *conn;
 	struct eb_root *cids;
 	struct ebmb_node *node;
-	struct quic_enc_level *qel;
 	struct listener *l;
-	enum quic_tls_enc_level qpkt_enc_level;
 	struct quic_conn_ctx *conn_ctx;
 
 	if (end <= *buf)
@@ -2524,55 +2540,8 @@ static ssize_t quic_listener_packet_read(unsigned char **buf, const unsigned cha
 	}
 	fprintf(stderr, "%s packet length: %zu\n", __func__, qpkt->len);
 
-	/*
-	 * The packet number is here. This is also the start minus QUIC_PACKET_PN_MAXLEN
-	 * of the sample used to add/remove the header protection.
-	 */
-	pn = *buf;
-
-	if (pn - beg + qpkt->len > sizeof qpkt->data) {
-		fprintf(stderr, "Too big packet %zu\n", pn - beg + qpkt->len);
+	if (!quic_packet_read_payload(qpkt, buf, beg, end, conn))
 		goto err;
-	}
-
-	if (qpkt->long_header)
-		qpkt_enc_level = quic_packet_type_enc_level(qpkt->type);
-	else
-		qpkt_enc_level = QUIC_TLS_ENC_LEVEL_APP;
-	qel = &conn->enc_levels[qpkt_enc_level];
-
-	if (qel->tls_ctx.hp) {
-		/*
-		 * Note that the following function enables us to unprotect the packet number
-		 * and its length subsequently used to decrypt the entire packets.
-		 */
-		if (!quic_remove_header_protection(qpkt, &qel->tls_ctx, qel->pktns->rx.largest_pn,
-		                                   pn, beg, end)) {
-			fprintf(stderr, "Could not remove packet header protection\n");
-			goto err;
-		}
-
-		fprintf(stderr, "%s inserting packet number: %lu enc. level: %d\n",
-				__func__, qpkt->pn, qpkt_enc_level);
-
-		/* Store the packet */
-		qpkt->pn_node.key = qpkt->pn;
-		eb64_insert(&qel->rx.qpkts, &qpkt->pn_node);
-		/* The AAD includes the packet number field found at <pn>. */
-		qpkt->aad_len = pn - beg + qpkt->pnl;
-	}
-	else {
-		fprintf(stderr, "packet header protection was not "
-		        "removed (enc. level %d)\n", qpkt_enc_level);
-		qpkt->pn_offset = pn - beg;
-		LIST_ADDQ(&qel->rx.pqpkts, &qpkt->list);
-	}
-
-	/* The length of the packet includes the packet number field. */
-	qpkt->len += pn - beg;
-	memcpy(qpkt->data, beg, qpkt->len);
-	/* Updtate the offset of <*buf> for the next QUIC packet. */
-	*buf = beg + qpkt->len;
 
 	/* Update the state if needed. */
 	conn_ctx = conn->conn->xprt_ctx;
