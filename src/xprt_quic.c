@@ -170,8 +170,7 @@ static BIO_METHOD *ha_quic_meth;
 static ssize_t quic_build_handshake_packet(struct q_buf *buf, struct quic_conn *qc, int pkt_type,
                                            uint64_t *offset, size_t len, struct quic_enc_level *qel);
 
-static int quic_send_app_packets(struct quic_conn_ctx *ctx);
-
+static int quic_prepare_post_handshake_packets(struct quic_conn *qc);
 
 /*
  * the QUIC traces always expect that arg1, if non-null, is of type connection.
@@ -1104,10 +1103,10 @@ static int quic_prepare_handshake_packets(struct quic_conn_ctx *ctx)
 }
 
 /*
- * Send the handshake packet which have been prepared for QUIC connections
+ * Send the QUIC packets which have been prepared for QUIC connections
  * with <ctx> as I/O handler context.
  */
-static int quic_send_handshake_packets(struct quic_conn_ctx *ctx)
+static int quic_send_prepared_packets(struct quic_conn_ctx *ctx)
 {
 	struct quic_conn *qc;
 	struct buffer tmpbuf = { };
@@ -1350,7 +1349,7 @@ static int quic_conn_do_handshake(struct quic_conn_ctx *ctx)
 	    !quic_prepare_handshake_packets(ctx))
 		return 0;
 
-	if (!quic_send_handshake_packets(ctx))
+	if (!quic_send_prepared_packets(ctx))
 		return 0;
 
 	/*
@@ -1383,10 +1382,10 @@ static int quic_conn_do_handshake(struct quic_conn_ctx *ctx)
 
 	fprintf(stderr, "SSL_process_quic_post_handshake() succeeded\n");
 
-	quic_build_post_handshake_frames(quic_conn);
-
-	quic_send_app_packets(ctx);
-
+	if (!quic_build_post_handshake_frames(quic_conn) ||
+	    !quic_prepare_post_handshake_packets(quic_conn) ||
+	    !quic_send_prepared_packets(ctx))
+		return 0;
 
 	return 1;
 }
@@ -2892,115 +2891,119 @@ static ssize_t quic_build_handshake_packet(struct q_buf *buf, struct quic_conn *
 	return end - beg;
 }
 
-static ssize_t quic_do_build_app_packet(unsigned char **buf, const unsigned char *end,
-                                        uint64_t pn, size_t *pn_len,
-                                        unsigned char **buf_pn,
-                                        struct quic_enc_level *qel, struct quic_conn *conn)
+static ssize_t quic_do_build_post_handshake_app_packet(struct q_buf *wbuf,
+                                                       uint64_t pn, size_t *pn_len,
+                                                       unsigned char **buf_pn,
+                                                       struct quic_enc_level *qel,
+                                                       struct quic_conn *conn)
 {
-	unsigned char *pos, *ppos;
-	struct quic_frame *frm;
+	const unsigned char *beg, *end;
+	unsigned char *pos;
+	struct quic_frame *frm, *sfrm;
 
-	/* Reserve enough room at the end of the packet for the AEAD TAG. */
-	end -= QUIC_TLS_TAG_LEN;
-
-	if (end - *buf < QUIC_SHORT_PACKET_MINLEN + sizeof_quic_cid(&conn->dcid))
-		return -1;
-
-	pos = *buf;
 	/* Packet number length */
 	*pn_len = quic_packet_number_length(pn, qel->pktns->rx.largest_acked_pn);
-	quic_build_packet_short_header(&pos, end, *pn_len, conn);
-
-	if (end - pos < *pn_len)
+	/* Check there is enough room to build this packet (without payload). */
+	if (q_buf_room(wbuf) <
+	    QUIC_TLS_TAG_LEN + QUIC_SHORT_PACKET_MINLEN +
+	    sizeof_quic_cid(&conn->dcid) + *pn_len)
 		return -1;
 
+	beg = pos = q_buf_getpos(wbuf);
+	/* Reserve enough room at the end of the packet for the AEAD TAG. */
+	end = q_buf_end(wbuf) - QUIC_TLS_TAG_LEN;
+	quic_build_packet_short_header(&pos, end, *pn_len, conn);
+	/* Packet number field. */
 	*buf_pn = pos;
-
 	/* Packet number encoding. */
 	quic_packet_number_encode(&pos, end, pn, *pn_len);
 
 	/* Encode a maximum of frames. */
-	list_for_each_entry(frm, &conn->tx.frms_to_send, list) {
+	list_for_each_entry_safe(frm, sfrm, &conn->tx.frms_to_send, list) {
+		unsigned char *ppos;
+
 		ppos = pos;
 		if (!quic_build_frame(&ppos, end, frm)) {
-			fprintf(stderr, "Could not build frame %s\n", quic_frame_type_string(frm->type));
+			fprintf(stderr, "%s: Could not build frame %s\n", __func__,
+			        quic_frame_type_string(frm->type));
 			break;
 		}
+		LIST_DEL(&frm->list);
 		pos = ppos;
 	}
-	*buf = pos;
 
-	return 1;
+	return pos - beg;
 }
 
-static ssize_t quic_build_app_packet(unsigned char **buf, const unsigned char *end,
-                                     struct quic_conn *conn)
+static ssize_t quic_build_post_handshake_app_packet(struct q_buf *wbuf,
+                                                    struct quic_conn *conn)
 {
 	/* A pointer to the packet number fiel in <buf> */
 	unsigned char *buf_pn;
-	unsigned char *beg, *pos, *payload;
+	unsigned char *beg, *end, *payload;
 	struct quic_enc_level *qel;
 	struct quic_tls_ctx *tls_ctx;
 	size_t pn_len, aad_len, payload_len;
+	ssize_t pkt_len;
 	uint64_t pn;
 
-	beg = pos = *buf;
+	beg = q_buf_getpos(wbuf);
 	qel = &conn->enc_levels[QUIC_TLS_ENC_LEVEL_APP];
 	pn = qel->pktns->tx.next_pn + 1;
 
-	if (quic_do_build_app_packet(&pos, end, pn, &pn_len, &buf_pn, qel, conn) == -1)
-		return -1;
+	pkt_len = quic_do_build_post_handshake_app_packet(wbuf, pn, &pn_len, &buf_pn, qel, conn);
+	if (pkt_len < 0) {
+		fprintf(stderr, "%s returns %zd\n", __func__, pkt_len);
+		return pkt_len;
+	}
 
-	payload = (unsigned char *)buf_pn + pn_len;
-	payload_len = pos - payload;
+	end = beg + pkt_len;
+	payload = buf_pn + pn_len;
+	payload_len = end - payload;
 	aad_len = payload - beg;
 
 	tls_ctx = &qel->tls_ctx;
 	if (!quic_packet_encrypt(payload, payload_len, beg, aad_len, pn, tls_ctx))
 		return -2;
 
-	pos += QUIC_TLS_TAG_LEN;
 	if (!quic_apply_header_protection(beg, buf_pn, pn_len,
 	                                  tls_ctx->hp, tls_ctx->tx.hp_key)) {
 		fprintf(stderr, "%s: could not apply header protection\n", __func__);
 		return -2;
 	}
 
-	*buf = pos;
+	/* Consume a packet number. */
+	++qel->pktns->tx.next_pn;
 
-	return *buf - beg;
+	end += QUIC_TLS_TAG_LEN;
+	q_buf_setpos(wbuf, end);
+
+	return end - beg;
 }
 
-static int quic_send_app_packets(struct quic_conn_ctx *ctx)
+/*
+ * Prepare a maximum of QUIC application level packets from <ctx> QUIC
+ * connection I/O handler context.
+ * Returns 1 if succeeded, 0 if not.
+ */
+static int quic_prepare_post_handshake_packets(struct quic_conn *qc)
 {
-	struct quic_conn *quic_conn;
-	unsigned char **obuf_pos;
-	const unsigned char *obuf_end;
-	struct buffer tmpbuf = { };
+	struct q_buf *wbuf;
 
-	(void)tmpbuf;
+	wbuf = q_wbuf(qc);
+	while (q_buf_empty(wbuf) && !LIST_ISEMPTY(&qc->tx.frms_to_send)) {
+		ssize_t ret;
 
-	quic_conn = ctx->conn->quic_conn;
-
-	obuf_pos = &quic_conn->obuf.pos;
-	obuf_end = quic_conn->obuf.data + sizeof quic_conn->obuf.data;
-
-	tmpbuf.area = (char *)quic_conn->obuf.data;
-	tmpbuf.size = sizeof quic_conn->obuf.data;
-	tmpbuf.data = *obuf_pos - quic_conn->obuf.data;
-
-	do {
-		ssize_t to_send;
-
-		(void)to_send;
-
-		to_send = quic_build_app_packet(obuf_pos, obuf_end, quic_conn);
-		tmpbuf.data += to_send;
-
-		if (ctx->xprt->snd_buf(quic_conn->conn, quic_conn->conn->xprt_ctx,
-		                       &tmpbuf, tmpbuf.data, 0) <= 0)
-			return -1;
-	} while (0);
+		ret = quic_build_post_handshake_app_packet(wbuf, qc);
+		switch (ret) {
+		case -2:
+			return 0;
+		default:
+			/* Not enough room left in <wbuf>. */
+			wbuf = q_next_wbuf(qc);
+			continue;
+		}
+	}
 
 	return 1;
 }
