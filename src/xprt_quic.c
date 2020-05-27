@@ -2677,9 +2677,6 @@ static inline ssize_t quic_do_build_ack_frame(struct buffer *buf,
  * data as possible from <offset> offset in the CRYPTO data stream. Note that
  * this offset value is updated by the length of the CRYPTO frame used to embed
  * the CRYPTO data if this packet and only if the packet is successfully built.
- * Return the length of the packet if succeeded minus QUIC_TLS_TAG_LEN, or -1 if
- * failed (not enough room in <wbuf> to build this packet plus QUIC_TLS_TAG_LEN
- * bytes).
  * The trailing QUIC_TLS_TAG_LEN bytes of this packet are not built. But they are
  * reserved so that to be sure there is enough room to build this AEAD TAG after
  * having successfully returned from this function and to be sure the position
@@ -2690,6 +2687,10 @@ static inline ssize_t quic_do_build_ack_frame(struct buffer *buf,
  * This function also update the value of <buf_pn> pointer to point to the packet
  * number field in this packet. <pn_len> will also have the packet number
  * length as value.
+ *
+ * Return the length of the packet if succeeded minus QUIC_TLS_TAG_LEN, or -1 if
+ * failed (not enough room in <wbuf> to build this packet plus QUIC_TLS_TAG_LEN
+ * bytes), -2 if there are too much CRYPTO data in flight to build a packet.
  */
 static ssize_t quic_do_build_handshake_packet(struct q_buf *wbuf, int pkt_type,
                                               unsigned char **buf_pn, size_t *pn_len,
