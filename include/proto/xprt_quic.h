@@ -897,6 +897,14 @@ static inline void q_buf_setpos(struct q_buf *buf, unsigned char *pos)
 }
 
 /*
+ * Returns the remaining amount of room left in <buf> buffer.
+ */
+static inline ssize_t q_buf_room(struct q_buf *buf)
+{
+	return q_buf_end(buf) - q_buf_getpos(buf);
+}
+
+/*
  * Reset (or empty) <buf> buffer to prepare it for the next writting.
  */
 static inline void q_buf_reset(struct q_buf *buf)
