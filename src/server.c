@@ -2100,13 +2100,8 @@ int parse_server(const char *file, int linenum, char **args, struct proxy *curpr
 				}
 			}
 
-			if (is_sa_family_quic(sk)) {
-				fprintf(stderr, "%s %s setting XPRT_QUIC\n", __func__, newsrv->id);
+			if (is_sa_family_quic(sk))
 				newsrv->xprt = xprt_get(XPRT_QUIC);
-			}
-			else
-				fprintf(stderr, "%s %s setting %s\n", __func__, newsrv->id, newsrv->xprt->name);
-
 			newsrv->addr = *sk;
 			newsrv->svc_port = port;
 
