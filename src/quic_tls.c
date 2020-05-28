@@ -11,6 +11,8 @@
 
 #include <types/quic_tls.h>
 
+#include <proto/xprt_quic.h>
+
 __attribute__((format (printf, 3, 4)))
 void hexdump(const void *buf, size_t buflen, const char *title_fmt, ...);
 
@@ -165,9 +167,9 @@ ssize_t quic_tls_derive_keys(const EVP_CIPHER *aead, const EVP_CIPHER *hp,
 	const unsigned char     iv_label[] = "quic iv";
 	const unsigned char hp_key_label[] = "quic hp";
 
-	fprintf(stderr, "============================================\n%s ", __func__);
-	fprintf(stderr, "(AEAD key len: %zu ", aead_keylen);
-	fprintf(stderr, "AEAD IV len: %zu)\n", aead_ivlen);
+	QDPRINTF("============================================\n%s ", __func__);
+	QDPRINTF("(AEAD key len: %zu ", aead_keylen);
+	QDPRINTF("AEAD IV len: %zu)\n", aead_ivlen);
 	if (aead_keylen > keylen || aead_ivlen > ivlen || hp_len > hp_keylen)
 		return 0;
 
@@ -179,9 +181,9 @@ ssize_t quic_tls_derive_keys(const EVP_CIPHER *aead, const EVP_CIPHER *hp,
 	                            hp_key_label, sizeof hp_key_label - 1))
 		return 0;
 
-	hexdump(key, keylen, "KEY:\n");
-	hexdump(iv, ivlen, "IV :\n");
-	hexdump(hp_key, hp_keylen, "HP KEY:\n");
+	HEXDUMP(key, keylen, "KEY:\n");
+	HEXDUMP(iv, ivlen, "IV :\n");
+	HEXDUMP(hp_key, hp_keylen, "HP KEY:\n");
 
 	return 1;
 }
@@ -235,8 +237,8 @@ ssize_t quic_tls_derive_initial_secrets(const EVP_MD *md,
 	                            tx_label, tx_label_sz - 1))
 	    return 0;
 
-	hexdump(rx, rx_sz, "CLIENT INITIAL SECRET:\n");
-	hexdump(tx, tx_sz, "SERVER INITIAL SECRET:\n");
+	HEXDUMP(rx, rx_sz, "CLIENT INITIAL SECRET:\n");
+	HEXDUMP(tx, tx_sz, "SERVER INITIAL SECRET:\n");
 
 	return 1;
 }
@@ -356,7 +358,7 @@ int quic_tls_decrypt(unsigned char *buf, size_t len,
 
 	off += outlen;
 
-	hexdump(buf, off, "Decrypted buf(%zu):\n", off);
+	HEXDUMP(buf, off, "Decrypted buf(%zu):\n", off);
 	ret = off;
 
  out:

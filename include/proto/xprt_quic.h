@@ -33,6 +33,14 @@
 
 #include <openssl/rand.h>
 
+#ifdef QDEBUG
+#define QDPRINTF(fmt, ...)           fprintf(stderr, fmt, ##__VA_ARGS__)
+#define HEXDUMP(buf, len, fmt, ...)      hexdump(buf, len, fmt, ##__VA_ARGS__)
+#else
+#define QDPRINTF(fmt, ...)           do { } while(0)
+#define HEXDUMP(buf, len, fmt, ...)      do { } while(0)
+#endif
+
 extern struct pool_head *pool_head_quic_connection_id;
 
 int ssl_quic_initial_ctx(struct bind_conf *bind_conf);

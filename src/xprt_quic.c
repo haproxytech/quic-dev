@@ -197,15 +197,15 @@ int ha_quic_set_encryption_secrets(SSL *ssl, enum ssl_encryption_level_t level,
 	tls_ctx->md = tls_md(cipher);
 	tls_ctx->hp = tls_hp(cipher);
 
-	hexdump(read_secret, secret_len, "read_secret (level %d):\n", level);
-	hexdump(write_secret, secret_len, "write_secret:\n");
+	HEXDUMP(read_secret, secret_len, "read_secret (level %d):\n", level);
+	HEXDUMP(write_secret, secret_len, "write_secret:\n");
 
 	if (!quic_tls_derive_keys(tls_ctx->aead, tls_ctx->hp, tls_ctx->md,
 	                          tls_ctx->rx.key, sizeof tls_ctx->rx.key,
 	                          tls_ctx->rx.iv, sizeof tls_ctx->rx.iv,
 	                          tls_ctx->rx.hp_key, sizeof tls_ctx->rx.hp_key,
 	                          read_secret, secret_len)) {
-		fprintf(stderr, "%s: RX key derivation failed\n", __func__);
+		QDPRINTF("%s: RX key derivation failed\n", __func__);
 		return 0;
 	}
 
@@ -214,7 +214,7 @@ int ha_quic_set_encryption_secrets(SSL *ssl, enum ssl_encryption_level_t level,
 	                          tls_ctx->tx.iv, sizeof tls_ctx->tx.iv,
 	                          tls_ctx->tx.hp_key, sizeof tls_ctx->tx.hp_key,
 	                          write_secret, secret_len)) {
-		fprintf(stderr, "%s: TX key derivation failed\n", __func__);
+		QDPRINTF("%s: TX key derivation failed\n", __func__);
 		return 0;
 	}
 
@@ -276,7 +276,7 @@ static int quic_crypto_data_cpy(struct quic_enc_level *qel,
 				qcb = &qel->tx.crypto.bufs[*nb_buf];
 				*qcb = pool_alloc(pool_head_quic_crypto_buf);
 				if (!*qcb) {
-					fprintf(stderr, "%s: crypto allocation failed\n", __func__);
+					QDPRINTF("%s: crypto allocation failed\n", __func__);
 					return 0;
 				}
 				(*qcb)->sz = 0;
@@ -314,11 +314,11 @@ int ha_quic_add_handshake_data(SSL *ssl, enum ssl_encryption_level_t level,
 		return 0;
 
 	if (!qel->tx.crypto.bufs) {
-		fprintf(stderr, "Crypto buffers could not be allacated\n");
+		QDPRINTF("Crypto buffers could not be allacated\n");
 		return 0;
 	}
 	if (!quic_crypto_data_cpy(qel, data, len)) {
-		fprintf(stderr, "Too much crypto data (%zu bytes)\n", len);
+		QDPRINTF("Too much crypto data (%zu bytes)\n", len);
 		return 0;
 	}
 
@@ -329,7 +329,7 @@ int ha_quic_flush_flight(SSL *ssl)
 {
 	struct connection *conn = SSL_get_ex_data(ssl, ssl_app_data_index);
 
-	fprintf(stderr, "%s\n", __func__);
+	QDPRINTF("%s\n", __func__);
 	tasklet_wakeup(((struct quic_conn_ctx *)conn->xprt_ctx)->wait_event.tasklet);
 
 	return 1;
@@ -337,7 +337,7 @@ int ha_quic_flush_flight(SSL *ssl)
 
 int ha_quic_send_alert(SSL *ssl, enum ssl_encryption_level_t level, uint8_t alert)
 {
-	fprintf(stderr, "%s\n", __func__);
+	QDPRINTF("%s\n", __func__);
 	return 1;
 }
 
@@ -716,13 +716,13 @@ static int quic_packet_encrypt(unsigned char *payload, size_t payload_len,
 	size_t tx_iv_sz = sizeof tls_ctx->tx.iv;
 
 	if (!quic_aead_iv_build(iv, sizeof iv, tx_iv, tx_iv_sz, pn)) {
-		fprintf(stderr, "AEAD IV building for encryption failed\n");
+		QDPRINTF("AEAD IV building for encryption failed\n");
 		return 0;
 	}
 
 	if (!quic_tls_encrypt(payload, payload_len, aad, aad_len,
 	                      tls_ctx->aead, tls_ctx->tx.key, iv)) {
-		fprintf(stderr, "QUIC packet encryption failed\n");
+		QDPRINTF("QUIC packet encryption failed\n");
 		return 0;
 	}
 
@@ -742,7 +742,7 @@ static int quic_packet_decrypt(struct quic_rx_packet *qpkt,
 	size_t rx_iv_sz = sizeof tls_ctx->rx.iv;
 
 	if (!quic_aead_iv_build(iv, sizeof iv, rx_iv, rx_iv_sz, qpkt->pn)) {
-		fprintf(stderr, "%s AEAD IV building failed\n", __func__);
+		QDPRINTF("%s AEAD IV building failed\n", __func__);
 		return 0;
 	}
 
@@ -750,15 +750,15 @@ static int quic_packet_decrypt(struct quic_rx_packet *qpkt,
 	                       qpkt->data, qpkt->aad_len,
 	                       tls_ctx->aead, tls_ctx->rx.key, iv);
 	if (!ret) {
-		fprintf(stderr, "%s: qpkt #%lu long %d decryption failed\n",
-		        __func__, qpkt->pn, qpkt->long_header);
+		QDPRINTF("%s: qpkt #%lu long %d decryption failed\n",
+		         __func__, qpkt->pn, qpkt->long_header);
 		return 0;
 	}
 
 	/* Update the packet length (required to parse the frames). */
 	qpkt->len = qpkt->aad_len + ret;
-	fprintf(stderr, "QUIC packet #%lu long header? %d decryption done\n",
-	        qpkt->pn, qpkt->long_header);
+	QDPRINTF("QUIC packet #%lu long header? %d decryption done\n",
+	         qpkt->pn, !!qpkt->long_header);
 
 	return 1;
 }
@@ -779,7 +779,7 @@ quic_ack_range_crypto_frames(struct eb_root *frms, uint64_t *crypto_in_flight,
 	node = eb64_lookup(frms, largest);
 	while (node && node->key >= smallest) {
 		frm = eb64_entry(&node->node, struct quic_tx_crypto_frm, pn);
-		fprintf(stderr, "Removing CRYPTO frame #%llu\n", frm->pn.key);
+		QDPRINTF("Removing CRYPTO frame #%llu\n", frm->pn.key);
 		*crypto_in_flight -= frm->len;
 		node = eb64_prev(node);
 		eb64_delete(&frm->pn);
@@ -818,8 +818,8 @@ quic_ack_range_with_gap_crypto_frames(struct eb_root *frms,
 		struct quic_tx_crypto_frm *prev_frm;
 
 		frm = eb64_entry(&node->node, struct quic_tx_crypto_frm, pn);
-		fprintf(stderr, "Should retransmit CRYPTO frame #%llu offset: %lu len: %zu\n",
-		        frm->pn.key, frm->offset, frm->len);
+		QDPRINTF("Should retransmit CRYPTO frame #%llu offset: %lu len: %zu\n",
+		         frm->pn.key, frm->offset, frm->len);
 		node = eb64_prev(node);
 		if (node && node->key > next_largest) {
 			prev_frm = eb64_entry(&node->node, struct quic_tx_crypto_frm, pn);
@@ -866,8 +866,8 @@ static int quic_parse_handshake_packet(struct quic_rx_packet *qpkt, struct quic_
 			break;
 		case QUIC_FT_PADDING:
 			if (pos != end) {
-				fprintf(stderr, "Wrong frame (remainging: %ld padding len: %lu)\n",
-				        end - pos, frm.padding.len);
+				QDPRINTF("Wrong frame (remainging: %ld padding len: %lu)\n",
+				         end - pos, frm.padding.len);
 			}
 			break;
 		case QUIC_FT_ACK:
@@ -876,13 +876,13 @@ static int quic_parse_handshake_packet(struct quic_rx_packet *qpkt, struct quic_
 			uint64_t smallest, largest;
 
 			if (ack->largest_ack > qel->pktns->tx.next_pn) {
-				fprintf(stderr, "ACK for not sent packet #%lu (%lu)\n",
-				        ack->largest_ack, qel->pktns->tx.next_pn);
+				QDPRINTF("ACK for not sent packet #%lu (%lu)\n",
+				         ack->largest_ack, qel->pktns->tx.next_pn);
 				return 0;
 			}
 
 			if (ack->first_ack_range > ack->largest_ack) {
-				fprintf(stderr, "Too big first ACK range #%lu\n", ack->first_ack_range);
+				QDPRINTF("Too big first ACK range #%lu\n", ack->first_ack_range);
 				return 0;
 			}
 
@@ -917,7 +917,7 @@ static int quic_parse_handshake_packet(struct quic_rx_packet *qpkt, struct quic_
 				largest = smallest - gap - 2;
 				smallest = largest - ack_range;
 
-				fprintf(stderr, "acks from %lu -> %lu\n", smallest, largest);
+				QDPRINTF("acks from %lu -> %lu\n", smallest, largest);
 			} while (1);
 
 			if (ack->largest_ack > qel->pktns->rx.largest_acked_pn)
@@ -1284,11 +1284,11 @@ static int quic_conn_do_handshake(struct quic_conn_ctx *ctx)
 			if (!quic_remove_header_protection(pqpkt, tls_ctx, enc_level->pktns->rx.largest_pn,
 			                                   pqpkt->data + pqpkt->pn_offset,
 			                                   pqpkt->data, pqpkt->data + pqpkt->len)) {
-				fprintf(stderr, "Could not remove packet header protection (state %d)\n", ctx->state);
+				QDPRINTF("Could not remove packet header protection (state %d)\n", ctx->state);
 				/* XXX TO DO XXX */
 			}
 			else {
-				fprintf(stderr, "Removed header protection of packet #%lu state: %d\n", pqpkt->pn, ctx->state);
+				QDPRINTF("Removed header protection of packet #%lu state: %d\n", pqpkt->pn, ctx->state);
 				/* Store the packet into the tree of packets to decrypt. */
 				pqpkt->pn_node.key = pqpkt->pn;
 				eb64_insert(&enc_level->rx.qpkts, &pqpkt->pn_node);
@@ -1307,7 +1307,7 @@ static int quic_conn_do_handshake(struct quic_conn_ctx *ctx)
 				return 0;
 
 			if (!quic_parse_handshake_packet(qpkt, ctx, enc_level)) {
-				fprintf(stderr,  "Could not parse the packet frames\n");
+				QDPRINTF( "Could not parse the packet frames\n");
 				return 0;
 			}
 
@@ -1326,11 +1326,11 @@ static int quic_conn_do_handshake(struct quic_conn_ctx *ctx)
 		}
 		qpkt_node = eb64_next(qpkt_node);
 		if (qpkt->crypto.offset == enc_level->rx.crypto.offset) {
-			fprintf(stderr, "crypto frame as expected\n");
-			hexdump(qpkt->crypto.data, qpkt->crypto.len, "CRYPTO frame:\n");
+			QDPRINTF("crypto frame as expected\n");
+			HEXDUMP(qpkt->crypto.data, qpkt->crypto.len, "CRYPTO frame:\n");
 			if (SSL_provide_quic_data(ctx->ssl, SSL_quic_read_level(ctx->ssl),
 									  qpkt->crypto.data, qpkt->crypto.len) != 1) {
-				fprintf(stderr, "%s SSL providing QUIC data error\n", __func__);
+				QDPRINTF("%s SSL providing QUIC data error\n", __func__);
 				return 0;
 			}
 			enc_level->rx.crypto.offset += qpkt->crypto.len;
@@ -1340,7 +1340,7 @@ static int quic_conn_do_handshake(struct quic_conn_ctx *ctx)
 	}
 
 	if (quic_conn->retransmit)
-		fprintf(stderr, "%s retransmission asked\n", __func__);
+		QDPRINTF("%s retransmission asked\n", __func__);
 	if (quic_conn->retransmit &&
 	    !quic_prepare_handshake_packet_retransmission(ctx))
 		return 0;
@@ -1365,22 +1365,22 @@ static int quic_conn_do_handshake(struct quic_conn_ctx *ctx)
 	ret = SSL_do_handshake(ctx->ssl);
 	if (ret != 1) {
 		ret = SSL_get_error(ctx->ssl, ret);
-		fprintf(stderr, "SSL_do_handshake() error: %d\n", ret);
+		QDPRINTF("SSL_do_handshake() error: %d\n", ret);
 		return ret == SSL_ERROR_WANT_READ || ret == SSL_ERROR_WANT_WRITE;
 	}
 
-	fprintf(stderr, "SSL_do_handhake() succeeded\n");
+	QDPRINTF("SSL_do_handhake() succeeded\n");
 
 	if (ctx->state == QUIC_HS_ST_SERVER_HANSHAKE)
 		ctx->conn->flags &= ~CO_FL_SSL_WAIT_HS;
 
 	ret = SSL_process_quic_post_handshake(ctx->ssl);
 	if (ret != 1) {
-		fprintf(stderr, "SSL_process_quic_post_handshake() error: %d\n", ret);
+		QDPRINTF("SSL_process_quic_post_handshake() error: %d\n", ret);
 		return 0;
 	}
 
-	fprintf(stderr, "SSL_process_quic_post_handshake() succeeded\n");
+	QDPRINTF("SSL_process_quic_post_handshake() succeeded\n");
 
 	if (!quic_build_post_handshake_frames(quic_conn) ||
 	    !quic_prepare_post_handshake_packets(quic_conn) ||
@@ -1407,7 +1407,7 @@ static int quic_treat_packets(struct quic_conn_ctx *ctx)
 	quic_conn = ctx->conn->quic_conn;
 	enc_level = &quic_conn->enc_levels[QUIC_TLS_ENC_LEVEL_APP];
 	if (eb_is_empty(&enc_level->rx.qpkts)) {
-		fprintf(stderr, "empty tree for APP level encryption\n");
+		QDPRINTF("empty tree for APP level encryption\n");
 		enc_level = &quic_conn->enc_levels[QUIC_TLS_ENC_LEVEL_HANDSHAKE];
 	}
 	tls_ctx = &enc_level->tls_ctx;
@@ -1420,7 +1420,7 @@ static int quic_treat_packets(struct quic_conn_ctx *ctx)
 			return 0;
 
 		if (!quic_parse_packet_frames(qpkt)) {
-			fprintf(stderr,  "Could not parse the packet frames\n");
+			QDPRINTF( "Could not parse the packet frames\n");
 			return 0;
 		}
 
@@ -1446,10 +1446,10 @@ static struct task *quic_conn_io_cb(struct task *t, void *context, unsigned shor
 {
 	struct quic_conn_ctx *ctx = context;
 
-	fprintf(stderr, "%s: tid: %u\n", __func__, tid);
+	QDPRINTF("%s: tid: %u\n", __func__, tid);
 	if (ctx->conn->flags & CO_FL_SSL_WAIT_HS) {
 		if (!quic_conn_do_handshake(ctx))
-			fprintf(stderr, "%s SSL handshake error\n", __func__);
+			QDPRINTF("%s SSL handshake error\n", __func__);
 	}
 	else {
 		quic_treat_packets(ctx);
@@ -1461,7 +1461,7 @@ static struct task *quic_conn_io_cb(struct task *t, void *context, unsigned shor
 /* We can't have an underlying XPRT, so just return -1 to signify failure */
 static int quic_conn_remove_xprt(struct connection *conn, void *xprt_ctx, void *toremove_ctx, const struct xprt_ops *newops, void *newctx)
 {
-	fprintf(stderr, "%s\n", __func__);
+	QDPRINTF("%s\n", __func__);
 	/* This is the lowest xprt we can have, so if we get there we didn't
 	 * find the xprt we wanted to remove, that's a bug
 	 */
@@ -1519,7 +1519,7 @@ static int quic_conn_enc_level_init(struct quic_enc_level *qel)
 
 	qel->tx.crypto.bufs[0] = pool_alloc(pool_head_quic_crypto_buf);
 	if (!qel->tx.crypto.bufs[0]) {
-		fprintf(stderr, "%s: could not allocated any crypto buffer\n", __func__);
+		QDPRINTF("%s: could not allocated any crypto buffer\n", __func__);
 		goto err;
 	}
 
@@ -1635,7 +1635,7 @@ static int quic_new_conn_init(struct quic_conn *conn,
 	struct quic_tls_ctx *tls_ctx;
 
 	conn->cids = EB_ROOT;
-	fprintf(stderr, "%s: new quic_conn @%p\n", __func__, conn);
+	QDPRINTF("%s: new quic_conn @%p\n", __func__, conn);
 	/* QUIC Server (or listener). */
 	if (objt_listener(conn->conn->target)) {
 		/* Copy the initial DCID. */
@@ -1815,7 +1815,7 @@ static int quic_conn_init(struct connection *conn, void **xprt_ctx)
 		tls_ctx = &quic_conn->enc_levels[QUIC_TLS_ENC_LEVEL_INITIAL].tls_ctx;
 		quic_initial_tls_ctx_init(tls_ctx);
 		if (!quic_conn_derive_initial_secrets(tls_ctx, dcid, sizeof dcid, 0)) {
-			fprintf(stderr, "Could not derive initial secrets\n");
+			QDPRINTF("Could not derive initial secrets\n");
 			goto err;
 		}
 
@@ -1823,7 +1823,7 @@ static int quic_conn_init(struct connection *conn, void **xprt_ctx)
 		ctx->state = QUIC_HS_ST_CLIENT_INITIAL;
 		if (ssl_bio_and_sess_init(conn, srv->ssl_ctx.ctx,
 		                          &ctx->ssl, &ctx->bio, ha_quic_meth, ctx) == -1) {
-			fprintf(stderr, "Could not initiliaze SSL ctx\n");
+			QDPRINTF("Could not initiliaze SSL ctx\n");
 			goto err;
 		}
 
@@ -1835,7 +1835,7 @@ static int quic_conn_init(struct connection *conn, void **xprt_ctx)
 			                             quic_conn->enc_params + sizeof quic_conn->enc_params,
 			                             &quic_conn->params, 0);
 		if (!quic_conn->enc_params_len) {
-			fprintf(stderr, "QUIC transport parameters encoding failed");
+			QDPRINTF("QUIC transport parameters encoding failed");
 			goto err;
 		}
 		SSL_set_quic_transport_params(ctx->ssl, quic_conn->enc_params, quic_conn->enc_params_len);
@@ -1876,7 +1876,7 @@ static int quic_conn_init(struct connection *conn, void **xprt_ctx)
 /* Release the SSL context of <srv> server. */
 void quic_conn_free_srv_ctx(struct server *srv)
 {
-	fprintf(stderr, "%s\n", __func__);
+	QDPRINTF("%s\n", __func__);
 	if (srv->ssl_ctx.ctx)
 		SSL_CTX_free(srv->ssl_ctx.ctx);
 }
@@ -1908,7 +1908,7 @@ int quic_conn_prepare_srv_ctx(struct server *srv)
 	SSL_CTX_set_max_proto_version(ctx, TLS1_3_VERSION);
 
 	SSL_CTX_set_mode(ctx, mode);
-	fprintf(stderr, "%s SSL ctx mode: %ld\n", __func__, mode);
+	QDPRINTF("%s SSL ctx mode: %ld\n", __func__, mode);
 
 	srv->ssl_ctx.ctx = ctx;
 	if (srv->ssl_ctx.client_crt) {
@@ -2063,7 +2063,7 @@ static int quic_new_cli_conn(struct quic_conn *quic_conn,
 	if (!sockaddr_alloc(&cli_conn->dst))
 		goto out_free_conn;
 
-	fprintf(stderr, "%s conn: @%p\n", __func__, cli_conn);
+	QDPRINTF("%s conn: @%p\n", __func__, cli_conn);
 	quic_conn->conn = cli_conn;
 	cli_conn->quic_conn = quic_conn;
 
@@ -2201,7 +2201,7 @@ static inline int quic_packet_read_payload(struct quic_rx_packet *qpkt,
 	 */
 	pn = *buf;
 	if (pn - beg + qpkt->len > sizeof qpkt->data) {
-		fprintf(stderr, "Too big packet %zu\n", pn - beg + qpkt->len);
+		QDPRINTF("Too big packet %zu\n", pn - beg + qpkt->len);
 		return 0;
 	}
 
@@ -2218,12 +2218,12 @@ static inline int quic_packet_read_payload(struct quic_rx_packet *qpkt,
 		if (!quic_remove_header_protection(qpkt, &qel->tls_ctx,
 		                                   qel->pktns->rx.largest_pn,
 		                                   pn, beg, end)) {
-			fprintf(stderr, "Could not remove packet header protection\n");
+			QDPRINTF("Could not remove packet header protection\n");
 			return 0;
 		}
 
-		fprintf(stderr, "%s inserting packet number: %lu enc. level: %d\n",
-				__func__, qpkt->pn, tel);
+		QDPRINTF("%s inserting packet number: %lu enc. level: %d\n",
+		         __func__, qpkt->pn, tel);
 
 		/* Store the packet */
 		qpkt->pn_node.key = qpkt->pn;
@@ -2232,8 +2232,8 @@ static inline int quic_packet_read_payload(struct quic_rx_packet *qpkt,
 		qpkt->aad_len = pn - beg + qpkt->pnl;
 	}
 	else {
-		fprintf(stderr, "packet header protection was not "
-		        "removed (enc. level %d)\n", tel);
+		QDPRINTF("packet header protection was not "
+		         "removed (enc. level %d)\n", tel);
 		qpkt->pn_offset = pn - beg;
 		LIST_ADDQ(&qel->rx.pqpkts, &qpkt->list);
 	}
@@ -2299,7 +2299,7 @@ static ssize_t quic_server_packet_read(unsigned char **buf, const unsigned char 
 
 		node = ebmb_lookup(cids, qpkt->dcid.data, cid_lookup_len);
 		if (!node) {
-			fprintf(stderr, "Connection not found.\n");
+			QDPRINTF("Connection not found.\n");
 			goto err;
 		}
 		conn = ebmb_entry(node, struct quic_conn, scid_node);
@@ -2329,13 +2329,13 @@ static ssize_t quic_server_packet_read(unsigned char **buf, const unsigned char 
 	else {
 		/* XXX TO DO: Short header XXX */
 		if (end - *buf < QUIC_CID_LEN) {
-			fprintf(stderr, "Too short short headder\n");
+			QDPRINTF("Too short short headder\n");
 			goto err;
 		}
 		cids = &((struct server *)__objt_server(srv_conn->target))->cids;
 		node = ebmb_lookup(cids, *buf, QUIC_CID_LEN);
 		if (!node) {
-			fprintf(stderr, "Unknonw connection ID\n");
+			QDPRINTF("Unknonw connection ID\n");
 			goto err;
 		}
 
@@ -2349,7 +2349,8 @@ static ssize_t quic_server_packet_read(unsigned char **buf, const unsigned char 
 	 */
 	if (qpkt->long_header && qpkt->type != QUIC_PACKET_TYPE_RETRY && qpkt->version) {
 		if (!quic_dec_int(&len, (const unsigned char **)buf, end) || end - *buf < len) {
-			fprintf(stderr, "Could not decode the packet length or too short packet (%zu, %zu)\n", len, end - *buf);
+			QDPRINTF("Could not decode the packet length or "
+			         "too short packet (%zu, %zu)\n", len, end - *buf);
 			goto err;
 		}
 		qpkt->len = len;
@@ -2358,7 +2359,7 @@ static ssize_t quic_server_packet_read(unsigned char **buf, const unsigned char 
 		/* A short packet is the last one of an UDP datagram. */
 		qpkt->len = end - *buf;
 	}
-	fprintf(stderr, "%s packet length: %zu\n", __func__, qpkt->len);
+	QDPRINTF("%s packet length: %zu\n", __func__, qpkt->len);
 
 	if (!quic_packet_read_payload(qpkt, buf, beg, end, conn))
 		goto err;
@@ -2371,7 +2372,7 @@ static ssize_t quic_server_packet_read(unsigned char **buf, const unsigned char 
 	return qpkt->len;
 
  err:
-	fprintf(stderr, "%s failed\n", __func__);
+	QDPRINTF("%s failed\n", __func__);
 	return -1;
 }
 
@@ -2435,7 +2436,7 @@ static ssize_t quic_listener_packet_read(unsigned char **buf, const unsigned cha
 			struct quic_cid *odcid;
 
 			if (qpkt->type != QUIC_PACKET_TYPE_INITIAL) {
-				fprintf(stderr, "Connection not found.\n");
+				QDPRINTF("Connection not found.\n");
 				goto err;
 			}
 
@@ -2500,7 +2501,7 @@ static ssize_t quic_listener_packet_read(unsigned char **buf, const unsigned cha
 			if (!ctx->hp) {
 				quic_initial_tls_ctx_init(ctx);
 				if (!quic_conn_derive_initial_secrets(ctx, qpkt->dcid.data, qpkt->dcid.len - sizeof *saddr, 1)) {
-					fprintf(stderr, "Could not derive initial secrets\n");
+					QDPRINTF("Could not derive initial secrets\n");
 					goto err;
 				}
 			}
@@ -2509,13 +2510,13 @@ static ssize_t quic_listener_packet_read(unsigned char **buf, const unsigned cha
 	else {
 		/* XXX TO DO: Short header XXX */
 		if (end - *buf < QUIC_CID_LEN) {
-			fprintf(stderr, "Too short short headder\n");
+			QDPRINTF("Too short short headder\n");
 			goto err;
 		}
 		cids = &l->cids;
 		node = ebmb_lookup(cids, *buf, QUIC_CID_LEN);
 		if (!node) {
-			fprintf(stderr, "Unknonw connection ID\n");
+			QDPRINTF("Unknonw connection ID\n");
 			goto err;
 		}
 		conn = ebmb_entry(node, struct quic_conn, scid_node);
@@ -2528,7 +2529,8 @@ static ssize_t quic_listener_packet_read(unsigned char **buf, const unsigned cha
 	 */
 	if (qpkt->long_header && qpkt->type != QUIC_PACKET_TYPE_RETRY && qpkt->version) {
 		if (!quic_dec_int(&len, (const unsigned char **)buf, end) || end - *buf < len) {
-			fprintf(stderr, "Could not decode the packet length or too short packet (%zu, %zu)\n", len, end - *buf);
+			QDPRINTF("Could not decode the packet length or "
+			         "too short packet (%zu, %zu)\n", len, end - *buf);
 			goto err;
 		}
 		qpkt->len = len;
@@ -2537,7 +2539,7 @@ static ssize_t quic_listener_packet_read(unsigned char **buf, const unsigned cha
 		/* A short packet is the last one of an UDP datagram. */
 		qpkt->len = end - *buf;
 	}
-	fprintf(stderr, "%s packet length: %zu\n", __func__, qpkt->len);
+	QDPRINTF("%s packet length: %zu\n", __func__, qpkt->len);
 
 	if (!quic_packet_read_payload(qpkt, buf, beg, end, conn))
 		goto err;
@@ -2554,7 +2556,7 @@ static ssize_t quic_listener_packet_read(unsigned char **buf, const unsigned cha
 	return qpkt->len;
 
  err:
-	fprintf(stderr, "%s failed\n", __func__);
+	QDPRINTF("%s failed\n", __func__);
 	return -1;
 }
 
@@ -2842,7 +2844,7 @@ static ssize_t quic_build_handshake_packet(struct q_buf *buf, struct quic_conn *
 	pkt_len = quic_do_build_handshake_packet(buf, pkt_type, &buf_pn, &pn_len,
 	                                         &next_offset, len, qel, qc);
 	if (pkt_len < 0) {
-		fprintf(stderr, "%s returns %zd\n", __func__, pkt_len);
+		QDPRINTF("%s returns %zd\n", __func__, pkt_len);
 		return pkt_len;
 	}
 
@@ -2859,13 +2861,13 @@ static ssize_t quic_build_handshake_packet(struct q_buf *buf, struct quic_conn *
 	end += QUIC_TLS_TAG_LEN;
 	if (!quic_apply_header_protection(beg, buf_pn, pn_len,
 	                                  tls_ctx->hp, tls_ctx->tx.hp_key)) {
-		fprintf(stderr, "Could not apply the header protection\n");
+		QDPRINTF("Could not apply the header protection\n");
 		return -3;
 	}
 
 	cf = pool_alloc(pool_head_quic_tx_crypto_frm);
 	if (!cf) {
-		fprintf(stderr, "CRYPTO frame allocation failed\n");
+		QDPRINTF("CRYPTO frame allocation failed\n");
 		return -3;
 	}
 	/*
@@ -2924,8 +2926,8 @@ static ssize_t quic_do_build_post_handshake_app_packet(struct q_buf *wbuf,
 
 		ppos = pos;
 		if (!quic_build_frame(&ppos, end, frm)) {
-			fprintf(stderr, "%s: Could not build frame %s\n", __func__,
-			        quic_frame_type_string(frm->type));
+			QDPRINTF("%s: Could not build frame %s\n",
+			         __func__, quic_frame_type_string(frm->type));
 			break;
 		}
 		LIST_DEL(&frm->list);
@@ -2953,7 +2955,7 @@ static ssize_t quic_build_post_handshake_app_packet(struct q_buf *wbuf,
 
 	pkt_len = quic_do_build_post_handshake_app_packet(wbuf, pn, &pn_len, &buf_pn, qel, conn);
 	if (pkt_len < 0) {
-		fprintf(stderr, "%s returns %zd\n", __func__, pkt_len);
+		QDPRINTF("%s returns %zd\n", __func__, pkt_len);
 		return pkt_len;
 	}
 
@@ -2968,7 +2970,7 @@ static ssize_t quic_build_post_handshake_app_packet(struct q_buf *wbuf,
 
 	if (!quic_apply_header_protection(beg, buf_pn, pn_len,
 	                                  tls_ctx->hp, tls_ctx->tx.hp_key)) {
-		fprintf(stderr, "%s: could not apply header protection\n", __func__);
+		QDPRINTF("%s: could not apply header protection\n", __func__);
 		return -2;
 	}
 
@@ -3032,7 +3034,7 @@ static ssize_t quic_packets_read(char *buf, size_t len, void *ctx,
 
 		qpkt = pool_alloc(pool_head_quic_rx_packet);
 		if (!qpkt) {
-			fprintf(stderr, "Not enough memory to allocate a new packet\n");
+			QDPRINTF("Not enough memory to allocate a new packet\n");
 			goto err;
 		}
 
@@ -3041,7 +3043,7 @@ static ssize_t quic_packets_read(char *buf, size_t len, void *ctx,
 			pool_free(pool_head_quic_rx_packet, qpkt);
 			goto err;
 		}
-		fprintf(stderr, "long header? %d packet type: 0x%02x \n", !!qpkt->long_header, qpkt->type);
+		QDPRINTF("long header? %d packet type: 0x%02x \n", !!qpkt->long_header, qpkt->type);
 	} while (pos < end);
 
 	return pos - (unsigned char *)buf;
@@ -3079,9 +3081,8 @@ static size_t quic_conn_handler(int fd, void *ctx, qpkt_read_func *func)
 		}
 	} while (0);
 
-	fprintf(stderr, "-------------------------------------------"
-					"-----------------\n%s: recvfrom() server (%ld)\n",
-					__func__, ret);
+	QDPRINTF("-------------------------------------------"
+	         "-----------------\n%s: recvfrom() server (%ld)\n", __func__, ret);
 
 	done = buf->data = ret;
 	quic_packets_read(buf->area, buf->data, ctx, &saddr, &saddrlen, func);

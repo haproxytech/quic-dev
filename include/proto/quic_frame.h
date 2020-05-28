@@ -198,30 +198,29 @@ static int inline quic_parse_ack_frame_header(struct quic_frame *frm,
 {
 	int ret;
 	struct quic_ack *ack = &frm->ack;
-	uint64_t smallest;
 
 	ret = quic_dec_int(&ack->largest_ack, buf, end);
 	if (!ret)
 		return 0;
 
-	fprintf(stderr, "+++++++++++\nlargest_ack    : %lu\n", ack->largest_ack);
+	QDPRINTF("+++++++++++\nlargest_ack    : %lu\n", ack->largest_ack);
 	ret = quic_dec_int(&ack->ack_delay, buf, end);
 	if (!ret)
 		return 0;
 
-	fprintf(stderr, "ack_delay      : %lu\n", ack->ack_delay);
+	QDPRINTF("ack_delay      : %lu\n", ack->ack_delay);
 	ret = quic_dec_int(&ack->ack_range_num, buf, end);
 	if (!ret)
 		return 0;
 
-	fprintf(stderr, "ack_range_num  : %lu\n", ack->ack_range_num);
+	QDPRINTF("ack_range_num  : %lu\n", ack->ack_range_num);
 	ret = quic_dec_int(&ack->first_ack_range, buf, end);
 	if (!ret)
 		return 0;
 
-	fprintf(stderr, "first_ack_range: %lu\n", ack->first_ack_range);
-	smallest = ack->largest_ack - ack->first_ack_range;
-	fprintf(stderr, "acks from %lu -> %lu\n", smallest, ack->largest_ack);
+	QDPRINTF("first_ack_range: %lu\n", ack->first_ack_range);
+	QDPRINTF("acks from %lu -> %lu\n",
+	         ack->largest_ack - ack->first_ack_range, ack->largest_ack);
 
 	return 1;
 }
@@ -901,7 +900,7 @@ static inline int quic_build_frame(unsigned char **buf, const unsigned char *end
 	if (end <= *buf)
 		return 0;
 
-	fprintf(stderr, "%s: %s frame\n", __func__, quic_frame_type_string(frm->type));
+	QDPRINTF("%s: %s frame\n", __func__, quic_frame_type_string(frm->type));
 	*(*buf)++ = frm->type;
 
 	return quic_build_frame_funcs[frm->type](buf, end, frm);
@@ -919,11 +918,11 @@ static inline int quic_parse_frame(struct quic_frame *frm,
 
 	frm->type = *(*buf)++;
 	if (frm->type > QUIC_FT_MAX) {
-		fprintf(stderr, "%s: wrong frame 0x%02x\n", __func__, frm->type);
+		QDPRINTF("%s: wrong frame 0x%02x\n", __func__, frm->type);
 		return 0;
 	}
 
-	fprintf(stderr, "%s: %s frame\n", __func__, quic_frame_type_string(frm->type));
+	QDPRINTF("%s: %s frame\n", __func__, quic_frame_type_string(frm->type));
 
 	return quic_parse_frame_funcs[frm->type](frm, buf, end);
 }

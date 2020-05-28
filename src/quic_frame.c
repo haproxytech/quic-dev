@@ -32,7 +32,7 @@ int quic_parse_packet_frames(struct quic_rx_packet *qpkt)
 			case QUIC_FT_PADDING:
 				/* This frame must be the last found in the packet. */
 				if (pos != end) {
-					fprintf(stderr, "Wrong frame! (%ld len: %lu)\n", end - pos, frm.padding.len);
+					QDPRINTF("Wrong frame! (%ld len: %lu)\n", end - pos, frm.padding.len);
 					return 0;
 				}
 				break;
