@@ -2977,6 +2977,8 @@ static ssize_t quic_build_post_handshake_app_packet(struct q_buf *wbuf,
 
 	end += QUIC_TLS_TAG_LEN;
 	q_buf_setpos(wbuf, end);
+	/* Increment the account of written data. */
+	wbuf->data += end - beg;
 
 	return end - beg;
 }
