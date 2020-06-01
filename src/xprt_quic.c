@@ -71,9 +71,13 @@ static void quic_trace(enum trace_level level, uint64_t mask, \
 
 static const struct trace_event quic_trace_events[] = {
 #define           QUIC_EV_CONN_NEW       (1ULL <<  0)
-	{ .mask = QUIC_EV_CONN_NEW,      .name = "quic_conn_new",     .desc = "new QUIC connection" },
-#define           QUIC_EV_CONN_ERR       (1ULL <<  10)
-	{ .mask = QUIC_EV_CONN_ERR,      .name = "quic_conn_err",     .desc = "error on QUIC connection" },
+	{ .mask = QUIC_EV_CONN_NEW,      .name = "new_conn",         .desc = "new QUIC connection" },
+#define           QUIC_EV_CONN_ISEC      (1ULL <<  1)
+	{ .mask = QUIC_EV_CONN_ISEC,     .name = "init_secs",        .desc = "initial secrets derivation" },
+#define           QUIC_EV_CONN_ENEW      (1ULL <<  10)
+	{ .mask = QUIC_EV_CONN_ENEW,     .name = "new_conn_err",     .desc = "error on new QUIC connection" },
+#define           QUIC_EV_CONN_EISEC     (1ULL <<  11)
+	{ .mask = QUIC_EV_CONN_EISEC,    .name = "init_secs_err",    .desc = "error on initial secrets derivation" },
 	{ /* end */ }
 };
 
@@ -180,8 +184,14 @@ static void quic_trace(enum trace_level level, uint64_t mask, const struct trace
                        const void *a1, const void *a2, const void *a3, const void *a4)
 {
 	const struct connection *conn = a1;
+	struct quic_tls_ctx *ictx;
 
-	chunk_appendf(&trace_buf, " : conn=%p %p %p %p", conn, a2, a3, a4);
+	if (conn) {
+		ictx = &conn->quic_conn->enc_levels[QUIC_TLS_ENC_LEVEL_INITIAL].tls_ctx;
+		chunk_appendf(&trace_buf, " : conn=%p", conn);
+		if ((mask & QUIC_EV_CONN_ISEC) && ictx->hp)
+			quic_tls_keys_hexdump(&trace_buf, ictx);
+	}
 }
 
 int ha_quic_set_encryption_secrets(SSL *ssl, enum ssl_encryption_level_t level,
@@ -1714,9 +1724,9 @@ static int quic_new_conn_init(struct quic_conn *conn,
  * depending on <server> boolean value.
  * Return 1 if succeeded or 0 if not.
  */
-static int quic_conn_derive_initial_secrets(struct quic_tls_ctx *ctx,
-                                            const unsigned char *cid, size_t cidlen,
-                                            int server)
+static int qc_new_initial_secrets(struct connection *conn,
+                                  const unsigned char *cid, size_t cidlen,
+                                  int server)
 {
 	unsigned char initial_secret[32];
 	/* Initial secret to be derived for incoming packets */
@@ -1724,18 +1734,21 @@ static int quic_conn_derive_initial_secrets(struct quic_tls_ctx *ctx,
 	/* Initial secret to be derived for outgoing packets */
 	unsigned char tx_init_sec[32];
 	struct quic_tls_secrets *rx_ctx, *tx_ctx;
+	struct quic_tls_ctx *ctx;
 
-
+	TRACE_ENTER(QUIC_EV_CONN_ISEC, conn);
+	ctx = &conn->quic_conn->enc_levels[QUIC_TLS_ENC_LEVEL_INITIAL].tls_ctx;
+	quic_initial_tls_ctx_init(ctx);
 	if (!quic_derive_initial_secret(ctx->md,
 	                                initial_secret, sizeof initial_secret,
 	                                cid, cidlen))
-		return 0;
+		goto err;
 
 	if (!quic_tls_derive_initial_secrets(ctx->md,
 	                                     rx_init_sec, sizeof rx_init_sec,
 	                                     tx_init_sec, sizeof tx_init_sec,
 	                                     initial_secret, sizeof initial_secret, server))
-	    return 0;
+		goto err;
 
 	rx_ctx = &ctx->rx;
 	tx_ctx = &ctx->tx;
@@ -1744,16 +1757,22 @@ static int quic_conn_derive_initial_secrets(struct quic_tls_ctx *ctx,
 	                          rx_ctx->iv, sizeof rx_ctx->iv,
 	                          rx_ctx->hp_key, sizeof rx_ctx->hp_key,
 	                          rx_init_sec, sizeof rx_init_sec))
-		return 0;
+		goto err;
 
 	if (!quic_tls_derive_keys(ctx->aead, ctx->hp, ctx->md,
 	                          tx_ctx->key, sizeof tx_ctx->key,
 	                          tx_ctx->iv, sizeof tx_ctx->iv,
 	                          tx_ctx->hp_key, sizeof tx_ctx->hp_key,
 	                          tx_init_sec, sizeof tx_init_sec))
-		return 0;
+		goto err;
+
+	TRACE_LEAVE(QUIC_EV_CONN_ISEC, conn);
 
 	return 1;
+
+ err:
+	TRACE_DEVEL("leaving in error", QUIC_EV_CONN_EISEC|QUIC_EV_CONN_EISEC, conn);
+	return 0;
 }
 
 /*
@@ -1765,7 +1784,7 @@ static int quic_conn_init(struct connection *conn, void **xprt_ctx)
 {
 	struct quic_conn_ctx *ctx;
 
-	TRACE_ENTER(QUIC_EV_CONN_NEW);
+	TRACE_ENTER(QUIC_EV_CONN_NEW, conn);
 
 	if (*xprt_ctx)
 		return 0;
@@ -1796,7 +1815,6 @@ static int quic_conn_init(struct connection *conn, void **xprt_ctx)
 	if (objt_server(conn->target)) {
 		struct server *srv = __objt_server(conn->target);
 		unsigned char dcid[QUIC_CID_LEN];
-		struct quic_tls_ctx *tls_ctx;
 		struct quic_conn *quic_conn;
 
 		if (RAND_bytes(dcid, sizeof dcid) != 1)
@@ -1812,9 +1830,7 @@ static int quic_conn_init(struct connection *conn, void **xprt_ctx)
 		                        dcid, sizeof dcid, NULL, 0))
 			goto err;
 
-		tls_ctx = &quic_conn->enc_levels[QUIC_TLS_ENC_LEVEL_INITIAL].tls_ctx;
-		quic_initial_tls_ctx_init(tls_ctx);
-		if (!quic_conn_derive_initial_secrets(tls_ctx, dcid, sizeof dcid, 0)) {
+		if (!qc_new_initial_secrets(conn, dcid, sizeof dcid, 0)) {
 			QDPRINTF("Could not derive initial secrets\n");
 			goto err;
 		}
@@ -1869,7 +1885,7 @@ static int quic_conn_init(struct connection *conn, void **xprt_ctx)
 	if (ctx->wait_event.tasklet)
 		tasklet_free(ctx->wait_event.tasklet);
 	pool_free(pool_head_quic_conn_ctx, ctx);
-	TRACE_DEVEL("leaving in error", QUIC_EV_CONN_NEW|QUIC_EV_CONN_ERR, conn);
+	TRACE_DEVEL("leaving in error", QUIC_EV_CONN_NEW|QUIC_EV_CONN_ENEW, conn);
 	return -1;
 }
 
@@ -2498,12 +2514,10 @@ static ssize_t quic_listener_packet_read(unsigned char **buf, const unsigned cha
 			 * NOTE: the socket address it concatenated to the destination ID choosen by the client
 			 * for Initial packets.
 			 */
-			if (!ctx->hp) {
-				quic_initial_tls_ctx_init(ctx);
-				if (!quic_conn_derive_initial_secrets(ctx, qpkt->dcid.data, qpkt->dcid.len - sizeof *saddr, 1)) {
-					QDPRINTF("Could not derive initial secrets\n");
-					goto err;
-				}
+			if (!ctx->hp && !qc_new_initial_secrets(conn->conn, qpkt->dcid.data,
+			                                        qpkt->dcid.len - sizeof *saddr, 1)) {
+				QDPRINTF("Could not derive initial secrets\n");
+				goto err;
 			}
 		}
 	}
