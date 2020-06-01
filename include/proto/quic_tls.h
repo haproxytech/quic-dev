@@ -19,6 +19,8 @@
 
 #include <types/quic_tls.h>
 
+void quic_tls_keys_hexdump(struct buffer *buf, struct quic_tls_ctx *ctx);
+
 int quic_derive_initial_secret(const EVP_MD *md,
                                unsigned char *initial_secret, size_t initial_secret_sz,
                                const unsigned char *secret, size_t secret_sz);
