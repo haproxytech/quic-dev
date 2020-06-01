@@ -194,6 +194,7 @@ static void quic_trace(enum trace_level level, uint64_t mask, const struct trace
 	}
 }
 
+#ifndef OPENSSL_IS_BORINGSSL
 int ha_quic_set_encryption_secrets(SSL *ssl, enum ssl_encryption_level_t level,
                                    const uint8_t *read_secret,
                                    const uint8_t *write_secret, size_t secret_len)
@@ -243,6 +244,66 @@ int ha_quic_set_encryption_secrets(SSL *ssl, enum ssl_encryption_level_t level,
 
 	return 1;
 }
+#else
+/*
+ * ->set_read_secret callback to derive the RX secrets at <level>
+ * encryption level.
+ * Returns 1 if succedded, 0 if not.
+ */
+int ha_set_read_secret(SSL *ssl, enum ssl_encryption_level_t level,
+                       const SSL_CIPHER *cipher,
+                       const uint8_t *secret, size_t secret_len)
+{
+	struct connection *conn = SSL_get_ex_data(ssl, ssl_app_data_index);
+	struct quic_tls_ctx *tls_ctx =
+		&conn->quic_conn->enc_levels[ssl_to_quic_enc_level(level)].tls_ctx;
+
+	tls_ctx->aead = tls_aead(cipher);
+	tls_ctx->md = tls_md(cipher);
+	tls_ctx->hp = tls_hp(cipher);
+
+	HEXDUMP(secret, secret_len, "RX secret (level %d):\n", level);
+	if (!quic_tls_derive_keys(tls_ctx->aead, tls_ctx->hp, tls_ctx->md,
+	                          tls_ctx->rx.key, sizeof tls_ctx->rx.key,
+	                          tls_ctx->rx.iv, sizeof tls_ctx->rx.iv,
+	                          tls_ctx->rx.hp_key, sizeof tls_ctx->rx.hp_key,
+	                          secret, secret_len)) {
+		QDPRINTF("%s: RX key derivation failed\n", __func__);
+		return 0;
+	}
+
+	return 1;
+}
+/*
+ * ->set_write_secret callback to derive the TX secrets at <level>
+ * encryption level.
+ * Returns 1 if succedded, 0 if not.
+ */
+int ha_set_write_secret(SSL *ssl, enum ssl_encryption_level_t level,
+                        const SSL_CIPHER *cipher,
+                        const uint8_t *secret, size_t secret_len)
+{
+	struct connection *conn = SSL_get_ex_data(ssl, ssl_app_data_index);
+	struct quic_tls_ctx *tls_ctx =
+		&conn->quic_conn->enc_levels[ssl_to_quic_enc_level(level)].tls_ctx;
+
+	tls_ctx->aead = tls_aead(cipher);
+	tls_ctx->md = tls_md(cipher);
+	tls_ctx->hp = tls_hp(cipher);
+
+	HEXDUMP(secret, secret_len, "TX secret (level %d):\n", level);
+	if (!quic_tls_derive_keys(tls_ctx->aead, tls_ctx->hp, tls_ctx->md,
+	                          tls_ctx->tx.key, sizeof tls_ctx->tx.key,
+	                          tls_ctx->tx.iv, sizeof tls_ctx->tx.iv,
+	                          tls_ctx->tx.hp_key, sizeof tls_ctx->tx.hp_key,
+	                          secret, secret_len)) {
+		QDPRINTF("%s: TX key derivation failed\n", __func__);
+		return 0;
+	}
+
+	return 1;
+}
+#endif
 
 /*
  * This function copies the CRYPTO data provided by the TLS stack found at <data>
@@ -353,7 +414,12 @@ int ha_quic_send_alert(SSL *ssl, enum ssl_encryption_level_t level, uint8_t aler
 
 /* QUIC TLS methods */
 static SSL_QUIC_METHOD ha_quic_method = {
+#ifdef OPENSSL_IS_BORINGSSL
+	.set_read_secret        = ha_set_read_secret,
+	.set_write_secret       = ha_set_write_secret,
+#else
 	.set_encryption_secrets = ha_quic_set_encryption_secrets,
+#endif
 	.add_handshake_data     = ha_quic_add_handshake_data,
 	.flush_flight           = ha_quic_flush_flight,
 	.send_alert             = ha_quic_send_alert,
