@@ -188,9 +188,9 @@ static inline enum quic_tls_pktns quic_tls_pktns(enum quic_tls_enc_level level)
  */
 static inline void quic_initial_tls_ctx_init(struct quic_tls_ctx *ctx)
 {
-	ctx->aead = EVP_aes_128_gcm();
-	ctx->md = EVP_sha256();
-	ctx->hp = EVP_aes_128_ctr();
+	ctx->rx.aead = ctx->tx.aead = EVP_aes_128_gcm();
+	ctx->rx.md   = ctx->tx.md   = EVP_sha256();
+	ctx->rx.hp   = ctx->tx.hp   = EVP_aes_128_ctr();
 }
 
 static inline int quic_tls_level_pkt_type(enum quic_tls_enc_level level)

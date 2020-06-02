@@ -258,22 +258,25 @@ int ha_set_read_secret(SSL *ssl, enum ssl_encryption_level_t level,
 	struct quic_tls_ctx *tls_ctx =
 		&conn->quic_conn->enc_levels[ssl_to_quic_enc_level(level)].tls_ctx;
 
-	tls_ctx->aead = tls_aead(cipher);
-	tls_ctx->md = tls_md(cipher);
-	tls_ctx->hp = tls_hp(cipher);
+	tls_ctx->rx.aead = tls_aead(cipher);
+	tls_ctx->rx.md = tls_md(cipher);
+	tls_ctx->rx.hp = tls_hp(cipher);
 
 	HEXDUMP(secret, secret_len, "RX secret (level %d):\n", level);
-	if (!quic_tls_derive_keys(tls_ctx->aead, tls_ctx->hp, tls_ctx->md,
+	if (!quic_tls_derive_keys(tls_ctx->rx.aead, tls_ctx->rx.hp, tls_ctx->rx.md,
 	                          tls_ctx->rx.key, sizeof tls_ctx->rx.key,
 	                          tls_ctx->rx.iv, sizeof tls_ctx->rx.iv,
 	                          tls_ctx->rx.hp_key, sizeof tls_ctx->rx.hp_key,
 	                          secret, secret_len)) {
 		QDPRINTF("%s: RX key derivation failed\n", __func__);
-		return 0;
+		goto err;
 	}
 	tls_ctx->rx.flags |= QUIC_FL_TLS_SECRETS_SET;
 
 	return 1;
+
+ err:
+	return 0;
 }
 /*
  * ->set_write_secret callback to derive the TX secrets at <level>
@@ -288,12 +291,12 @@ int ha_set_write_secret(SSL *ssl, enum ssl_encryption_level_t level,
 	struct quic_tls_ctx *tls_ctx =
 		&conn->quic_conn->enc_levels[ssl_to_quic_enc_level(level)].tls_ctx;
 
-	tls_ctx->aead = tls_aead(cipher);
-	tls_ctx->md = tls_md(cipher);
-	tls_ctx->hp = tls_hp(cipher);
+	tls_ctx->tx.aead = tls_aead(cipher);
+	tls_ctx->tx.md = tls_md(cipher);
+	tls_ctx->tx.hp = tls_hp(cipher);
 
 	HEXDUMP(secret, secret_len, "TX secret (level %d):\n", level);
-	if (!quic_tls_derive_keys(tls_ctx->aead, tls_ctx->hp, tls_ctx->md,
+	if (!quic_tls_derive_keys(tls_ctx->tx.aead, tls_ctx->tx.hp, tls_ctx->tx.md,
 	                          tls_ctx->tx.key, sizeof tls_ctx->tx.key,
 	                          tls_ctx->tx.iv, sizeof tls_ctx->tx.iv,
 	                          tls_ctx->tx.hp_key, sizeof tls_ctx->tx.hp_key,
@@ -753,7 +756,7 @@ static int quic_remove_header_protection(struct quic_rx_packet *pkt,
 	sample = pn + QUIC_PACKET_PN_MAXLEN;
 
 	hp_key = tls_ctx->rx.hp_key;
-	if (!EVP_DecryptInit_ex(ctx, tls_ctx->hp, NULL, hp_key, sample) ||
+	if (!EVP_DecryptInit_ex(ctx, tls_ctx->rx.hp, NULL, hp_key, sample) ||
 	    !EVP_DecryptUpdate(ctx, mask, &outlen, mask, sizeof mask) ||
 	    !EVP_DecryptFinal_ex(ctx, mask, &outlen))
 	    goto out;
@@ -799,7 +802,7 @@ static int quic_packet_encrypt(unsigned char *payload, size_t payload_len,
 	}
 
 	if (!quic_tls_encrypt(payload, payload_len, aad, aad_len,
-	                      tls_ctx->aead, tls_ctx->tx.key, iv)) {
+	                      tls_ctx->tx.aead, tls_ctx->tx.key, iv)) {
 		QDPRINTF("QUIC packet encryption failed\n");
 		return 0;
 	}
@@ -826,7 +829,7 @@ static int quic_packet_decrypt(struct quic_rx_packet *qpkt,
 
 	ret = quic_tls_decrypt(qpkt->data + qpkt->aad_len, qpkt->len - qpkt->aad_len,
 	                       qpkt->data, qpkt->aad_len,
-	                       tls_ctx->aead, tls_ctx->rx.key, iv);
+	                       tls_ctx->rx.aead, tls_ctx->rx.key, iv);
 	if (!ret) {
 		QDPRINTF("%s: qpkt #%lu long %d decryption failed\n",
 		         __func__, qpkt->pn, qpkt->long_header);
@@ -1617,9 +1620,9 @@ static void quic_conn_enc_level_uninit(struct quic_enc_level *qel)
  */
 static int quic_conn_enc_level_init(struct quic_enc_level *qel)
 {
-	qel->tls_ctx.aead = NULL;
-	qel->tls_ctx.md = NULL;
-	qel->tls_ctx.hp = NULL;
+	qel->tls_ctx.rx.aead = qel->tls_ctx.tx.aead = NULL;
+	qel->tls_ctx.rx.md   = qel->tls_ctx.tx.md = NULL;
+	qel->tls_ctx.rx.hp   = qel->tls_ctx.tx.hp = NULL;
 	qel->tls_ctx.rx.flags = 0;
 	qel->tls_ctx.tx.flags = 0;
 
@@ -1837,12 +1840,12 @@ static int qc_new_initial_secrets(struct connection *conn,
 	TRACE_ENTER(QUIC_EV_CONN_ISEC, conn);
 	ctx = &conn->quic_conn->enc_levels[QUIC_TLS_ENC_LEVEL_INITIAL].tls_ctx;
 	quic_initial_tls_ctx_init(ctx);
-	if (!quic_derive_initial_secret(ctx->md,
+	if (!quic_derive_initial_secret(ctx->rx.md,
 	                                initial_secret, sizeof initial_secret,
 	                                cid, cidlen))
 		goto err;
 
-	if (!quic_tls_derive_initial_secrets(ctx->md,
+	if (!quic_tls_derive_initial_secrets(ctx->rx.md,
 	                                     rx_init_sec, sizeof rx_init_sec,
 	                                     tx_init_sec, sizeof tx_init_sec,
 	                                     initial_secret, sizeof initial_secret, server))
@@ -1850,7 +1853,7 @@ static int qc_new_initial_secrets(struct connection *conn,
 
 	rx_ctx = &ctx->rx;
 	tx_ctx = &ctx->tx;
-	if (!quic_tls_derive_keys(ctx->aead, ctx->hp, ctx->md,
+	if (!quic_tls_derive_keys(ctx->rx.aead, ctx->rx.hp, ctx->rx.md,
 	                          rx_ctx->key, sizeof rx_ctx->key,
 	                          rx_ctx->iv, sizeof rx_ctx->iv,
 	                          rx_ctx->hp_key, sizeof rx_ctx->hp_key,
@@ -1858,7 +1861,7 @@ static int qc_new_initial_secrets(struct connection *conn,
 		goto err;
 
 	rx_ctx->flags |= QUIC_FL_TLS_SECRETS_SET;
-	if (!quic_tls_derive_keys(ctx->aead, ctx->hp, ctx->md,
+	if (!quic_tls_derive_keys(ctx->tx.aead, ctx->tx.hp, ctx->tx.md,
 	                          tx_ctx->key, sizeof tx_ctx->key,
 	                          tx_ctx->iv, sizeof tx_ctx->iv,
 	                          tx_ctx->hp_key, sizeof tx_ctx->hp_key,
@@ -2614,7 +2617,7 @@ static ssize_t quic_listener_packet_read(unsigned char **buf, const unsigned cha
 			 * NOTE: the socket address it concatenated to the destination ID choosen by the client
 			 * for Initial packets.
 			 */
-			if (!ctx->hp && !qc_new_initial_secrets(conn->conn, qpkt->dcid.data,
+			if (!ctx->rx.hp && !qc_new_initial_secrets(conn->conn, qpkt->dcid.data,
 			                                        qpkt->dcid.len - sizeof *saddr, 1)) {
 				QDPRINTF("Could not derive initial secrets\n");
 				goto err;
@@ -2974,7 +2977,7 @@ static ssize_t quic_build_handshake_packet(struct q_buf *buf, struct quic_conn *
 
 	end += QUIC_TLS_TAG_LEN;
 	if (!quic_apply_header_protection(beg, buf_pn, pn_len,
-	                                  tls_ctx->hp, tls_ctx->tx.hp_key)) {
+	                                  tls_ctx->tx.hp, tls_ctx->tx.hp_key)) {
 		QDPRINTF("Could not apply the header protection\n");
 		return -3;
 	}
@@ -3083,7 +3086,7 @@ static ssize_t quic_build_post_handshake_app_packet(struct q_buf *wbuf,
 		return -2;
 
 	if (!quic_apply_header_protection(beg, buf_pn, pn_len,
-	                                  tls_ctx->hp, tls_ctx->tx.hp_key)) {
+	                                  tls_ctx->tx.hp, tls_ctx->tx.hp_key)) {
 		QDPRINTF("%s: could not apply header protection\n", __func__);
 		return -2;
 	}

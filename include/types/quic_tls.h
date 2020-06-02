@@ -76,6 +76,9 @@ extern unsigned char initial_salt[20];
 #define QUIC_FL_TLS_SECRETS_SET  (1 << 0)
 
 struct quic_tls_secrets {
+	const EVP_CIPHER *aead;
+	const EVP_MD *md;
+	const EVP_CIPHER *hp;
 	unsigned char key[32];
 	unsigned char iv[12];
 	/* Header protection key.
@@ -88,10 +91,7 @@ struct quic_tls_secrets {
 };
 
 struct quic_tls_ctx {
-	const EVP_CIPHER *aead;
 	unsigned char aead_iv[12];
-	const EVP_MD *md;
-	const EVP_CIPHER *hp;
 	struct quic_tls_secrets rx;
 	struct quic_tls_secrets tx;
 };
