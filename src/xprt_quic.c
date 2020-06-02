@@ -1379,12 +1379,23 @@ static int quic_conn_do_handshake(struct quic_conn_ctx *ctx)
 	while (qpkt_node) {
 		qpkt = eb64_entry(&qpkt_node->node, struct quic_rx_packet, pn_node);
 		if (!(qpkt->flags & QUIC_FL_RX_PACKET_OUT_OF_ORDER)) {
-		    if (!quic_packet_decrypt(qpkt, tls_ctx))
-				return 0;
+		    if (!quic_packet_decrypt(qpkt, tls_ctx)) {
+				/* Drop the packet */
+				QDPRINTF( "packet #%lu long? %d dropped\n", qpkt->pn, !!qpkt->long_header);
+				qpkt_node = eb64_next(qpkt_node);
+				eb64_delete(&qpkt->pn_node);
+				pool_free(pool_head_quic_rx_packet, qpkt);
+				continue;
+			}
 
 			if (!quic_parse_handshake_packet(qpkt, ctx, enc_level)) {
 				QDPRINTF( "Could not parse the packet frames\n");
-				return 0;
+				/* Drop the packet */
+				QDPRINTF( "packet #%lu long? %d dropped\n", qpkt->pn, !!qpkt->long_header);
+				qpkt_node = eb64_next(qpkt_node);
+				eb64_delete(&qpkt->pn_node);
+				pool_free(pool_head_quic_rx_packet, qpkt);
+				continue;
 			}
 
 			if (qpkt->flags & QUIC_FL_RX_PACKET_ACK_ELICITING) {
@@ -1492,12 +1503,23 @@ static int quic_treat_packets(struct quic_conn_ctx *ctx)
 	qpkt_node = eb64_first(rx_qpkts);
 	while (qpkt_node) {
 		qpkt = eb64_entry(&qpkt_node->node, struct quic_rx_packet, pn_node);
-		if (!quic_packet_decrypt(qpkt, tls_ctx))
-			return 0;
+		if (!quic_packet_decrypt(qpkt, tls_ctx)) {
+			/* Drop the packet */
+			QDPRINTF( "packet #%lu long? %d dropped\n", qpkt->pn, !!qpkt->long_header);
+			qpkt_node = eb64_next(qpkt_node);
+			eb64_delete(&qpkt->pn_node);
+			pool_free(pool_head_quic_rx_packet, qpkt);
+			continue;
+		}
 
 		if (!quic_parse_packet_frames(qpkt)) {
 			QDPRINTF( "Could not parse the packet frames\n");
-			return 0;
+			/* Drop the packet */
+			QDPRINTF( "packet #%lu long? %d dropped\n", qpkt->pn, !!qpkt->long_header);
+			qpkt_node = eb64_next(qpkt_node);
+			eb64_delete(&qpkt->pn_node);
+			pool_free(pool_head_quic_rx_packet, qpkt);
+			continue;
 		}
 
 		if (qpkt->flags & QUIC_FL_RX_PACKET_ACK_ELICITING) {
