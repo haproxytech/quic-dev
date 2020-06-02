@@ -222,7 +222,7 @@ static inline int quic_get_tls_enc_levels(enum quic_tls_enc_level *level,
 	case QUIC_HS_ST_SERVER_HANSHAKE:
 	case QUIC_HS_ST_CLIENT_HANSHAKE:
 		*level = QUIC_TLS_ENC_LEVEL_HANDSHAKE;
-		*next_level = QUIC_TLS_ENC_LEVEL_NONE;
+		*next_level = QUIC_TLS_ENC_LEVEL_APP;
 		break;
 	default:
 		return 0;
