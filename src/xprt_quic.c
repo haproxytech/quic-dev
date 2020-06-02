@@ -1874,7 +1874,7 @@ static int qc_new_initial_secrets(struct connection *conn,
 	return 1;
 
  err:
-	TRACE_DEVEL("leaving in error", QUIC_EV_CONN_EISEC|QUIC_EV_CONN_EISEC, conn);
+	TRACE_DEVEL("leaving in error", QUIC_EV_CONN_EISEC, conn);
 	return 0;
 }
 
