@@ -30,32 +30,22 @@ unsigned char initial_salt[20] = {
 
 /*
  * Dump the RX/TX secrets of <ct> QUIC TLS context. */
-void quic_tls_keys_hexdump(struct buffer *buf, struct quic_tls_ctx *ctx)
+void quic_tls_keys_hexdump(struct buffer *buf, struct quic_tls_secrets *secs)
 {
 	int i;
-	size_t aead_keylen = (size_t)EVP_CIPHER_key_length(ctx->aead);
-	size_t aead_ivlen = (size_t)EVP_CIPHER_iv_length(ctx->aead);
-	size_t hp_len = (size_t)EVP_CIPHER_key_length(ctx->hp);
+	size_t aead_keylen = (size_t)EVP_CIPHER_key_length(secs->aead);
+	size_t aead_ivlen = (size_t)EVP_CIPHER_iv_length(secs->aead);
+	size_t hp_len = (size_t)EVP_CIPHER_key_length(secs->hp);
 
-	chunk_appendf(buf, " RX(key=");
+	chunk_appendf(buf, " key=");
 	for (i = 0; i < aead_keylen; i++)
-		chunk_appendf(buf, "%02x", ctx->rx.key[i]);
+		chunk_appendf(buf, "%02x", secs->key[i]);
 	chunk_appendf(buf, " iv=");
 	for (i = 0; i < aead_ivlen; i++)
-		chunk_appendf(buf, "%02x", ctx->rx.iv[i]);
+		chunk_appendf(buf, "%02x", secs->iv[i]);
 	chunk_appendf(buf, " hp=");
 	for (i = 0; i < hp_len; i++)
-		chunk_appendf(buf, "%02x", ctx->rx.hp_key[i]);
-	chunk_appendf(buf, ") TX(key=");
-	for (i = 0; i < aead_keylen; i++)
-		chunk_appendf(buf, "%02x", ctx->tx.key[i]);
-	chunk_appendf(buf, " iv=");
-	for (i = 0; i < aead_ivlen; i++)
-		chunk_appendf(buf, "%02x", ctx->tx.iv[i]);
-	chunk_appendf(buf, " hp=");
-	for (i = 0; i < hp_len; i++)
-		chunk_appendf(buf, "%02x", ctx->tx.hp_key[i]);
-	chunk_appendf(buf, ")\n");
+		chunk_appendf(buf, "%02x", secs->hp_key[i]);
 }
 
 #if defined(OPENSSL_IS_BORINGSSL)

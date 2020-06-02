@@ -19,7 +19,7 @@
 
 #include <types/quic_tls.h>
 
-void quic_tls_keys_hexdump(struct buffer *buf, struct quic_tls_ctx *ctx);
+void quic_tls_keys_hexdump(struct buffer *buf, struct quic_tls_secrets *secs);
 
 int quic_derive_initial_secret(const EVP_MD *md,
                                unsigned char *initial_secret, size_t initial_secret_sz,

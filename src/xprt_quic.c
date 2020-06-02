@@ -74,10 +74,18 @@ static const struct trace_event quic_trace_events[] = {
 	{ .mask = QUIC_EV_CONN_NEW,      .name = "new_conn",         .desc = "new QUIC connection" },
 #define           QUIC_EV_CONN_ISEC      (1ULL <<  1)
 	{ .mask = QUIC_EV_CONN_ISEC,     .name = "init_secs",        .desc = "initial secrets derivation" },
+#define           QUIC_EV_CONN_RSEC       (1ULL <<  2)
+	{ .mask = QUIC_EV_CONN_RSEC,     .name = "read_secs",        .desc = "read secrets derivation" },
+#define           QUIC_EV_CONN_WSEC       (1ULL <<  3)
+	{ .mask = QUIC_EV_CONN_WSEC,     .name = "write_secs",       .desc = "write secrets derivation" },
 #define           QUIC_EV_CONN_ENEW      (1ULL <<  10)
 	{ .mask = QUIC_EV_CONN_ENEW,     .name = "new_conn_err",     .desc = "error on new QUIC connection" },
 #define           QUIC_EV_CONN_EISEC     (1ULL <<  11)
 	{ .mask = QUIC_EV_CONN_EISEC,    .name = "init_secs_err",    .desc = "error on initial secrets derivation" },
+#define           QUIC_EV_CONN_ERSEC     (1ULL <<  12)
+	{ .mask = QUIC_EV_CONN_ERSEC,     .name = "read_secs_err",   .desc = "error on read secrets derivation" },
+#define           QUIC_EV_CONN_EWSEC     (1ULL <<  13)
+	{ .mask = QUIC_EV_CONN_EWSEC,     .name = "write_secs_err",  .desc = "error on write secrets derivation" },
 	{ /* end */ }
 };
 
@@ -184,13 +192,44 @@ static void quic_trace(enum trace_level level, uint64_t mask, const struct trace
                        const void *a1, const void *a2, const void *a3, const void *a4)
 {
 	const struct connection *conn = a1;
-	struct quic_tls_ctx *ictx;
 
 	if (conn) {
-		ictx = &conn->quic_conn->enc_levels[QUIC_TLS_ENC_LEVEL_INITIAL].tls_ctx;
-		chunk_appendf(&trace_buf, " : conn=%p", conn);
-		if ((mask & QUIC_EV_CONN_ISEC) && ictx->hp)
-			quic_tls_keys_hexdump(&trace_buf, ictx);
+		struct quic_tls_secrets *secs;
+
+		chunk_appendf(&trace_buf, " : conn@%p", conn);
+		if ((mask & QUIC_EV_CONN_ISEC)) {
+			/* Initial read & write secrets. */
+			secs = &conn->quic_conn->enc_levels[QUIC_TLS_ENC_LEVEL_INITIAL].tls_ctx.rx;
+			if (secs->flags & QUIC_FL_TLS_SECRETS_SET) {
+				chunk_appendf(&trace_buf, " RX(%d)", QUIC_TLS_ENC_LEVEL_INITIAL);
+				quic_tls_keys_hexdump(&trace_buf, secs);
+			}
+			secs = &conn->quic_conn->enc_levels[QUIC_TLS_ENC_LEVEL_INITIAL].tls_ctx.tx;
+			if (secs->flags & QUIC_FL_TLS_SECRETS_SET) {
+				chunk_appendf(&trace_buf, " TX(%d)", QUIC_TLS_ENC_LEVEL_INITIAL);
+				quic_tls_keys_hexdump(&trace_buf, secs);
+			}
+		}
+		if ((mask & QUIC_EV_CONN_RSEC)) {
+			const int *level = a4;
+			if (level) {
+				secs = &conn->quic_conn->enc_levels[ssl_to_quic_enc_level(*level)].tls_ctx.rx;
+				if (secs->flags & QUIC_FL_TLS_SECRETS_SET) {
+					chunk_appendf(&trace_buf, " RX(%d)", *level);
+					quic_tls_keys_hexdump(&trace_buf, secs);
+				}
+			}
+		}
+		if ((mask & QUIC_EV_CONN_WSEC)) {
+			const int *level = a4;
+			if (level) {
+				secs = &conn->quic_conn->enc_levels[ssl_to_quic_enc_level(*level)].tls_ctx.tx;
+				if (secs->flags & QUIC_FL_TLS_SECRETS_SET) {
+					chunk_appendf(&trace_buf, " TX(%d)", *level);
+					quic_tls_keys_hexdump(&trace_buf, secs);
+				}
+			}
+		}
 	}
 }
 
@@ -258,6 +297,7 @@ int ha_set_read_secret(SSL *ssl, enum ssl_encryption_level_t level,
 	struct quic_tls_ctx *tls_ctx =
 		&conn->quic_conn->enc_levels[ssl_to_quic_enc_level(level)].tls_ctx;
 
+	TRACE_ENTER(QUIC_EV_CONN_RSEC, conn);
 	tls_ctx->rx.aead = tls_aead(cipher);
 	tls_ctx->rx.md = tls_md(cipher);
 	tls_ctx->rx.hp = tls_hp(cipher);
@@ -272,10 +312,12 @@ int ha_set_read_secret(SSL *ssl, enum ssl_encryption_level_t level,
 		goto err;
 	}
 	tls_ctx->rx.flags |= QUIC_FL_TLS_SECRETS_SET;
+	TRACE_LEAVE(QUIC_EV_CONN_RSEC, conn,,, (int[]){level});
 
 	return 1;
 
  err:
+	TRACE_DEVEL("leaving in error", QUIC_EV_CONN_ERSEC, conn);
 	return 0;
 }
 /*
@@ -291,6 +333,7 @@ int ha_set_write_secret(SSL *ssl, enum ssl_encryption_level_t level,
 	struct quic_tls_ctx *tls_ctx =
 		&conn->quic_conn->enc_levels[ssl_to_quic_enc_level(level)].tls_ctx;
 
+	TRACE_ENTER(QUIC_EV_CONN_WSEC, conn);
 	tls_ctx->tx.aead = tls_aead(cipher);
 	tls_ctx->tx.md = tls_md(cipher);
 	tls_ctx->tx.hp = tls_hp(cipher);
@@ -302,11 +345,16 @@ int ha_set_write_secret(SSL *ssl, enum ssl_encryption_level_t level,
 	                          tls_ctx->tx.hp_key, sizeof tls_ctx->tx.hp_key,
 	                          secret, secret_len)) {
 		QDPRINTF("%s: TX key derivation failed\n", __func__);
-		return 0;
+		goto err;
 	}
 	tls_ctx->tx.flags |= QUIC_FL_TLS_SECRETS_SET;
+	TRACE_LEAVE(QUIC_EV_CONN_WSEC, conn,,, (int[]){level});
 
 	return 1;
+
+ err:
+	TRACE_DEVEL("leaving in error", QUIC_EV_CONN_ERSEC, conn);
+	return 0;
 }
 #endif
 
