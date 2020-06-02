@@ -271,6 +271,7 @@ int ha_set_read_secret(SSL *ssl, enum ssl_encryption_level_t level,
 		QDPRINTF("%s: RX key derivation failed\n", __func__);
 		return 0;
 	}
+	tls_ctx->rx.flags |= QUIC_FL_TLS_SECRETS_SET;
 
 	return 1;
 }
@@ -300,6 +301,7 @@ int ha_set_write_secret(SSL *ssl, enum ssl_encryption_level_t level,
 		QDPRINTF("%s: TX key derivation failed\n", __func__);
 		return 0;
 	}
+	tls_ctx->tx.flags |= QUIC_FL_TLS_SECRETS_SET;
 
 	return 1;
 }
@@ -1352,7 +1354,7 @@ static int quic_conn_do_handshake(struct quic_conn_ctx *ctx)
 	rx_qpkts = &enc_level->rx.qpkts;
 
 	/* If the header protection key for this level has been derived. */
-	if (tls_ctx->hp) {
+	if (tls_ctx->rx.flags & QUIC_FL_TLS_SECRETS_SET) {
 		struct quic_rx_packet *pqpkt, *qqpkt;
 
 		/* Remove protection of all the packet whose header protection could not be removed. */
@@ -1607,6 +1609,12 @@ static void quic_conn_enc_level_uninit(struct quic_enc_level *qel)
  */
 static int quic_conn_enc_level_init(struct quic_enc_level *qel)
 {
+	qel->tls_ctx.aead = NULL;
+	qel->tls_ctx.md = NULL;
+	qel->tls_ctx.hp = NULL;
+	qel->tls_ctx.rx.flags = 0;
+	qel->tls_ctx.tx.flags = 0;
+
 	qel->rx.qpkts = EB_ROOT;
 	LIST_INIT(&qel->rx.pqpkts);
 
@@ -1730,7 +1738,6 @@ static int quic_new_conn_init(struct quic_conn *conn,
 	int i;
 	/* Initial CID. */
 	struct quic_connection_id *icid;
-	struct quic_tls_ctx *tls_ctx;
 
 	conn->cids = EB_ROOT;
 	QDPRINTF("%s: new quic_conn @%p\n", __func__, conn);
@@ -1770,11 +1777,6 @@ static int quic_new_conn_init(struct quic_conn *conn,
 	/* Insert our SCID, the connection ID for the QUIC client. */
 	ebmb_insert(quic_clients, &conn->scid_node, conn->scid.len);
 
-	/* Initialize the Initial level TLS encryption context. */
-	tls_ctx = &conn->enc_levels[QUIC_TLS_ENC_LEVEL_INITIAL].tls_ctx;
-	tls_ctx->aead = NULL;
-	tls_ctx->md = NULL;
-	tls_ctx->hp = NULL;
 	/* Packet number spaces initialization. */
 	for (i = 0; i < QUIC_TLS_PKTNS_MAX; i++) {
 		quic_pktns_init(&conn->pktns[i]);
@@ -1847,6 +1849,7 @@ static int qc_new_initial_secrets(struct connection *conn,
 	                          rx_init_sec, sizeof rx_init_sec))
 		goto err;
 
+	rx_ctx->flags |= QUIC_FL_TLS_SECRETS_SET;
 	if (!quic_tls_derive_keys(ctx->aead, ctx->hp, ctx->md,
 	                          tx_ctx->key, sizeof tx_ctx->key,
 	                          tx_ctx->iv, sizeof tx_ctx->iv,
@@ -1854,6 +1857,7 @@ static int qc_new_initial_secrets(struct connection *conn,
 	                          tx_init_sec, sizeof tx_init_sec))
 		goto err;
 
+	tx_ctx->flags |= QUIC_FL_TLS_SECRETS_SET;
 	TRACE_LEAVE(QUIC_EV_CONN_ISEC, conn);
 
 	return 1;
@@ -2313,7 +2317,7 @@ static inline int quic_packet_read_payload(struct quic_rx_packet *qpkt,
 		quic_packet_type_enc_level(qpkt->type) : QUIC_TLS_ENC_LEVEL_APP;
 	qel = &conn->enc_levels[tel];
 
-	if (qel->tls_ctx.hp) {
+	if (qel->tls_ctx.rx.flags & QUIC_FL_TLS_SECRETS_SET) {
 		/*
 		 * Note that the following function enables us to unprotect the packet
 		 * number and its length subsequently used to decrypt the entire

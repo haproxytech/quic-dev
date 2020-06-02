@@ -73,6 +73,8 @@ enum quic_tls_pktns {
 
 extern unsigned char initial_salt[20];
 
+#define QUIC_FL_TLS_SECRETS_SET  (1 << 0)
+
 struct quic_tls_secrets {
 	unsigned char key[32];
 	unsigned char iv[12];
@@ -82,6 +84,7 @@ struct quic_tls_secrets {
 	* the packet protection.
 	*/
 	unsigned char hp_key[32];
+	char flags;
 };
 
 struct quic_tls_ctx {
