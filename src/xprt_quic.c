@@ -1381,6 +1381,9 @@ static int quic_conn_do_handshake(struct quic_conn_ctx *ctx)
 	while (qpkt_node) {
 		qpkt = eb64_entry(&qpkt_node->node, struct quic_rx_packet, pn_node);
 		if (!(qpkt->flags & QUIC_FL_RX_PACKET_OUT_OF_ORDER)) {
+			int drop;
+
+			drop = 0;
 		    if (!quic_packet_decrypt(qpkt, tls_ctx)) {
 				/* Drop the packet */
 				QDPRINTF( "packet #%lu long? %d dropped\n", qpkt->pn, !!qpkt->long_header);
@@ -1390,7 +1393,11 @@ static int quic_conn_do_handshake(struct quic_conn_ctx *ctx)
 				continue;
 			}
 
-			if (!quic_parse_handshake_packet(qpkt, ctx, enc_level)) {
+			if ((qpkt->long_header && !quic_parse_handshake_packet(qpkt, ctx, enc_level)) ||
+			    (!qpkt->long_header && !quic_parse_packet_frames(qpkt)))
+				drop = 1;
+
+			if (drop) {
 				QDPRINTF( "Could not parse the packet frames\n");
 				/* Drop the packet */
 				QDPRINTF( "packet #%lu long? %d dropped\n", qpkt->pn, !!qpkt->long_header);
@@ -1444,10 +1451,11 @@ static int quic_conn_do_handshake(struct quic_conn_ctx *ctx)
 	/*
 	 * Check if there is something to do for the next level.
 	 */
-	if (ctx->state == QUIC_HS_ST_CLIENT_INITIAL && next_enc_level->tls_ctx.hp &&
+	if ((next_enc_level->tls_ctx.rx.flags & QUIC_FL_TLS_SECRETS_SET) &&
 	    (!LIST_ISEMPTY(&next_enc_level->rx.pqpkts) || !eb_is_empty(&next_enc_level->rx.qpkts))) {
 		enc_level = next_enc_level;
-		ctx->state = QUIC_HS_ST_CLIENT_HANSHAKE;
+		if (ctx->state == QUIC_HS_ST_CLIENT_INITIAL)
+			ctx->state = QUIC_HS_ST_CLIENT_HANSHAKE;
 		goto next_level;
 	}
 
