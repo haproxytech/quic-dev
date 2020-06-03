@@ -41,12 +41,12 @@
 #define QUIC_STATELESS_RESET_TOKEN_LEN 16
 
 /*
- * This struct is used by ebmb_node structs as last member of flexible array.
+ * This struct is used by ebmb_node structs as last member of flexible arrays.
  * So do not change the order of the member of quic_cid struct.
  * <data> member must be the first one.
  */
 struct quic_cid {
-	unsigned char data[QUIC_CID_MAXLEN + sizeof(struct sockaddr_storage)];
+	unsigned char data[QUIC_CID_MAXLEN + sizeof(in_port_t) + sizeof(struct in6_addr)];
 	unsigned char len;
 };
 

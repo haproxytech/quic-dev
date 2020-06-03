@@ -2572,19 +2572,19 @@ static ssize_t quic_listener_packet_read(unsigned char **buf, const unsigned cha
 	if (qpkt->long_header) {
 		size_t cid_lookup_len;
 		unsigned char dcid_len;
+		size_t saddr_len;
 
 		if (!quic_packet_read_long_header(buf, end, qpkt))
 			goto err;
 
 		dcid_len = qpkt->dcid.len;
+		saddr_len = 0;
 		/*
 		 * DCIDs of first packets coming from clients may have the same values.
 		 * Let's distinguish them concatenating the socket addresses to the DCIDs.
 		 */
-		if (qpkt->type == QUIC_PACKET_TYPE_INITIAL) {
-			memcpy(qpkt->dcid.data + qpkt->dcid.len, saddr, sizeof *saddr);
-			qpkt->dcid.len += sizeof *saddr;
-		}
+		if (qpkt->type == QUIC_PACKET_TYPE_INITIAL)
+			saddr_len = quic_cid_saddr_cat(&qpkt->dcid, saddr);
 
 		/* For Initial packets, and for servers (QUIC clients connections),
 		 * there is no Initial connection IDs storage.
@@ -2666,7 +2666,7 @@ static ssize_t quic_listener_packet_read(unsigned char **buf, const unsigned cha
 			 * for Initial packets.
 			 */
 			if (!ctx->rx.hp && !qc_new_initial_secrets(conn->conn, qpkt->dcid.data,
-			                                        qpkt->dcid.len - sizeof *saddr, 1)) {
+			                                           qpkt->dcid.len - saddr_len, 1)) {
 				QDPRINTF("Could not derive initial secrets\n");
 				goto err;
 			}

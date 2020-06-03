@@ -24,6 +24,8 @@
 
 #include <stdint.h>
 
+#include <common/buf.h>
+#include <common/chunk.h>
 #include <common/net_helper.h>
 #include <common/openssl-compat.h>
 
@@ -63,6 +65,48 @@ static inline void quic_cid_cpy(struct quic_cid *dst, const struct quic_cid *src
 {
 	memcpy(dst->data, src->data, src->len);
 	dst->len = src->len;
+}
+
+/*
+ * Concatenate the port and address of <saddr> to <cid> QUIC connection ID.
+ * Returns the number of bytes concatenated to <cid>.
+ */
+static inline size_t quic_cid_saddr_cat(struct quic_cid *cid, struct sockaddr_storage *saddr)
+{
+	void *port, *addr;
+	size_t port_len, addr_len;
+
+	if (is_sa_family_ipv6(saddr)) {
+		port = &((struct sockaddr_in6 *)saddr)->sin6_port;
+		addr = &((struct sockaddr_in6 *)saddr)->sin6_addr;
+		port_len = sizeof ((struct sockaddr_in6 *)saddr)->sin6_port;
+		addr_len = sizeof ((struct sockaddr_in6 *)saddr)->sin6_addr;
+	}
+	else {
+		port = &((struct sockaddr_in *)saddr)->sin_port;
+		addr = &((struct sockaddr_in *)saddr)->sin_addr;
+		port_len = sizeof ((struct sockaddr_in *)saddr)->sin_port;
+		addr_len = sizeof ((struct sockaddr_in *)saddr)->sin_addr;
+	}
+	memcpy(cid->data + cid->len, port, port_len);
+	cid->len += port_len;
+	memcpy(cid->data + cid->len, addr, addr_len);
+	cid->len += addr_len;
+
+	return port_len + addr_len;
+}
+
+
+/*
+ * Dump the QUIC connection ID value if present (non null length).
+ * Always succeeds.
+ */
+static inline void quic_cid_dump(struct buffer *buf, struct quic_cid *cid)
+{
+	int i;
+
+	for (i = 0; i < cid->len; i++)
+		chunk_appendf(buf, "%02x", cid->data[i]);
 }
 
 /*
