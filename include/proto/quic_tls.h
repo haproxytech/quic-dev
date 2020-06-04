@@ -152,22 +152,6 @@ static inline enum quic_tls_enc_level quic_packet_type_enc_level(int packet_type
 	}
 }
 
-static inline int quic_to_ssl_enc_level(int level)
-{
-	switch (level) {
-	case QUIC_TLS_ENC_LEVEL_INITIAL:
-		return ssl_encryption_initial;
-	case QUIC_TLS_ENC_LEVEL_EARLY_DATA:
-		return ssl_encryption_early_data;
-	case QUIC_TLS_ENC_LEVEL_HANDSHAKE:
-		return ssl_encryption_handshake;
-	case QUIC_TLS_ENC_LEVEL_APP:
-		return ssl_encryption_application;
-	default:
-		return -1;
-	}
-}
-
 static inline enum quic_tls_pktns quic_tls_pktns(enum quic_tls_enc_level level)
 {
 	switch (level) {
