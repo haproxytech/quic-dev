@@ -133,6 +133,51 @@ static inline enum quic_tls_enc_level ssl_to_quic_enc_level(int level)
 }
 
 /*
+ * Return a character identifying the encryption level from <level> QUIC TLS
+ * encryption level (for debug purpose).
+ * Initial -> 'I', Early Data -> 'E', Handshake -> 'H', Application -> 'A' and
+ * '-' if undefined.
+ */
+static inline char quic_enc_level_char(enum quic_tls_enc_level level)
+{
+	switch (level) {
+	case QUIC_TLS_ENC_LEVEL_INITIAL:
+		return 'I';
+	case QUIC_TLS_ENC_LEVEL_EARLY_DATA:
+		return 'E';
+	case QUIC_TLS_ENC_LEVEL_HANDSHAKE:
+		return 'H';
+	case QUIC_TLS_ENC_LEVEL_APP:
+		return 'A';
+	default:
+		return '-';
+	}
+}
+
+/*
+ * Return a character identifying the encryption level of a packet depending on
+ * its <type> type, and its <long_header> header length (for debug purpose).
+ * Initial -> 'I', ORTT -> '0', Handshake -> 'H', Application -> 'A' and
+ * '-' if undefined.
+ */
+static inline char quic_packet_type_enc_level_char(int packet_type, int long_header)
+{
+	if (!long_header)
+		return 'A';
+
+	switch (packet_type) {
+	case QUIC_PACKET_TYPE_INITIAL:
+		return 'I';
+	case QUIC_PACKET_TYPE_0RTT:
+		return '0';
+	case QUIC_PACKET_TYPE_HANDSHAKE:
+		return 'H';
+	default:
+		return '-';
+	}
+}
+
+/*
  * Return the TLS encryption level to be used for <packet_type>
  * QUIC packet type.
  * Returns -1 if there is no TLS encryption level for <packet_type>

@@ -78,6 +78,13 @@ static const struct trace_event quic_trace_events[] = {
 	{ .mask = QUIC_EV_CONN_RSEC,     .name = "read_secs",        .desc = "read secrets derivation" },
 #define           QUIC_EV_CONN_WSEC       (1ULL <<  3)
 	{ .mask = QUIC_EV_CONN_WSEC,     .name = "write_secs",       .desc = "write secrets derivation" },
+#define           QUIC_EV_CONN_LPKT       (1ULL <<  4)
+	{ .mask = QUIC_EV_CONN_LPKT,     .name = "lstnr_packet",     .desc = "new listener received packet" },
+#define           QUIC_EV_CONN_SPKT       (1ULL <<  5)
+	{ .mask = QUIC_EV_CONN_SPKT,     .name = "srv_packet",       .desc = "new server received packet" },
+
+
+
 #define           QUIC_EV_CONN_ENEW      (1ULL <<  10)
 	{ .mask = QUIC_EV_CONN_ENEW,     .name = "new_conn_err",     .desc = "error on new QUIC connection" },
 #define           QUIC_EV_CONN_EISEC     (1ULL <<  11)
@@ -86,6 +93,10 @@ static const struct trace_event quic_trace_events[] = {
 	{ .mask = QUIC_EV_CONN_ERSEC,     .name = "read_secs_err",   .desc = "error on read secrets derivation" },
 #define           QUIC_EV_CONN_EWSEC     (1ULL <<  13)
 	{ .mask = QUIC_EV_CONN_EWSEC,     .name = "write_secs_err",  .desc = "error on write secrets derivation" },
+#define           QUIC_EV_CONN_ELPKT       (1ULL <<  14)
+	{ .mask = QUIC_EV_CONN_ELPKT,     .name = "lstnr_packet_err",.desc = "error on new listener received packet" },
+#define           QUIC_EV_CONN_ESPKT       (1ULL <<  15)
+	{ .mask = QUIC_EV_CONN_ESPKT,     .name = "srv_packet_err",  .desc = "error on new server received packet" },
 	{ /* end */ }
 };
 
@@ -195,39 +206,72 @@ static void quic_trace(enum trace_level level, uint64_t mask, const struct trace
 
 	if (conn) {
 		struct quic_tls_secrets *secs;
+		struct quic_conn *quic_conn;
 
+		quic_conn = conn->quic_conn;
 		chunk_appendf(&trace_buf, " : conn@%p", conn);
+		if ((mask & QUIC_EV_CONN_NEW) && quic_conn) {
+			if (quic_conn->odcid.len) {
+				chunk_appendf(&trace_buf, "\n  odcid=");
+				quic_cid_dump(&trace_buf, &quic_conn->odcid);
+			}
+			if (quic_conn->dcid.len) {
+				chunk_appendf(&trace_buf, "\n  dcid=");
+				quic_cid_dump(&trace_buf, &quic_conn->dcid);
+			}
+			if (quic_conn->scid.len) {
+				chunk_appendf(&trace_buf, "\n  scid=");
+				quic_cid_dump(&trace_buf, &quic_conn->scid);
+			}
+		}
 		if ((mask & QUIC_EV_CONN_ISEC)) {
 			/* Initial read & write secrets. */
-			secs = &conn->quic_conn->enc_levels[QUIC_TLS_ENC_LEVEL_INITIAL].tls_ctx.rx;
+			enum quic_tls_enc_level level = QUIC_TLS_ENC_LEVEL_INITIAL;
+
+			secs = &conn->quic_conn->enc_levels[level].tls_ctx.rx;
 			if (secs->flags & QUIC_FL_TLS_SECRETS_SET) {
-				chunk_appendf(&trace_buf, " RX(%d)", QUIC_TLS_ENC_LEVEL_INITIAL);
+				chunk_appendf(&trace_buf, "\n  RX el=%c", quic_enc_level_char(level));
 				quic_tls_keys_hexdump(&trace_buf, secs);
 			}
-			secs = &conn->quic_conn->enc_levels[QUIC_TLS_ENC_LEVEL_INITIAL].tls_ctx.tx;
+			secs = &conn->quic_conn->enc_levels[level].tls_ctx.tx;
 			if (secs->flags & QUIC_FL_TLS_SECRETS_SET) {
-				chunk_appendf(&trace_buf, " TX(%d)", QUIC_TLS_ENC_LEVEL_INITIAL);
+				chunk_appendf(&trace_buf, "\n  TX el=%c", quic_enc_level_char(level));
 				quic_tls_keys_hexdump(&trace_buf, secs);
 			}
 		}
 		if ((mask & QUIC_EV_CONN_RSEC)) {
-			const int *level = a4;
+			const long int level = (long int)a4;
 			if (level) {
-				secs = &conn->quic_conn->enc_levels[ssl_to_quic_enc_level(*level)].tls_ctx.rx;
+				secs = &conn->quic_conn->enc_levels[ssl_to_quic_enc_level(level)].tls_ctx.rx;
 				if (secs->flags & QUIC_FL_TLS_SECRETS_SET) {
-					chunk_appendf(&trace_buf, " RX(%d)", *level);
+					chunk_appendf(&trace_buf, "\n  RX el=%c", quic_enc_level_char(level));
 					quic_tls_keys_hexdump(&trace_buf, secs);
 				}
 			}
 		}
 		if ((mask & QUIC_EV_CONN_WSEC)) {
-			const int *level = a4;
+			const long int level = (long int)a4;
 			if (level) {
-				secs = &conn->quic_conn->enc_levels[ssl_to_quic_enc_level(*level)].tls_ctx.tx;
+				secs = &conn->quic_conn->enc_levels[ssl_to_quic_enc_level(level)].tls_ctx.tx;
 				if (secs->flags & QUIC_FL_TLS_SECRETS_SET) {
-					chunk_appendf(&trace_buf, " TX(%d)", *level);
+					chunk_appendf(&trace_buf, "\n  TX el=%c", quic_enc_level_char(level));
 					quic_tls_keys_hexdump(&trace_buf, secs);
 				}
+			}
+		}
+		if (mask & (QUIC_EV_CONN_SPKT|QUIC_EV_CONN_LPKT)) {
+			const struct quic_rx_packet *qpkt = a4;
+
+			if (qpkt) {
+				chunk_appendf(&trace_buf, "\n  pkt@%p el=%c pnl=%u pn=%lu",
+				              qpkt, quic_packet_type_enc_level_char(qpkt->type, qpkt->long_header),
+				              qpkt->pnl, qpkt->pn);
+				if (qpkt->token_len)
+					chunk_appendf(&trace_buf, " toklen=%lu", qpkt->token_len);
+				if (qpkt->aad_len)
+					chunk_appendf(&trace_buf, " aadlen=%lu", qpkt->aad_len);
+				chunk_appendf(&trace_buf, " flags:0x%x len=%lu",
+				              qpkt->flags, qpkt->len);
 			}
 		}
 	}
@@ -289,9 +333,9 @@ int ha_quic_set_encryption_secrets(SSL *ssl, enum ssl_encryption_level_t level,
  * encryption level.
  * Returns 1 if succedded, 0 if not.
  */
-int ha_set_read_secret(SSL *ssl, enum ssl_encryption_level_t level,
-                       const SSL_CIPHER *cipher,
-                       const uint8_t *secret, size_t secret_len)
+int ha_set_rsec(SSL *ssl, enum ssl_encryption_level_t level,
+                const SSL_CIPHER *cipher,
+                const uint8_t *secret, size_t secret_len)
 {
 	struct connection *conn = SSL_get_ex_data(ssl, ssl_app_data_index);
 	struct quic_tls_ctx *tls_ctx =
@@ -312,7 +356,7 @@ int ha_set_read_secret(SSL *ssl, enum ssl_encryption_level_t level,
 		goto err;
 	}
 	tls_ctx->rx.flags |= QUIC_FL_TLS_SECRETS_SET;
-	TRACE_LEAVE(QUIC_EV_CONN_RSEC, conn,,, (int[]){level});
+	TRACE_LEAVE(QUIC_EV_CONN_RSEC, conn,,, (int *)level);
 
 	return 1;
 
@@ -325,9 +369,9 @@ int ha_set_read_secret(SSL *ssl, enum ssl_encryption_level_t level,
  * encryption level.
  * Returns 1 if succedded, 0 if not.
  */
-int ha_set_write_secret(SSL *ssl, enum ssl_encryption_level_t level,
-                        const SSL_CIPHER *cipher,
-                        const uint8_t *secret, size_t secret_len)
+int ha_set_wsec(SSL *ssl, enum ssl_encryption_level_t level,
+                const SSL_CIPHER *cipher,
+                const uint8_t *secret, size_t secret_len)
 {
 	struct connection *conn = SSL_get_ex_data(ssl, ssl_app_data_index);
 	struct quic_tls_ctx *tls_ctx =
@@ -348,7 +392,7 @@ int ha_set_write_secret(SSL *ssl, enum ssl_encryption_level_t level,
 		goto err;
 	}
 	tls_ctx->tx.flags |= QUIC_FL_TLS_SECRETS_SET;
-	TRACE_LEAVE(QUIC_EV_CONN_WSEC, conn,,, (int[]){level});
+	TRACE_LEAVE(QUIC_EV_CONN_WSEC, conn,,, (int *)level);
 
 	return 1;
 
@@ -468,8 +512,8 @@ int ha_quic_send_alert(SSL *ssl, enum ssl_encryption_level_t level, uint8_t aler
 /* QUIC TLS methods */
 static SSL_QUIC_METHOD ha_quic_method = {
 #ifdef OPENSSL_IS_BORINGSSL
-	.set_read_secret        = ha_set_read_secret,
-	.set_write_secret       = ha_set_write_secret,
+	.set_read_secret        = ha_set_rsec,
+	.set_write_secret       = ha_set_wsec,
 #else
 	.set_encryption_secrets = ha_quic_set_encryption_secrets,
 #endif
@@ -1873,9 +1917,8 @@ static int quic_new_conn_init(struct quic_conn *conn,
  * depending on <server> boolean value.
  * Return 1 if succeeded or 0 if not.
  */
-static int qc_new_initial_secrets(struct connection *conn,
-                                  const unsigned char *cid, size_t cidlen,
-                                  int server)
+static int qc_new_isecs(struct connection *conn,
+                        const unsigned char *cid, size_t cidlen, int server)
 {
 	unsigned char initial_secret[32];
 	/* Initial secret to be derived for incoming packets */
@@ -1981,7 +2024,7 @@ static int quic_conn_init(struct connection *conn, void **xprt_ctx)
 		                        dcid, sizeof dcid, NULL, 0))
 			goto err;
 
-		if (!qc_new_initial_secrets(conn, dcid, sizeof dcid, 0)) {
+		if (!qc_new_isecs(conn, dcid, sizeof dcid, 0)) {
 			QDPRINTF("Could not derive initial secrets\n");
 			goto err;
 		}
@@ -2420,9 +2463,9 @@ typedef ssize_t qpkt_read_func(unsigned char **buf,
                                struct sockaddr_storage *saddr,
                                socklen_t *saddrlen);
 
-static ssize_t quic_server_packet_read(unsigned char **buf, const unsigned char *end,
-                                       struct quic_rx_packet *qpkt, void *ctx,
-                                       struct sockaddr_storage *saddr, socklen_t *saddrlen)
+static ssize_t qc_srv_pkt_rcv(unsigned char **buf, const unsigned char *end,
+                              struct quic_rx_packet *qpkt, void *ctx,
+                              struct sockaddr_storage *saddr, socklen_t *saddrlen)
 {
 	unsigned char *beg;
 	uint64_t len;
@@ -2432,6 +2475,8 @@ static ssize_t quic_server_packet_read(unsigned char **buf, const unsigned char 
 	struct connection *srv_conn;
 	struct quic_conn_ctx *conn_ctx;
 
+	conn = NULL;
+	TRACE_ENTER(QUIC_EV_CONN_SPKT);
 	if (end <= *buf)
 		goto err;
 
@@ -2536,16 +2581,19 @@ static ssize_t quic_server_packet_read(unsigned char **buf, const unsigned char 
 	if (conn_ctx)
 		tasklet_wakeup(conn_ctx->wait_event.tasklet);
 
+	TRACE_LEAVE(QUIC_EV_CONN_SPKT, conn ? conn->conn : NULL,,, qpkt);
+
 	return qpkt->len;
 
  err:
+	TRACE_DEVEL("Leaing in error", QUIC_EV_CONN_ESPKT, conn ? conn->conn : NULL);
 	QDPRINTF("%s failed\n", __func__);
 	return -1;
 }
 
-static ssize_t quic_listener_packet_read(unsigned char **buf, const unsigned char *end,
-                                         struct quic_rx_packet *qpkt, void *ctx,
-                                         struct sockaddr_storage *saddr, socklen_t *saddrlen)
+static ssize_t qc_lstnr_pkt_rcv(unsigned char **buf, const unsigned char *end,
+                                struct quic_rx_packet *qpkt, void *ctx,
+                                struct sockaddr_storage *saddr, socklen_t *saddrlen)
 {
 	unsigned char *beg;
 	uint64_t len;
@@ -2555,6 +2603,8 @@ static ssize_t quic_listener_packet_read(unsigned char **buf, const unsigned cha
 	struct listener *l;
 	struct quic_conn_ctx *conn_ctx;
 
+	conn = NULL;
+	TRACE_ENTER(QUIC_EV_CONN_LPKT);
 	if (end <= *buf)
 		goto err;
 
@@ -2665,8 +2715,8 @@ static ssize_t quic_listener_packet_read(unsigned char **buf, const unsigned cha
 			 * NOTE: the socket address it concatenated to the destination ID choosen by the client
 			 * for Initial packets.
 			 */
-			if (!ctx->rx.hp && !qc_new_initial_secrets(conn->conn, qpkt->dcid.data,
-			                                           qpkt->dcid.len - saddr_len, 1)) {
+			if (!ctx->rx.hp && !qc_new_isecs(conn->conn, qpkt->dcid.data,
+			                                 qpkt->dcid.len - saddr_len, 1)) {
 				QDPRINTF("Could not derive initial secrets\n");
 				goto err;
 			}
@@ -2718,9 +2768,12 @@ static ssize_t quic_listener_packet_read(unsigned char **buf, const unsigned cha
 	if (conn_ctx)
 		tasklet_wakeup(conn_ctx->wait_event.tasklet);
 
+	TRACE_LEAVE(QUIC_EV_CONN_LPKT, conn ? conn->conn : NULL,,, qpkt);
+
 	return qpkt->len;
 
  err:
+	TRACE_DEVEL("Leaving in error", QUIC_EV_CONN_ELPKT, conn ? conn->conn : NULL);
 	QDPRINTF("%s failed\n", __func__);
 	return -1;
 }
@@ -3263,7 +3316,7 @@ static size_t quic_conn_handler(int fd, void *ctx, qpkt_read_func *func)
 void quic_fd_handler(int fd)
 {
 	if (fdtab[fd].ev & FD_POLL_IN)
-		quic_conn_handler(fd, fdtab[fd].owner, &quic_listener_packet_read);
+		quic_conn_handler(fd, fdtab[fd].owner, &qc_lstnr_pkt_rcv);
 }
 
 /*
@@ -3273,7 +3326,7 @@ void quic_fd_handler(int fd)
 void quic_conn_fd_handler(int fd)
 {
 	if (fdtab[fd].ev & FD_POLL_IN)
-		quic_conn_handler(fd, fdtab[fd].owner, &quic_server_packet_read);
+		quic_conn_handler(fd, fdtab[fd].owner, &qc_srv_pkt_rcv);
 }
 
 /*

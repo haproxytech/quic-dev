@@ -40,10 +40,10 @@ void quic_tls_keys_hexdump(struct buffer *buf, struct quic_tls_secrets *secs)
 	chunk_appendf(buf, " key=");
 	for (i = 0; i < aead_keylen; i++)
 		chunk_appendf(buf, "%02x", secs->key[i]);
-	chunk_appendf(buf, " iv=");
+	chunk_appendf(buf, "\n          iv=");
 	for (i = 0; i < aead_ivlen; i++)
 		chunk_appendf(buf, "%02x", secs->iv[i]);
-	chunk_appendf(buf, " hp=");
+	chunk_appendf(buf, "\n          hp=");
 	for (i = 0; i < hp_len; i++)
 		chunk_appendf(buf, "%02x", secs->hp_key[i]);
 }
