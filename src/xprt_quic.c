@@ -355,6 +355,20 @@ int ha_set_rsec(SSL *ssl, enum ssl_encryption_level_t level,
 		QDPRINTF("%s: RX key derivation failed\n", __func__);
 		goto err;
 	}
+
+	if (objt_server(conn->target) && level == ssl_encryption_application) {
+		struct quic_transport_params *tp = &conn->quic_conn->rx_tps;
+		const unsigned char *buf;
+		size_t buflen;
+
+		SSL_get_peer_quic_transport_params(ssl, &buf, &buflen);
+		if (!buflen)
+			goto err;
+
+		if (!quic_transport_params_decode(tp, 1, buf, buf + buflen))
+			goto err;
+	}
+
 	tls_ctx->rx.flags |= QUIC_FL_TLS_SECRETS_SET;
 	TRACE_LEAVE(QUIC_EV_CONN_RSEC, conn,,, (int *)level);
 
