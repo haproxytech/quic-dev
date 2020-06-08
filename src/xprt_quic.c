@@ -1048,6 +1048,69 @@ quic_ack_range_with_gap_crypto_frames(struct eb_root *frms,
 }
 
 /*
+ * Parse ACK frame into <frm> from a buffer at <buf> address with <end> being at
+ * one byte past the end of this buffer.
+ * Return 1, if succeeded, 0 if not.
+ */
+static inline int qc_parse_ack_frm(struct quic_frame *frm, struct quic_conn_ctx *ctx,
+                                   struct quic_enc_level *qel,
+                                   const unsigned char **pos, const unsigned char *end)
+{
+	struct quic_ack *ack = &frm->ack;
+	uint64_t smallest, largest;
+
+	if (ack->largest_ack > qel->pktns->tx.next_pn) {
+		QDPRINTF("ACK for not sent packet #%lu (%lu)\n",
+				 ack->largest_ack, qel->pktns->tx.next_pn);
+		return 0;
+	}
+
+	if (ack->first_ack_range > ack->largest_ack) {
+		QDPRINTF("Too big first ACK range #%lu\n", ack->first_ack_range);
+		return 0;
+	}
+
+	largest = ack->largest_ack;
+	smallest = largest - ack->first_ack_range;
+	do {
+		uint64_t gap, ack_range;
+		struct quic_tx_crypto_frm *frm;
+
+		if (!ack->ack_range_num--) {
+			quic_ack_range_crypto_frames(&qel->tx.crypto.frms,
+			                             &ctx->conn->quic_conn->crypto_in_flight,
+			                             largest, smallest);
+			break;
+		}
+
+		if (!quic_dec_int(&gap, pos, end) || smallest < gap + 2)
+			return 0;
+
+		if (!quic_dec_int(&ack_range, pos, end) || smallest - gap - 2 < ack_range)
+			return 0;
+
+		frm = quic_ack_range_with_gap_crypto_frames(&qel->tx.crypto.frms,
+		                                            &ctx->conn->quic_conn->crypto_in_flight,
+		                                            largest, smallest, smallest - gap - 2);
+		if (frm) {
+			eb64_delete(&frm->pn);
+			eb64_insert(&qel->tx.crypto.retransmit_frms, &frm->pn);
+			ctx->conn->quic_conn->retransmit = 1;
+		}
+		/* Next range */
+		largest = smallest - gap - 2;
+		smallest = largest - ack_range;
+
+		QDPRINTF("acks from %lu -> %lu\n", smallest, largest);
+	} while (1);
+
+	if (ack->largest_ack > qel->pktns->rx.largest_acked_pn)
+		qel->pktns->rx.largest_acked_pn = ack->largest_ack;
+
+	return 1;
+}
+
+/*
  * Parse all the frames of <qpkt> QUIC packet for QUIC connection with <ctx>
  * as I/O handler context and <qel> as encryption level.
  * Returns 1 if succeeded, 0 if failed.
@@ -1085,62 +1148,11 @@ static int quic_parse_handshake_packet(struct quic_rx_packet *qpkt, struct quic_
 			}
 			break;
 		case QUIC_FT_ACK:
-		{
-			struct quic_ack *ack = &frm.ack;
-			uint64_t smallest, largest;
-
-			if (ack->largest_ack > qel->pktns->tx.next_pn) {
-				QDPRINTF("ACK for not sent packet #%lu (%lu)\n",
-				         ack->largest_ack, qel->pktns->tx.next_pn);
+			if (!qc_parse_ack_frm(&frm, ctx, qel, &pos, end))
 				return 0;
-			}
-
-			if (ack->first_ack_range > ack->largest_ack) {
-				QDPRINTF("Too big first ACK range #%lu\n", ack->first_ack_range);
-				return 0;
-			}
-
-			largest = ack->largest_ack;
-			smallest = largest - ack->first_ack_range;
-			do {
-				uint64_t gap, ack_range;
-				struct quic_tx_crypto_frm *frm;
-
-				if (!ack->ack_range_num--) {
-					quic_ack_range_crypto_frames(&qel->tx.crypto.frms,
-					                             &ctx->conn->quic_conn->crypto_in_flight,
-					                             largest, smallest);
-					break;
-				}
-
-				if (!quic_dec_int(&gap, &pos, end) || smallest < gap + 2)
-					return 0;
-
-				if (!quic_dec_int(&ack_range, &pos, end) || smallest - gap - 2 < ack_range)
-					return 0;
-
-				frm = quic_ack_range_with_gap_crypto_frames(&qel->tx.crypto.frms,
-				                                            &ctx->conn->quic_conn->crypto_in_flight,
-				                                            largest, smallest, smallest - gap - 2);
-				if (frm) {
-					eb64_delete(&frm->pn);
-					eb64_insert(&qel->tx.crypto.retransmit_frms, &frm->pn);
-					ctx->conn->quic_conn->retransmit = 1;
-				}
-				/* Next range */
-				largest = smallest - gap - 2;
-				smallest = largest - ack_range;
-
-				QDPRINTF("acks from %lu -> %lu\n", smallest, largest);
-			} while (1);
-
-			if (ack->largest_ack > qel->pktns->rx.largest_acked_pn)
-				qel->pktns->rx.largest_acked_pn = ack->largest_ack;
 
 			tasklet_wakeup(ctx->wait_event.tasklet);
-
 			break;
-		}
 		case QUIC_FT_PING:
 			qpkt->flags |= QUIC_FL_RX_PACKET_ACK_ELICITING;
 			break;
@@ -1462,7 +1474,13 @@ int quic_update_ack_ranges_list(struct quic_ack_ranges *ack_ranges, int64_t pn)
 	return 1;
 }
 
-int quic_parse_packet_frames(struct quic_rx_packet *qpkt)
+/*
+ * Parse all the frames of <qpkt> QUIC packet from <ctx> I/O connection handler context
+ * at <qel> encryption level.
+ * Return 1 if succeeded, 0 if not.
+ */
+int quic_parse_packet_frames(struct quic_rx_packet *qpkt, struct quic_conn_ctx *ctx,
+                             struct quic_enc_level *qel)
 {
 	struct quic_frame frm;
 	const unsigned char *pos, *end;
@@ -1489,6 +1507,9 @@ int quic_parse_packet_frames(struct quic_rx_packet *qpkt)
 				break;
 
 			case QUIC_FT_ACK:
+				if (!qc_parse_ack_frm(&frm, ctx, qel, &pos, end))
+					return 0;
+
 				break;
 
 			case QUIC_FT_PING:
@@ -1579,7 +1600,7 @@ static int quic_conn_do_handshake(struct quic_conn_ctx *ctx)
 			}
 
 			if ((qpkt->long_header && !quic_parse_handshake_packet(qpkt, ctx, enc_level)) ||
-			    (!qpkt->long_header && !quic_parse_packet_frames(qpkt)))
+			    (!qpkt->long_header && !quic_parse_packet_frames(qpkt, ctx, enc_level)))
 				drop = 1;
 
 			if (drop) {
@@ -1711,7 +1732,7 @@ static int quic_treat_packets(struct quic_conn_ctx *ctx)
 			continue;
 		}
 
-		if (!quic_parse_packet_frames(qpkt)) {
+		if (!quic_parse_packet_frames(qpkt, ctx, enc_level)) {
 			QDPRINTF( "Could not parse the packet frames\n");
 			/* Drop the packet */
 			QDPRINTF( "packet #%lu long? %d dropped\n", qpkt->pn, !!qpkt->long_header);
