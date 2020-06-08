@@ -3396,7 +3396,7 @@ static ssize_t quic_packets_read(char *buf, size_t len, void *ctx,
 			QDPRINTF("Not enough memory to allocate a new packet\n");
 			goto err;
 		}
-
+		memset(qpkt, 0, sizeof(*qpkt));
 		ret = func(&pos, end, qpkt, ctx, saddr, saddrlen);
 		if (ret == -1) {
 			pool_free(pool_head_quic_rx_packet, qpkt);
