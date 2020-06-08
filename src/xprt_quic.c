@@ -1557,15 +1557,21 @@ static int quic_conn_do_handshake(struct quic_conn_ctx *ctx)
 			quic_update_ack_ranges_list(&enc_level->pktns->rx.ack_ranges, qpkt->pn);
 		}
 		qpkt_node = eb64_next(qpkt_node);
-		if (qpkt->crypto.offset == enc_level->rx.crypto.offset) {
-			QDPRINTF("crypto frame as expected\n");
-			HEXDUMP(qpkt->crypto.data, qpkt->crypto.len, "CRYPTO frame:\n");
-			if (SSL_provide_quic_data(ctx->ssl, SSL_quic_read_level(ctx->ssl),
-									  qpkt->crypto.data, qpkt->crypto.len) != 1) {
-				QDPRINTF("%s SSL providing QUIC data error\n", __func__);
-				return 0;
+		if (qpkt->crypto.len) {
+			if (qpkt->crypto.offset == enc_level->rx.crypto.offset) {
+				QDPRINTF("crypto frame as expected\n");
+				HEXDUMP(qpkt->crypto.data, qpkt->crypto.len, "CRYPTO frame:\n");
+				if (SSL_provide_quic_data(ctx->ssl, SSL_quic_read_level(ctx->ssl),
+										  qpkt->crypto.data, qpkt->crypto.len) != 1) {
+					QDPRINTF("%s SSL providing QUIC data error\n", __func__);
+					return 0;
+				}
+				enc_level->rx.crypto.offset += qpkt->crypto.len;
+				eb64_delete(&qpkt->pn_node);
+				pool_free(pool_head_quic_rx_packet, qpkt);
 			}
-			enc_level->rx.crypto.offset += qpkt->crypto.len;
+		}
+		else {
 			eb64_delete(&qpkt->pn_node);
 			pool_free(pool_head_quic_rx_packet, qpkt);
 		}
