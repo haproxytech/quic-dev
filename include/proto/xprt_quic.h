@@ -36,6 +36,8 @@
 #include <openssl/rand.h>
 
 #ifdef QDEBUG
+__attribute__((format (printf, 3, 4)))
+void hexdump(const void *buf, size_t buflen, const char *title_fmt, ...);
 #define QDPRINTF(fmt, ...)           fprintf(stderr, fmt, ##__VA_ARGS__)
 #define HEXDUMP(buf, len, fmt, ...)      hexdump(buf, len, fmt, ##__VA_ARGS__)
 #else
