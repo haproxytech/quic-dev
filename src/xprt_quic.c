@@ -3129,30 +3129,35 @@ static ssize_t qc_build_hdshk_pkt(struct q_buf *buf, struct quic_conn *qc, int p
 		return -2;
 	}
 
-	cf = pool_alloc(pool_head_quic_tx_crypto_frm);
-	if (!cf) {
-		TRACE_DEVEL("CRYPTO frame allocation failed", QUIC_EV_CONN_HPKT, qc->conn);
-		return -2;
-	}
 	/*
 	 * Now that a correct packet is built, let us set the position pointer of
 	 * <buf> buf for the next packet.
 	 */
 	q_buf_setpos(buf, end);
-	/* The length of this TX CRYPTO frame is deduced from the offsets. */
-	cf->len = next_offset - *offset;
 	/* Consume a packet number. */
-	cf->pn.key = ++qel->pktns->tx.next_pn;
-	/* Set the offset value to the current value before updating it. */
-	cf->offset = *offset;
-	/* Insert the CRYPTO frame. */
-	eb64_insert(&qel->tx.crypto.frms, &cf->pn);
-	/* Increment the offset of this crypto data stream */
-	*offset += cf->len;
+	++qel->pktns->tx.next_pn;
+
+	if (next_offset - *offset) {
+		cf = pool_alloc(pool_head_quic_tx_crypto_frm);
+		if (!cf) {
+			TRACE_DEVEL("CRYPTO frame allocation failed", QUIC_EV_CONN_HPKT, qc->conn);
+			return -2;
+		}
+		/* The length of this TX CRYPTO frame is deduced from the offsets. */
+		cf->len = next_offset - *offset;
+		cf->pn.key = qel->pktns->tx.next_pn;
+		/* Set the offset value to the current value before updating it. */
+		cf->offset = *offset;
+		/* Insert the CRYPTO frame. */
+		eb64_insert(&qel->tx.crypto.frms, &cf->pn);
+		/* Increment the offset of this crypto data stream */
+		*offset += cf->len;
+		/* Increment the CRYPTO data in flight counter. */
+		qc->crypto_in_flight += cf->len;
+	}
+
 	/* Increment the number of bytes in <buf> buffer by the length of this packet. */
 	buf->data += end - beg;
-	/* Increment the CRYPTO data in flight counter. */
-	qc->crypto_in_flight += cf->len;
 
 	TRACE_LEAVE(QUIC_EV_CONN_HPKT, qc->conn, cf);
 
