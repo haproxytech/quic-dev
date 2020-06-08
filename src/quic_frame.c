@@ -11,55 +11,6 @@
 
 #include <proto/quic_frame.h>
 
-int quic_parse_packet_frames(struct quic_rx_packet *qpkt)
-{
-	struct quic_frame frm;
-	const unsigned char *pos, *end;
-
-	/* Skip the AAD */
-	pos = qpkt->data + qpkt->aad_len;
-	end = qpkt->data + qpkt->len;
-
-	while (pos < end) {
-		if (!quic_parse_frame(&frm, &pos, end))
-			return 0;
-
-		switch (frm.type) {
-			case QUIC_FT_CRYPTO:
-				qpkt->flags |= QUIC_FL_RX_PACKET_ACK_ELICITING;
-				break;
-
-			case QUIC_FT_PADDING:
-				/* This frame must be the last found in the packet. */
-				if (pos != end) {
-					QDPRINTF("Wrong frame! (%ld len: %lu)\n", end - pos, frm.padding.len);
-					return 0;
-				}
-				break;
-
-			case QUIC_FT_ACK:
-				break;
-
-			case QUIC_FT_PING:
-				qpkt->flags |= QUIC_FL_RX_PACKET_ACK_ELICITING;
-				break;
-
-			case QUIC_FT_CONNECTION_CLOSE:
-			case QUIC_FT_CONNECTION_CLOSE_APP:
-				break;
-			case QUIC_FT_NEW_CONNECTION_ID:
-			case QUIC_FT_STREAM_A:
-			case QUIC_FT_STREAM_B:
-				qpkt->flags |= QUIC_FL_RX_PACKET_ACK_ELICITING;
-				break;
-			default:
-				return 0;
-		}
-	}
-
-	return 1;
-}
-
 int (*quic_build_frame_funcs[])(unsigned char **, const unsigned char *,
                                     struct quic_frame *) = {
 	[QUIC_FT_PADDING]      = quic_build_padding_frame,
