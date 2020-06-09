@@ -104,6 +104,8 @@ static const struct trace_event quic_trace_events[] = {
 	{ .mask = QUIC_EV_CONN_PRSAPKT,  .name = "parse_apkt",      .desc = "parse application packet" },
 #define           QUIC_EV_CONN_PRSFRM    (1ULL << 15)
 	{ .mask = QUIC_EV_CONN_PRSFRM,   .name = "parse_frm",       .desc = "parse frame" },
+#define           QUIC_EV_CONN_BFRM      (1ULL << 16)
+	{ .mask = QUIC_EV_CONN_BFRM,   .name = "build_frm",       .desc = "build frame" },
 
 #define           QUIC_EV_CONN_ENEW      (1ULL << 32)
 	{ .mask = QUIC_EV_CONN_ENEW,     .name = "new_conn_err",     .desc = "error on new QUIC connection" },
@@ -316,7 +318,7 @@ static void quic_trace(enum trace_level level, uint64_t mask, const struct trace
 				chunk_appendf(&trace_buf, " state=%s", quic_hdshk_state_str(*state));
 		}
 
-		if (mask & QUIC_EV_CONN_PRSFRM) {
+		if (mask & (QUIC_EV_CONN_PRSFRM|QUIC_EV_CONN_BFRM)) {
 			const struct quic_frame *frm = a2;
 
 			if (a2)
@@ -1153,8 +1155,8 @@ static inline int qc_parse_ack_frm(struct quic_frame *frm, struct quic_conn_ctx 
  * Decode a QUIC frame from <buf> buffer into <frm> frame.
  * Returns 1 if succeded (enough data to parse the frame), 0 if not.
  */
-static inline int quic_parse_frame(struct quic_frame *frm, struct quic_conn_ctx *ctx,
-                                   const unsigned char **buf, const unsigned char *end)
+static inline int qc_parse_frm(struct quic_frame *frm, struct quic_conn_ctx *ctx,
+                               const unsigned char **buf, const unsigned char *end)
 {
 	TRACE_ENTER(QUIC_EV_CONN_PRSFRM, ctx->conn);
 	if (end <= *buf) {
@@ -1169,18 +1171,44 @@ static inline int quic_parse_frame(struct quic_frame *frm, struct quic_conn_ctx 
 	}
 
 	QDPRINTF("%s: %s frame\n", __func__, quic_frame_type_string(frm->type));
-
 	if (!quic_parse_frame_funcs[frm->type](frm, buf, end)) {
 		TRACE_DEVEL("parsing error", QUIC_EV_CONN_PRSFRM, ctx->conn, frm);
 		goto err;
 	}
 
 	TRACE_LEAVE(QUIC_EV_CONN_PRSFRM, ctx->conn, frm);
-
 	return 1;
 
  err:
 	TRACE_DEVEL("leaving in error", QUIC_EV_CONN_PRSFRM, ctx->conn);
+	return 0;
+}
+
+/*
+ * Encode <frm> QUIC frame into <buf> buffer.
+ * Returns 1 if succeded (enough room in <buf> to encode the frame), 0 if not.
+ */
+static inline int qc_build_frm(unsigned char **buf, const unsigned char *end,
+                               struct quic_frame *frm, struct quic_conn *conn)
+{
+	TRACE_ENTER(QUIC_EV_CONN_BFRM, conn->conn);
+	if (end <= *buf) {
+		TRACE_DEVEL("not enough room", QUIC_EV_CONN_BFRM, conn->conn);
+		goto err;
+	}
+
+	QDPRINTF("%s: %s frame\n", __func__, quic_frame_type_string(frm->type));
+	*(*buf)++ = frm->type;
+	if (!quic_build_frame_funcs[frm->type](buf, end, frm)) {
+		TRACE_DEVEL("frame building error", QUIC_EV_CONN_BFRM, conn->conn);
+		goto err;
+	}
+
+	TRACE_LEAVE(QUIC_EV_CONN_BFRM, conn->conn, frm);
+	return 1;
+
+ err:
+	TRACE_DEVEL("leaving in error", QUIC_EV_CONN_BFRM, conn->conn, frm);
 	return 0;
 }
 
@@ -1201,7 +1229,7 @@ static int qc_parse_hdshk_pkt(struct quic_rx_packet *qpkt, struct quic_conn_ctx 
 	end = qpkt->data + qpkt->len;
 
 	while (pos < end) {
-		if (!quic_parse_frame(&frm, ctx, &pos, end))
+		if (!qc_parse_frm(&frm, ctx, &pos, end))
 			goto err;
 
 		switch (frm.type) {
@@ -1572,7 +1600,7 @@ int qc_parse_apkt(struct quic_rx_packet *qpkt, struct quic_conn_ctx *ctx)
 	end = qpkt->data + qpkt->len;
 
 	while (pos < end) {
-		if (!quic_parse_frame(&frm, ctx, &pos, end))
+		if (!qc_parse_frm(&frm, ctx, &pos, end))
 			goto err;
 
 		switch (frm.type) {
@@ -3093,14 +3121,15 @@ static int quic_apply_header_protection(unsigned char *buf, unsigned char *pn, s
  * Return 0 if failed, or the strictly positive length of the ACK frame if not.
  */
 static inline ssize_t quic_do_build_ack_frame(struct buffer *buf,
-                                              struct quic_ack_ranges *qars)
+                                              struct quic_ack_ranges *qars,
+                                              struct quic_conn *conn)
 {
 	struct quic_frame ack_frm = { .type = QUIC_FT_ACK, };
 	unsigned char *pos = (unsigned char *)b_orig(buf);
 
 	ack_frm.tx_ack.ack_delay = 0;
 	ack_frm.tx_ack.ack_ranges = qars;
-	if (!quic_build_frame(&pos, pos + buf->size, &ack_frm))
+	if (!qc_build_frm(&pos, pos + buf->size, &ack_frm, conn))
 		return 0;
 
 	return pos - (unsigned char *)b_orig(buf);
@@ -3197,7 +3226,7 @@ static ssize_t qc_do_build_hdshk_pkt(struct q_buf *wbuf, int pkt_type,
 	ack_buf = get_trash_chunk();
 	if ((qel->pktns->flags & QUIC_FL_PKTNS_ACK_REQUIRED) &&
 	    !LIST_ISEMPTY(&qel->pktns->rx.ack_ranges.list)) {
-		ack_frm_len = quic_do_build_ack_frame(ack_buf, &qel->pktns->rx.ack_ranges);
+		ack_frm_len = quic_do_build_ack_frame(ack_buf, &qel->pktns->rx.ack_ranges, conn);
 		if (!ack_frm_len)
 			goto err;
 
@@ -3238,14 +3267,14 @@ static ssize_t qc_do_build_hdshk_pkt(struct q_buf *wbuf, int pkt_type,
 	}
 
 	/* Crypto frame */
-	if (crypto_len && !quic_build_frame(&pos, end, &frm))
+	if (crypto_len && !qc_build_frm(&pos, end, &frm, conn))
 		goto err;
 
 	/* Build a PADDING frame if needed. */
 	if (padding_len) {
 		frm.type = QUIC_FT_PADDING;
 		frm.padding.len = padding_len;
-		if (!quic_build_frame(&pos, end, &frm))
+		if (!qc_build_frm(&pos, end, &frm, conn))
 			goto err;
 	}
 
@@ -3378,7 +3407,7 @@ static ssize_t qc_do_build_phdshk_apkt(struct q_buf *wbuf, uint64_t pn, size_t *
 		unsigned char *ppos;
 
 		ppos = pos;
-		if (!quic_build_frame(&ppos, end, frm)) {
+		if (!qc_build_frm(&ppos, end, frm, conn)) {
 			QDPRINTF("%s: Could not build frame %s\n",
 			         __func__, quic_frame_type_string(frm->type));
 			break;

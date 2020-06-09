@@ -888,20 +888,4 @@ static inline int quic_parse_handshake_done_frame(struct quic_frame *frm,
 	return 1;
 }
 
-/*
- * Encode <frm> QUIC frame into <buf> buffer.
- * Returns 1 if succeded (enough room in <buf> to encode the frame), 0 if not.
- */
-static inline int quic_build_frame(unsigned char **buf, const unsigned char *end,
-                                   struct quic_frame *frm)
-{
-	if (end <= *buf)
-		return 0;
-
-	QDPRINTF("%s: %s frame\n", __func__, quic_frame_type_string(frm->type));
-	*(*buf)++ = frm->type;
-
-	return quic_build_frame_funcs[frm->type](buf, end, frm);
-}
-
 #endif /* _PROTO_QUIC_FRAME_H */
