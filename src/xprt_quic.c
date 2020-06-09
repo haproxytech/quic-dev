@@ -1696,7 +1696,7 @@ static int qc_do_hdshk(struct quic_conn_ctx *ctx)
 	    (!LIST_ISEMPTY(&next_enc_level->rx.pqpkts) || !eb_is_empty(&next_enc_level->rx.qpkts))) {
 		enc_level = next_enc_level;
 		if (ctx->state == QUIC_HS_ST_CLIENT_INITIAL)
-			ctx->state = QUIC_HS_ST_CLIENT_HANSHAKE;
+			ctx->state = QUIC_HS_ST_CLIENT_HANDSHAKE;
 		goto next_level;
 	}
 
@@ -1710,10 +1710,10 @@ static int qc_do_hdshk(struct quic_conn_ctx *ctx)
 		goto err;
 	}
 
-	TRACE_DEVEL("SSL handhake OK", QUIC_EV_CONN_HDSHK, ctx->conn, &ctx->state);
+	TRACE_DEVEL("SSL handshake OK", QUIC_EV_CONN_HDSHK, ctx->conn, &ctx->state);
 
-	if (ctx->state == QUIC_HS_ST_SERVER_HANSHAKE ||
-	    ctx->state == QUIC_HS_ST_CLIENT_HANSHAKE)
+	if (ctx->state == QUIC_HS_ST_SERVER_HANDSHAKE ||
+	    ctx->state == QUIC_HS_ST_CLIENT_HANDSHAKE)
 		ctx->conn->flags &= ~CO_FL_SSL_WAIT_HS;
 
 	ret = SSL_process_quic_post_handshake(ctx->ssl);
@@ -2918,7 +2918,7 @@ static ssize_t qc_lstnr_pkt_rcv(unsigned char **buf, const unsigned char *end,
 	/* Update the state if needed. */
 	conn_ctx = conn->conn->xprt_ctx;
 	if (conn_ctx->state == QUIC_HS_ST_SERVER_INITIAL && qpkt->type == QUIC_PACKET_TYPE_HANDSHAKE)
-		conn_ctx->state = QUIC_HS_ST_SERVER_HANSHAKE;
+		conn_ctx->state = QUIC_HS_ST_SERVER_HANDSHAKE;
 
 	/* Wake the tasklet of the QUIC connection packet handler. */
 	if (conn_ctx)
