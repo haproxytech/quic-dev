@@ -84,7 +84,6 @@ static const struct trace_event quic_trace_events[] = {
 	{ .mask = QUIC_EV_CONN_LPKT,     .name = "lstnr_packet",     .desc = "new listener received packet" },
 #define           QUIC_EV_CONN_SPKT      (1ULL << 6)
 	{ .mask = QUIC_EV_CONN_SPKT,     .name = "srv_packet",       .desc = "new server received packet" },
-
 #define           QUIC_EV_CONN_CHPKT     (1ULL << 7)
 	{ .mask = QUIC_EV_CONN_CHPKT,    .name = "chdshk_pkt",       .desc = "clear handhshake packet building" },
 #define           QUIC_EV_CONN_HPKT      (1ULL << 8)
@@ -94,37 +93,37 @@ static const struct trace_event quic_trace_events[] = {
 #define           QUIC_EV_CONN_PAPKTS    (1ULL << 10)
 	{ .mask = QUIC_EV_CONN_PAPKTS,   .name = "phdshk_apkts",     .desc = "post handhshake application packets preparation" },
 #define           QUIC_EV_CONN_HDSHK     (1ULL << 11)
-	{ .mask = QUIC_EV_CONN_HDSHK,   .name = "hdshk",             .desc = "SSL handhshake processing" },
+	{ .mask = QUIC_EV_CONN_HDSHK,    .name = "hdshk",            .desc = "SSL handhshake processing" },
 #define           QUIC_EV_CONN_RMHP      (1ULL << 12)
-	{ .mask = QUIC_EV_CONN_RMHP,   .name = "rm_hp",              .desc = "Remove header protection" },
-
+	{ .mask = QUIC_EV_CONN_RMHP,     .name = "rm_hp",            .desc = "Remove header protection" },
 #define           QUIC_EV_CONN_PRSHPKT   (1ULL << 13)
-	{ .mask = QUIC_EV_CONN_PRSHPKT,  .name = "parse_hpkt",      .desc = "parse handshake packet" },
+	{ .mask = QUIC_EV_CONN_PRSHPKT,  .name = "parse_hpkt",       .desc = "parse handshake packet" },
 #define           QUIC_EV_CONN_PRSAPKT   (1ULL << 14)
-	{ .mask = QUIC_EV_CONN_PRSAPKT,  .name = "parse_apkt",      .desc = "parse application packet" },
+	{ .mask = QUIC_EV_CONN_PRSAPKT,  .name = "parse_apkt",       .desc = "parse application packet" },
 #define           QUIC_EV_CONN_PRSFRM    (1ULL << 15)
-	{ .mask = QUIC_EV_CONN_PRSFRM,   .name = "parse_frm",       .desc = "parse frame" },
-#define           QUIC_EV_CONN_BFRM      (1ULL << 16)
-	{ .mask = QUIC_EV_CONN_BFRM,   .name = "build_frm",       .desc = "build frame" },
-
+	{ .mask = QUIC_EV_CONN_PRSFRM,   .name = "parse_frm",        .desc = "parse frame" },
+#define           QUIC_EV_CONN_PRSAFRM   (1ULL << 16)
+	{ .mask = QUIC_EV_CONN_PRSAFRM,  .name = "parse_ack_frm",    .desc = "parse ACK frame" },
+#define           QUIC_EV_CONN_BFRM      (1ULL << 17)
+	{ .mask = QUIC_EV_CONN_BFRM,     .name = "build_frm",        .desc = "build frame" },
 #define           QUIC_EV_CONN_ENEW      (1ULL << 32)
 	{ .mask = QUIC_EV_CONN_ENEW,     .name = "new_conn_err",     .desc = "error on new QUIC connection" },
 #define           QUIC_EV_CONN_EISEC     (1ULL << 33)
 	{ .mask = QUIC_EV_CONN_EISEC,    .name = "init_secs_err",    .desc = "error on initial secrets derivation" },
 #define           QUIC_EV_CONN_ERSEC     (1ULL << 34)
-	{ .mask = QUIC_EV_CONN_ERSEC,    .name = "read_secs_err",   .desc = "error on read secrets derivation" },
+	{ .mask = QUIC_EV_CONN_ERSEC,    .name = "read_secs_err",    .desc = "error on read secrets derivation" },
 #define           QUIC_EV_CONN_EWSEC     (1ULL << 35)
-	{ .mask = QUIC_EV_CONN_EWSEC,    .name = "write_secs_err",  .desc = "error on write secrets derivation" },
+	{ .mask = QUIC_EV_CONN_EWSEC,    .name = "write_secs_err",   .desc = "error on write secrets derivation" },
 #define           QUIC_EV_CONN_ELPKT     (1ULL << 36)
-	{ .mask = QUIC_EV_CONN_ELPKT,    .name = "lstnr_packet_err",.desc = "error on new listener received packet" },
+	{ .mask = QUIC_EV_CONN_ELPKT,    .name = "lstnr_packet_err", .desc = "error on new listener received packet" },
 #define           QUIC_EV_CONN_ESPKT     (1ULL << 37)
-	{ .mask = QUIC_EV_CONN_ESPKT,    .name = "srv_packet_err",  .desc = "error on new server received packet" },
+	{ .mask = QUIC_EV_CONN_ESPKT,    .name = "srv_packet_err",   .desc = "error on new server received packet" },
 #define           QUIC_EV_CONN_ECHPKT    (1ULL << 38)
-	{ .mask = QUIC_EV_CONN_ECHPKT,   .name = "chdshk_pkt_err",  .desc = "error on clear handhshake packet building" },
+	{ .mask = QUIC_EV_CONN_ECHPKT,   .name = "chdshk_pkt_err",   .desc = "error on clear handhshake packet building" },
 #define           QUIC_EV_CONN_EHPKT     (1ULL << 39)
-	{ .mask = QUIC_EV_CONN_EHPKT,    .name = "hdshk_pkt_err",   .desc = "error on handhshake packet building" },
+	{ .mask = QUIC_EV_CONN_EHPKT,    .name = "hdshk_pkt_err",    .desc = "error on handhshake packet building" },
 #define           QUIC_EV_CONN_EPAPKT    (1ULL << 40)
-	{ .mask = QUIC_EV_CONN_EPAPKT,   .name = "phdshk_apkt_err", .desc = "error on post handhshake application packet building" },
+	{ .mask = QUIC_EV_CONN_EPAPKT,   .name = "phdshk_apkt_err",  .desc = "error on post handhshake application packet building" },
 	{ /* end */ }
 };
 
@@ -323,6 +322,19 @@ static void quic_trace(enum trace_level level, uint64_t mask, const struct trace
 
 			if (a2)
 				chunk_appendf(&trace_buf, " %s", quic_frame_type_string(frm->type));
+		}
+
+		if (mask & QUIC_EV_CONN_PRSAFRM) {
+			const unsigned long *val1 = a2;
+			const unsigned long *val2 = a3;
+			const unsigned long *val3 = a4;
+
+			if (val1)
+				chunk_appendf(&trace_buf, " %lu", *val1);
+			if (val2)
+				chunk_appendf(&trace_buf, "..%lu", *val2);
+			if (val3)
+				chunk_appendf(&trace_buf, "..%lu", *val3);
 		}
 	}
 
@@ -1025,7 +1037,7 @@ static int qc_pkt_decrypt(struct quic_rx_packet *qpkt, struct quic_tls_ctx *tls_
  * May be NULL if <largest> node could not be found.
  */
 static inline struct eb64_node *
-quic_ack_range_crypto_frames(struct eb_root *frms, uint64_t *crypto_in_flight,
+quic_ack_range_crypto_frames(struct eb_root *frms, struct quic_conn_ctx *ctx,
                              uint64_t largest, uint64_t smallest)
 {
 	struct eb64_node *node;
@@ -1035,7 +1047,9 @@ quic_ack_range_crypto_frames(struct eb_root *frms, uint64_t *crypto_in_flight,
 	while (node && node->key >= smallest) {
 		frm = eb64_entry(&node->node, struct quic_tx_crypto_frm, pn);
 		QDPRINTF("Removing CRYPTO frame #%llu\n", frm->pn.key);
-		*crypto_in_flight -= frm->len;
+		TRACE_PROTO("cfrm ackd", QUIC_EV_CONN_PRSAFRM, ctx->conn,
+		            &frm->pn.key, &frm->offset, &frm->len);
+		ctx->conn->quic_conn->crypto_in_flight -= frm->len,
 		node = eb64_prev(node);
 		eb64_delete(&frm->pn);
 		pool_free(pool_head_quic_tx_crypto_frm, frm);
@@ -1056,15 +1070,14 @@ quic_ack_range_crypto_frames(struct eb_root *frms, uint64_t *crypto_in_flight,
  * to the same gap.
  */
 static inline struct quic_tx_crypto_frm *
-quic_ack_range_with_gap_crypto_frames(struct eb_root *frms,
-                                      uint64_t *crypto_in_flight,
+quic_ack_range_with_gap_crypto_frames(struct eb_root *frms, struct quic_conn_ctx *ctx,
                                       uint64_t largest, uint64_t smallest,
                                       uint64_t next_largest)
 {
 	struct eb64_node *node;
 	struct quic_tx_crypto_frm *frm;
 
-	node = quic_ack_range_crypto_frames(frms, crypto_in_flight, largest, smallest);
+	node = quic_ack_range_crypto_frames(frms, ctx, largest, smallest);
 	if (!node)
 		return NULL;
 
@@ -1075,6 +1088,8 @@ quic_ack_range_with_gap_crypto_frames(struct eb_root *frms,
 		frm = eb64_entry(&node->node, struct quic_tx_crypto_frm, pn);
 		QDPRINTF("Should retransmit CRYPTO frame #%llu offset: %lu len: %zu\n",
 		         frm->pn.key, frm->offset, frm->len);
+		TRACE_PROTO("to resend", QUIC_EV_CONN_PRSAFRM, ctx->conn,
+		            &frm->pn.key, &frm->offset, &frm->len);
 		node = eb64_prev(node);
 		if (node && node->key > next_largest) {
 			prev_frm = eb64_entry(&node->node, struct quic_tx_crypto_frm, pn);
@@ -1083,7 +1098,7 @@ quic_ack_range_with_gap_crypto_frames(struct eb_root *frms,
 			pool_free(pool_head_quic_tx_crypto_frm, frm);
 		}
 	} while (node);
-	*crypto_in_flight -= frm->len;
+	ctx->conn->quic_conn->crypto_in_flight -= frm->len;
 
 	return frm;
 }
@@ -1101,37 +1116,43 @@ static inline int qc_parse_ack_frm(struct quic_frame *frm, struct quic_conn_ctx 
 	uint64_t smallest, largest;
 
 	if (ack->largest_ack > qel->pktns->tx.next_pn) {
-		QDPRINTF("ACK for not sent packet #%lu (%lu)\n",
-				 ack->largest_ack, qel->pktns->tx.next_pn);
-		return 0;
+		TRACE_DEVEL("ACK for not sent packet", QUIC_EV_CONN_PRSAFRM,
+		            ctx->conn, &ack->largest_ack);
+		goto err;
 	}
 
 	if (ack->first_ack_range > ack->largest_ack) {
-		QDPRINTF("Too big first ACK range #%lu\n", ack->first_ack_range);
-		return 0;
+		TRACE_DEVEL("too big first ACK range", QUIC_EV_CONN_PRSAFRM,
+		            ctx->conn, &ack->first_ack_range);
+		goto err;
 	}
 
 	largest = ack->largest_ack;
 	smallest = largest - ack->first_ack_range;
+	TRACE_PROTO("ack range", QUIC_EV_CONN_PRSAFRM, ctx->conn, &largest, &smallest);
 	do {
 		uint64_t gap, ack_range;
 		struct quic_tx_crypto_frm *frm;
 
 		if (!ack->ack_range_num--) {
-			quic_ack_range_crypto_frames(&qel->tx.crypto.frms,
-			                             &ctx->conn->quic_conn->crypto_in_flight,
+			quic_ack_range_crypto_frames(&qel->tx.crypto.frms, ctx,
 			                             largest, smallest);
 			break;
 		}
 
-		if (!quic_dec_int(&gap, pos, end) || smallest < gap + 2)
-			return 0;
+		if (!quic_dec_int(&gap, pos, end) || smallest < gap + 2) {
+			TRACE_DEVEL("wrong gap value", QUIC_EV_CONN_PRSAFRM,
+						ctx->conn, &gap, &smallest);
+			goto err;
+		}
 
-		if (!quic_dec_int(&ack_range, pos, end) || smallest - gap - 2 < ack_range)
-			return 0;
+		if (!quic_dec_int(&ack_range, pos, end) || smallest - gap - 2 < ack_range) {
+			TRACE_DEVEL("wrong ack range value", QUIC_EV_CONN_PRSAFRM,
+						ctx->conn, &ack_range, &gap, &smallest);
+			goto err;
+		}
 
-		frm = quic_ack_range_with_gap_crypto_frames(&qel->tx.crypto.frms,
-		                                            &ctx->conn->quic_conn->crypto_in_flight,
+		frm = quic_ack_range_with_gap_crypto_frames(&qel->tx.crypto.frms, ctx,
 		                                            largest, smallest, smallest - gap - 2);
 		if (frm) {
 			eb64_delete(&frm->pn);
@@ -1142,13 +1163,17 @@ static inline int qc_parse_ack_frm(struct quic_frame *frm, struct quic_conn_ctx 
 		largest = smallest - gap - 2;
 		smallest = largest - ack_range;
 
-		QDPRINTF("acks from %lu -> %lu\n", smallest, largest);
+		TRACE_PROTO("ack range", QUIC_EV_CONN_PRSAFRM, ctx->conn, &largest, &smallest);
 	} while (1);
 
 	if (ack->largest_ack > qel->pktns->rx.largest_acked_pn)
 		qel->pktns->rx.largest_acked_pn = ack->largest_ack;
 
 	return 1;
+
+ err:
+	TRACE_DEVEL("leaving in error", QUIC_EV_CONN_PRSAFRM, ctx->conn);
+	return 0;
 }
 
 /*
