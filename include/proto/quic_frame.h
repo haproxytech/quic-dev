@@ -904,25 +904,4 @@ static inline int quic_build_frame(unsigned char **buf, const unsigned char *end
 	return quic_build_frame_funcs[frm->type](buf, end, frm);
 }
 
-/*
- * Decode a QUIC frame from <buf> buffer into <frm> frame.
- * Returns 1 if succeded (enough data to parse the frame), 0 if not.
- */
-static inline int quic_parse_frame(struct quic_frame *frm,
-                                   const unsigned char **buf, const unsigned char *end)
-{
-	if (end <= *buf)
-		return 0;
-
-	frm->type = *(*buf)++;
-	if (frm->type > QUIC_FT_MAX) {
-		QDPRINTF("%s: wrong frame 0x%02x\n", __func__, frm->type);
-		return 0;
-	}
-
-	QDPRINTF("%s: %s frame\n", __func__, quic_frame_type_string(frm->type));
-
-	return quic_parse_frame_funcs[frm->type](frm, buf, end);
-}
-
 #endif /* _PROTO_QUIC_FRAME_H */

@@ -73,7 +73,7 @@ static const struct trace_event quic_trace_events[] = {
 #define           QUIC_EV_CONN_NEW       (1ULL << 0)
 	{ .mask = QUIC_EV_CONN_NEW,      .name = "new_conn",         .desc = "new QUIC connection" },
 #define           QUIC_EV_CONN_INIT       (1ULL << 1)
-	{ .mask = QUIC_EV_CONN_INIT,      .name = "new_conn",        .desc = "new QUIC connection initialization" },
+	{ .mask = QUIC_EV_CONN_INIT,     .name = "new_conn_init",    .desc = "new QUIC connection initialization" },
 #define           QUIC_EV_CONN_ISEC      (1ULL << 2)
 	{ .mask = QUIC_EV_CONN_ISEC,     .name = "init_secs",        .desc = "initial secrets derivation" },
 #define           QUIC_EV_CONN_RSEC      (1ULL << 3)
@@ -97,6 +97,13 @@ static const struct trace_event quic_trace_events[] = {
 	{ .mask = QUIC_EV_CONN_HDSHK,   .name = "hdshk",             .desc = "SSL handhshake processing" },
 #define           QUIC_EV_CONN_RMHP      (1ULL << 12)
 	{ .mask = QUIC_EV_CONN_RMHP,   .name = "rm_hp",              .desc = "Remove header protection" },
+
+#define           QUIC_EV_CONN_PRSHPKT   (1ULL << 13)
+	{ .mask = QUIC_EV_CONN_PRSHPKT,  .name = "parse_hpkt",      .desc = "parse handshake packet" },
+#define           QUIC_EV_CONN_PRSAPKT   (1ULL << 14)
+	{ .mask = QUIC_EV_CONN_PRSAPKT,  .name = "parse_apkt",      .desc = "parse application packet" },
+#define           QUIC_EV_CONN_PRSFRM    (1ULL << 15)
+	{ .mask = QUIC_EV_CONN_PRSFRM,   .name = "parse_frm",       .desc = "parse frame" },
 
 #define           QUIC_EV_CONN_ENEW      (1ULL << 32)
 	{ .mask = QUIC_EV_CONN_ENEW,     .name = "new_conn_err",     .desc = "error on new QUIC connection" },
@@ -307,6 +314,13 @@ static void quic_trace(enum trace_level level, uint64_t mask, const struct trace
 
 			if (state)
 				chunk_appendf(&trace_buf, " state=%s", quic_hdshk_state_str(*state));
+		}
+
+		if (mask & QUIC_EV_CONN_PRSFRM) {
+			const struct quic_frame *frm = a2;
+
+			if (a2)
+				chunk_appendf(&trace_buf, " %s", quic_frame_type_string(frm->type));
 		}
 	}
 
@@ -1136,23 +1150,59 @@ static inline int qc_parse_ack_frm(struct quic_frame *frm, struct quic_conn_ctx 
 }
 
 /*
+ * Decode a QUIC frame from <buf> buffer into <frm> frame.
+ * Returns 1 if succeded (enough data to parse the frame), 0 if not.
+ */
+static inline int quic_parse_frame(struct quic_frame *frm, struct quic_conn_ctx *ctx,
+                                   const unsigned char **buf, const unsigned char *end)
+{
+	TRACE_ENTER(QUIC_EV_CONN_PRSFRM, ctx->conn);
+	if (end <= *buf) {
+		TRACE_DEVEL("wrong frame", QUIC_EV_CONN_PRSFRM, ctx->conn);
+		goto err;
+	}
+
+	frm->type = *(*buf)++;
+	if (frm->type > QUIC_FT_MAX) {
+		TRACE_DEVEL("wrong frame type", QUIC_EV_CONN_PRSFRM, ctx->conn, frm);
+		goto err;
+	}
+
+	QDPRINTF("%s: %s frame\n", __func__, quic_frame_type_string(frm->type));
+
+	if (!quic_parse_frame_funcs[frm->type](frm, buf, end)) {
+		TRACE_DEVEL("parsing error", QUIC_EV_CONN_PRSFRM, ctx->conn, frm);
+		goto err;
+	}
+
+	TRACE_LEAVE(QUIC_EV_CONN_PRSFRM, ctx->conn, frm);
+
+	return 1;
+
+ err:
+	TRACE_DEVEL("leaving in error", QUIC_EV_CONN_PRSFRM, ctx->conn);
+	return 0;
+}
+
+/*
  * Parse all the frames of <qpkt> QUIC packet for QUIC connection with <ctx>
  * as I/O handler context and <qel> as encryption level.
  * Returns 1 if succeeded, 0 if failed.
  */
-static int quic_parse_handshake_packet(struct quic_rx_packet *qpkt, struct quic_conn_ctx *ctx,
-                                       struct quic_enc_level *qel)
+static int qc_parse_hdshk_pkt(struct quic_rx_packet *qpkt, struct quic_conn_ctx *ctx,
+                              struct quic_enc_level *qel)
 {
 	struct quic_frame frm;
 	const unsigned char *pos, *end;
 
+	TRACE_ENTER(QUIC_EV_CONN_PRSHPKT, ctx->conn);
 	/* Skip the AAD */
 	pos = qpkt->data + qpkt->aad_len;
 	end = qpkt->data + qpkt->len;
 
 	while (pos < end) {
-		if (!quic_parse_frame(&frm, &pos, end))
-			return 0;
+		if (!quic_parse_frame(&frm, ctx, &pos, end))
+			goto err;
 
 		switch (frm.type) {
 		case QUIC_FT_CRYPTO:
@@ -1174,7 +1224,7 @@ static int quic_parse_handshake_packet(struct quic_rx_packet *qpkt, struct quic_
 			break;
 		case QUIC_FT_ACK:
 			if (!qc_parse_ack_frm(&frm, ctx, qel, &pos, end))
-				return 0;
+				goto err;
 
 			tasklet_wakeup(ctx->wait_event.tasklet);
 			break;
@@ -1184,11 +1234,16 @@ static int quic_parse_handshake_packet(struct quic_rx_packet *qpkt, struct quic_
 		case QUIC_FT_CONNECTION_CLOSE:
 			break;
 		default:
-			return 0;
+			goto err;
 		}
 	}
 
+	TRACE_LEAVE(QUIC_EV_CONN_PRSHPKT, ctx->conn);
 	return 1;
+
+ err:
+	TRACE_DEVEL("leaving in error", QUIC_EV_CONN_PRSHPKT, ctx->conn);
+	return 0;
 }
 
 /*
@@ -1504,19 +1559,21 @@ int quic_update_ack_ranges_list(struct quic_ack_ranges *ack_ranges, int64_t pn)
  * at <qel> encryption level.
  * Return 1 if succeeded, 0 if not.
  */
-int quic_parse_packet_frames(struct quic_rx_packet *qpkt, struct quic_conn_ctx *ctx,
-                             struct quic_enc_level *qel)
+int qc_parse_apkt(struct quic_rx_packet *qpkt, struct quic_conn_ctx *ctx)
 {
 	struct quic_frame frm;
 	const unsigned char *pos, *end;
+	struct quic_enc_level *qel;
 
+	TRACE_ENTER(QUIC_EV_CONN_PRSAPKT, ctx->conn);
+	qel = &ctx->conn->quic_conn->enc_levels[QUIC_TLS_ENC_LEVEL_APP];
 	/* Skip the AAD */
 	pos = qpkt->data + qpkt->aad_len;
 	end = qpkt->data + qpkt->len;
 
 	while (pos < end) {
-		if (!quic_parse_frame(&frm, &pos, end))
-			return 0;
+		if (!quic_parse_frame(&frm, ctx, &pos, end))
+			goto err;
 
 		switch (frm.type) {
 			case QUIC_FT_CRYPTO:
@@ -1527,13 +1584,13 @@ int quic_parse_packet_frames(struct quic_rx_packet *qpkt, struct quic_conn_ctx *
 				/* This frame must be the last found in the packet. */
 				if (pos != end) {
 					QDPRINTF("Wrong frame! (%ld len: %lu)\n", end - pos, frm.padding.len);
-					return 0;
+					goto err;
 				}
 				break;
 
 			case QUIC_FT_ACK:
 				if (!qc_parse_ack_frm(&frm, ctx, qel, &pos, end))
-					return 0;
+					goto err;
 
 				break;
 
@@ -1550,11 +1607,16 @@ int quic_parse_packet_frames(struct quic_rx_packet *qpkt, struct quic_conn_ctx *
 				qpkt->flags |= QUIC_FL_RX_PACKET_ACK_ELICITING;
 				break;
 			default:
-				return 0;
+				goto err;
 		}
 	}
 
+	TRACE_LEAVE(QUIC_EV_CONN_PRSAPKT, ctx->conn);
 	return 1;
+
+ err:
+	TRACE_DEVEL("leaving in error", QUIC_EV_CONN_PRSAPKT, ctx->conn);
+	return 0;
 }
 
 /*
@@ -1626,8 +1688,8 @@ static int qc_do_hdshk(struct quic_conn_ctx *ctx)
 				continue;
 			}
 
-			if ((qpkt->long_header && !quic_parse_handshake_packet(qpkt, ctx, enc_level)) ||
-			    (!qpkt->long_header && !quic_parse_packet_frames(qpkt, ctx, enc_level)))
+			if ((qpkt->long_header && !qc_parse_hdshk_pkt(qpkt, ctx, enc_level)) ||
+			    (!qpkt->long_header && !qc_parse_apkt(qpkt, ctx)))
 				drop = 1;
 
 			if (drop) {
@@ -1771,7 +1833,7 @@ static int quic_treat_packets(struct quic_conn_ctx *ctx)
 			continue;
 		}
 
-		if (!quic_parse_packet_frames(qpkt, ctx, enc_level)) {
+		if (!qc_parse_apkt(qpkt, ctx)) {
 			QDPRINTF( "Could not parse the packet frames\n");
 			/* Drop the packet */
 			QDPRINTF( "packet #%lu long? %d dropped\n", qpkt->pn, !!qpkt->long_header);
