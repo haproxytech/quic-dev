@@ -133,6 +133,30 @@ static inline enum quic_tls_enc_level ssl_to_quic_enc_level(int level)
 }
 
 /*
+ * Return a human readable string from <state> QUIC handshake state of NULL
+ * for unknown state values (for debug purpose).
+ */
+static inline char *quic_hdshk_state_str(const enum quic_handshake_state state)
+{
+	switch (state) {
+	case QUIC_HS_ST_CLIENT_INITIAL:
+		return "CI";
+	case QUIC_HS_ST_CLIENT_HANSHAKE:
+		return "CH";
+	case QUIC_HS_ST_CLIENT_HANSHAKE_FAILED:
+		return "CF";
+	case QUIC_HS_ST_SERVER_INITIAL:
+		return "SI";
+	case QUIC_HS_ST_SERVER_HANSHAKE:
+		return "SH";
+	case QUIC_HS_ST_SERVER_HANSHAKE_FAILED:
+		return "SF";
+	}
+
+	return NULL;
+}
+
+/*
  * Return a character identifying the encryption level from <level> QUIC TLS
  * encryption level (for debug purpose).
  * Initial -> 'I', Early Data -> 'E', Handshake -> 'H', Application -> 'A' and
