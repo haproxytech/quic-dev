@@ -1712,7 +1712,8 @@ static int qc_do_hdshk(struct quic_conn_ctx *ctx)
 
 	TRACE_DEVEL("SSL handhake OK", QUIC_EV_CONN_HDSHK, ctx->conn, &ctx->state);
 
-	if (ctx->state == QUIC_HS_ST_SERVER_HANSHAKE)
+	if (ctx->state == QUIC_HS_ST_SERVER_HANSHAKE ||
+	    ctx->state == QUIC_HS_ST_CLIENT_HANSHAKE)
 		ctx->conn->flags &= ~CO_FL_SSL_WAIT_HS;
 
 	ret = SSL_process_quic_post_handshake(ctx->ssl);
