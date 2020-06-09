@@ -3221,6 +3221,7 @@ static ssize_t qc_build_hdshk_pkt(struct q_buf *buf, struct quic_conn *qc, int p
 	uint64_t next_offset;
 
 	TRACE_ENTER(QUIC_EV_CONN_HPKT, qc->conn);
+	cf = NULL;
 	beg = q_buf_getpos(buf);
 
 	next_offset = *offset;
