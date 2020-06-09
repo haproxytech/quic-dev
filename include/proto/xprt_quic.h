@@ -107,8 +107,12 @@ static inline void quic_cid_dump(struct buffer *buf, struct quic_cid *cid)
 {
 	int i;
 
+	chunk_appendf(buf, "(%d", cid->len);
+	if (cid->len)
+		chunk_appendf(buf, ",");
 	for (i = 0; i < cid->len; i++)
 		chunk_appendf(buf, "%02x", cid->data[i]);
+	chunk_appendf(buf, ")");
 }
 
 /*

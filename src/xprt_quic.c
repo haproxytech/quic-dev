@@ -72,28 +72,30 @@ static void quic_trace(enum trace_level level, uint64_t mask, \
 static const struct trace_event quic_trace_events[] = {
 #define           QUIC_EV_CONN_NEW       (1ULL << 0)
 	{ .mask = QUIC_EV_CONN_NEW,      .name = "new_conn",         .desc = "new QUIC connection" },
-#define           QUIC_EV_CONN_ISEC      (1ULL << 1)
+#define           QUIC_EV_CONN_INIT       (1ULL << 1)
+	{ .mask = QUIC_EV_CONN_INIT,      .name = "new_conn",        .desc = "new QUIC connection initialization" },
+#define           QUIC_EV_CONN_ISEC      (1ULL << 2)
 	{ .mask = QUIC_EV_CONN_ISEC,     .name = "init_secs",        .desc = "initial secrets derivation" },
-#define           QUIC_EV_CONN_RSEC      (1ULL << 2)
+#define           QUIC_EV_CONN_RSEC      (1ULL << 3)
 	{ .mask = QUIC_EV_CONN_RSEC,     .name = "read_secs",        .desc = "read secrets derivation" },
-#define           QUIC_EV_CONN_WSEC      (1ULL << 3)
+#define           QUIC_EV_CONN_WSEC      (1ULL << 4)
 	{ .mask = QUIC_EV_CONN_WSEC,     .name = "write_secs",       .desc = "write secrets derivation" },
-#define           QUIC_EV_CONN_LPKT      (1ULL << 4)
+#define           QUIC_EV_CONN_LPKT      (1ULL << 5)
 	{ .mask = QUIC_EV_CONN_LPKT,     .name = "lstnr_packet",     .desc = "new listener received packet" },
-#define           QUIC_EV_CONN_SPKT      (1ULL << 5)
+#define           QUIC_EV_CONN_SPKT      (1ULL << 6)
 	{ .mask = QUIC_EV_CONN_SPKT,     .name = "srv_packet",       .desc = "new server received packet" },
 
-#define           QUIC_EV_CONN_CHPKT     (1ULL << 6)
+#define           QUIC_EV_CONN_CHPKT     (1ULL << 7)
 	{ .mask = QUIC_EV_CONN_CHPKT,    .name = "chdshk_pkt",       .desc = "clear handhshake packet building" },
-#define           QUIC_EV_CONN_HPKT      (1ULL << 7)
+#define           QUIC_EV_CONN_HPKT      (1ULL << 8)
 	{ .mask = QUIC_EV_CONN_HPKT,     .name = "hdshk_pkt",        .desc = "handhshake packet building" },
-#define           QUIC_EV_CONN_PAPKT     (1ULL << 8)
+#define           QUIC_EV_CONN_PAPKT     (1ULL << 9)
 	{ .mask = QUIC_EV_CONN_PAPKT,    .name = "phdshk_apkt",      .desc = "post handhshake application packet preparation" },
-#define           QUIC_EV_CONN_PAPKTS    (1ULL << 9)
+#define           QUIC_EV_CONN_PAPKTS    (1ULL << 10)
 	{ .mask = QUIC_EV_CONN_PAPKTS,   .name = "phdshk_apkts",     .desc = "post handhshake application packets preparation" },
-#define           QUIC_EV_CONN_HDSHK     (1ULL << 10)
+#define           QUIC_EV_CONN_HDSHK     (1ULL << 11)
 	{ .mask = QUIC_EV_CONN_HDSHK,   .name = "hdshk",             .desc = "SSL handhshake processing" },
-#define           QUIC_EV_CONN_RMHP      (1ULL << 11)
+#define           QUIC_EV_CONN_RMHP      (1ULL << 12)
 	{ .mask = QUIC_EV_CONN_RMHP,   .name = "rm_hp",              .desc = "Remove header protection" },
 
 #define           QUIC_EV_CONN_ENEW      (1ULL << 32)
@@ -227,19 +229,13 @@ static void quic_trace(enum trace_level level, uint64_t mask, const struct trace
 
 		qc = conn->quic_conn;
 		chunk_appendf(&trace_buf, " : conn@%p", conn);
-		if ((mask & QUIC_EV_CONN_NEW) && qc) {
-			if (qc->odcid.len) {
-				chunk_appendf(&trace_buf, "\n  odcid=");
-				quic_cid_dump(&trace_buf, &qc->odcid);
-			}
-			if (qc->dcid.len) {
-				chunk_appendf(&trace_buf, "\n  dcid=");
-				quic_cid_dump(&trace_buf, &qc->dcid);
-			}
-			if (qc->scid.len) {
-				chunk_appendf(&trace_buf, "\n  scid=");
-				quic_cid_dump(&trace_buf, &qc->scid);
-			}
+		if ((mask & QUIC_EV_CONN_INIT) && qc) {
+			chunk_appendf(&trace_buf, "\n  odcid");
+			quic_cid_dump(&trace_buf, &qc->odcid);
+			chunk_appendf(&trace_buf, " dcid");
+			quic_cid_dump(&trace_buf, &qc->dcid);
+			chunk_appendf(&trace_buf, " scid");
+			quic_cid_dump(&trace_buf, &qc->scid);
 		}
 		if ((mask & QUIC_EV_CONN_ISEC) && qc) {
 			/* Initial read & write secrets. */
@@ -1990,16 +1986,17 @@ static void quic_conn_free(struct quic_conn *conn)
  * <scid> is the source connection ID with <scid_len> as length.
  * Returns 1 if succeeded, 0 if not.
  */
-static int quic_new_conn_init(struct quic_conn *conn,
-                              struct eb_root *quic_initial_clients,
-                              struct eb_root *quic_clients,
-                              unsigned char *dcid, size_t dcid_len,
-                              unsigned char *scid, size_t scid_len)
+static int qc_new_conn_init(struct quic_conn *conn,
+                            struct eb_root *quic_initial_clients,
+                            struct eb_root *quic_clients,
+                            unsigned char *dcid, size_t dcid_len,
+                            unsigned char *scid, size_t scid_len)
 {
 	int i;
 	/* Initial CID. */
 	struct quic_connection_id *icid;
 
+	TRACE_ENTER(QUIC_EV_CONN_INIT, conn->conn);
 	conn->cids = EB_ROOT;
 	QDPRINTF("%s: new quic_conn @%p\n", __func__, conn);
 	/* QUIC Server (or listener). */
@@ -2060,10 +2057,12 @@ static int quic_new_conn_init(struct quic_conn *conn,
 
 	conn->retransmit = 0;
 	conn->crypto_in_flight = 0;
+	TRACE_LEAVE(QUIC_EV_CONN_INIT, conn->conn);
 
 	return 1;
 
  err:
+	TRACE_DEVEL("leaving in error", QUIC_EV_CONN_INIT, conn->conn);
 	quic_conn_free(conn);
 	return 0;
 }
@@ -2132,7 +2131,7 @@ static int qc_new_isecs(struct connection *conn,
  * connection with <xprt_ctx> as address of the xprt context.
  * Returns 1 if succeeded, 0 if not.
  */
-static int quic_conn_init(struct connection *conn, void **xprt_ctx)
+static int qc_conn_init(struct connection *conn, void **xprt_ctx)
 {
 	struct quic_conn_ctx *ctx;
 
@@ -2179,8 +2178,8 @@ static int quic_conn_init(struct connection *conn, void **xprt_ctx)
 
 		quic_conn = conn->quic_conn;
 		quic_conn->conn = conn;
-		if (!quic_new_conn_init(quic_conn, NULL, &srv->cids,
-		                        dcid, sizeof dcid, NULL, 0))
+		if (!qc_new_conn_init(quic_conn, NULL, &srv->cids,
+		                      dcid, sizeof dcid, NULL, 0))
 			goto err;
 
 		if (!qc_new_isecs(conn, dcid, sizeof dcid, 0)) {
@@ -2390,7 +2389,7 @@ static struct xprt_ops quic_conn = {
 	.shutr    = NULL,
 	.shutw    = NULL,
 	.close    = NULL,
-	.init     = quic_conn_init,
+	.init     = qc_conn_init,
 	.prepare_bind_conf = ssl_sock_prepare_bind_conf,
 	.destroy_bind_conf = ssl_sock_destroy_bind_conf,
 	.prepare_srv = quic_conn_prepare_srv_ctx,
@@ -2822,9 +2821,9 @@ static ssize_t qc_lstnr_pkt_rcv(unsigned char **buf, const unsigned char *end,
 				goto err;
 			}
 
-			if (!quic_new_conn_init(conn, &l->icids, &l->cids,
-			                        qpkt->dcid.data, cid_lookup_len,
-			                        qpkt->scid.data, qpkt->scid.len))
+			if (!qc_new_conn_init(conn, &l->icids, &l->cids,
+			                      qpkt->dcid.data, cid_lookup_len,
+			                      qpkt->scid.data, qpkt->scid.len))
 				goto err;
 
 			odcid = &conn->params.original_destination_connection_id;
