@@ -70,59 +70,32 @@ static void quic_trace(enum trace_level level, uint64_t mask, \
                        const void *a1, const void *a2, const void *a3, const void *a4);
 
 static const struct trace_event quic_trace_events[] = {
-#define           QUIC_EV_CONN_NEW       (1ULL << 0)
 	{ .mask = QUIC_EV_CONN_NEW,      .name = "new_conn",         .desc = "new QUIC connection" },
-#define           QUIC_EV_CONN_INIT       (1ULL << 1)
 	{ .mask = QUIC_EV_CONN_INIT,     .name = "new_conn_init",    .desc = "new QUIC connection initialization" },
-#define           QUIC_EV_CONN_ISEC      (1ULL << 2)
 	{ .mask = QUIC_EV_CONN_ISEC,     .name = "init_secs",        .desc = "initial secrets derivation" },
-#define           QUIC_EV_CONN_RSEC      (1ULL << 3)
 	{ .mask = QUIC_EV_CONN_RSEC,     .name = "read_secs",        .desc = "read secrets derivation" },
-#define           QUIC_EV_CONN_WSEC      (1ULL << 4)
 	{ .mask = QUIC_EV_CONN_WSEC,     .name = "write_secs",       .desc = "write secrets derivation" },
-#define           QUIC_EV_CONN_LPKT      (1ULL << 5)
 	{ .mask = QUIC_EV_CONN_LPKT,     .name = "lstnr_packet",     .desc = "new listener received packet" },
-#define           QUIC_EV_CONN_SPKT      (1ULL << 6)
 	{ .mask = QUIC_EV_CONN_SPKT,     .name = "srv_packet",       .desc = "new server received packet" },
-#define           QUIC_EV_CONN_CHPKT     (1ULL << 7)
 	{ .mask = QUIC_EV_CONN_CHPKT,    .name = "chdshk_pkt",       .desc = "clear handhshake packet building" },
-#define           QUIC_EV_CONN_HPKT      (1ULL << 8)
 	{ .mask = QUIC_EV_CONN_HPKT,     .name = "hdshk_pkt",        .desc = "handhshake packet building" },
-#define           QUIC_EV_CONN_PAPKT     (1ULL << 9)
 	{ .mask = QUIC_EV_CONN_PAPKT,    .name = "phdshk_apkt",      .desc = "post handhshake application packet preparation" },
-#define           QUIC_EV_CONN_PAPKTS    (1ULL << 10)
 	{ .mask = QUIC_EV_CONN_PAPKTS,   .name = "phdshk_apkts",     .desc = "post handhshake application packets preparation" },
-#define           QUIC_EV_CONN_HDSHK     (1ULL << 11)
 	{ .mask = QUIC_EV_CONN_HDSHK,    .name = "hdshk",            .desc = "SSL handhshake processing" },
-#define           QUIC_EV_CONN_RMHP      (1ULL << 12)
 	{ .mask = QUIC_EV_CONN_RMHP,     .name = "rm_hp",            .desc = "Remove header protection" },
-#define           QUIC_EV_CONN_PRSHPKT   (1ULL << 13)
 	{ .mask = QUIC_EV_CONN_PRSHPKT,  .name = "parse_hpkt",       .desc = "parse handshake packet" },
-#define           QUIC_EV_CONN_PRSAPKT   (1ULL << 14)
 	{ .mask = QUIC_EV_CONN_PRSAPKT,  .name = "parse_apkt",       .desc = "parse application packet" },
-#define           QUIC_EV_CONN_PRSFRM    (1ULL << 15)
 	{ .mask = QUIC_EV_CONN_PRSFRM,   .name = "parse_frm",        .desc = "parse frame" },
-#define           QUIC_EV_CONN_PRSAFRM   (1ULL << 16)
 	{ .mask = QUIC_EV_CONN_PRSAFRM,  .name = "parse_ack_frm",    .desc = "parse ACK frame" },
-#define           QUIC_EV_CONN_BFRM      (1ULL << 17)
 	{ .mask = QUIC_EV_CONN_BFRM,     .name = "build_frm",        .desc = "build frame" },
-#define           QUIC_EV_CONN_ENEW      (1ULL << 32)
 	{ .mask = QUIC_EV_CONN_ENEW,     .name = "new_conn_err",     .desc = "error on new QUIC connection" },
-#define           QUIC_EV_CONN_EISEC     (1ULL << 33)
 	{ .mask = QUIC_EV_CONN_EISEC,    .name = "init_secs_err",    .desc = "error on initial secrets derivation" },
-#define           QUIC_EV_CONN_ERSEC     (1ULL << 34)
 	{ .mask = QUIC_EV_CONN_ERSEC,    .name = "read_secs_err",    .desc = "error on read secrets derivation" },
-#define           QUIC_EV_CONN_EWSEC     (1ULL << 35)
 	{ .mask = QUIC_EV_CONN_EWSEC,    .name = "write_secs_err",   .desc = "error on write secrets derivation" },
-#define           QUIC_EV_CONN_ELPKT     (1ULL << 36)
 	{ .mask = QUIC_EV_CONN_ELPKT,    .name = "lstnr_packet_err", .desc = "error on new listener received packet" },
-#define           QUIC_EV_CONN_ESPKT     (1ULL << 37)
 	{ .mask = QUIC_EV_CONN_ESPKT,    .name = "srv_packet_err",   .desc = "error on new server received packet" },
-#define           QUIC_EV_CONN_ECHPKT    (1ULL << 38)
 	{ .mask = QUIC_EV_CONN_ECHPKT,   .name = "chdshk_pkt_err",   .desc = "error on clear handhshake packet building" },
-#define           QUIC_EV_CONN_EHPKT     (1ULL << 39)
 	{ .mask = QUIC_EV_CONN_EHPKT,    .name = "hdshk_pkt_err",    .desc = "error on handhshake packet building" },
-#define           QUIC_EV_CONN_EPAPKT    (1ULL << 40)
 	{ .mask = QUIC_EV_CONN_EPAPKT,   .name = "phdshk_apkt_err",  .desc = "error on post handhshake application packet building" },
 	{ /* end */ }
 };
@@ -141,7 +114,7 @@ static const struct name_desc quic_trace_decoding[] = {
 };
 
 
-static struct trace_source trace_quic = {
+struct trace_source trace_quic = {
 	.name = IST("quic"),
 	.desc = "QUIC xprt",
 	.arg_def = TRC_ARG1_CONN,  /* TRACE()'s first argument is always a connection */
@@ -152,8 +125,7 @@ static struct trace_source trace_quic = {
 	.report_events = ~0,  /* report everything by default */
 };
 
-#define TRACE_SOURCE &trace_quic
-INITCALL1(STG_REGISTER, trace_register_source, TRACE_SOURCE);
+INITCALL1(STG_REGISTER, trace_register_source, QTRACE_SOURCE);
 
 #if 1
 __attribute__((format (printf, 3, 4)))
@@ -416,7 +388,7 @@ int ha_set_rsec(SSL *ssl, enum ssl_encryption_level_t level,
 	struct quic_tls_ctx *tls_ctx =
 		&conn->quic_conn->enc_levels[ssl_to_quic_enc_level(level)].tls_ctx;
 
-	TRACE_ENTER(QUIC_EV_CONN_RSEC, conn);
+	QTRACE_ENTER(QUIC_EV_CONN_RSEC, conn);
 	tls_ctx->rx.aead = tls_aead(cipher);
 	tls_ctx->rx.md = tls_md(cipher);
 	tls_ctx->rx.hp = tls_hp(cipher);
@@ -427,7 +399,7 @@ int ha_set_rsec(SSL *ssl, enum ssl_encryption_level_t level,
 	                          tls_ctx->rx.iv, sizeof tls_ctx->rx.iv,
 	                          tls_ctx->rx.hp_key, sizeof tls_ctx->rx.hp_key,
 	                          secret, secret_len)) {
-		TRACE_DEVEL("RX key derivation failed", QUIC_EV_CONN_RSEC, conn);
+		QTRACE_DEVEL("RX key derivation failed", QUIC_EV_CONN_RSEC, conn);
 		goto err;
 	}
 
@@ -445,12 +417,12 @@ int ha_set_rsec(SSL *ssl, enum ssl_encryption_level_t level,
 	}
 
 	tls_ctx->rx.flags |= QUIC_FL_TLS_SECRETS_SET;
-	TRACE_LEAVE(QUIC_EV_CONN_RSEC, conn, (int *)level);
+	QTRACE_LEAVE(QUIC_EV_CONN_RSEC, conn, (int *)level);
 
 	return 1;
 
  err:
-	TRACE_DEVEL("leaving in error", QUIC_EV_CONN_ERSEC, conn);
+	QTRACE_DEVEL("leaving in error", QUIC_EV_CONN_ERSEC, conn);
 	return 0;
 }
 /*
@@ -466,7 +438,7 @@ int ha_set_wsec(SSL *ssl, enum ssl_encryption_level_t level,
 	struct quic_tls_ctx *tls_ctx =
 		&conn->quic_conn->enc_levels[ssl_to_quic_enc_level(level)].tls_ctx;
 
-	TRACE_ENTER(QUIC_EV_CONN_WSEC, conn);
+	QTRACE_ENTER(QUIC_EV_CONN_WSEC, conn);
 	tls_ctx->tx.aead = tls_aead(cipher);
 	tls_ctx->tx.md = tls_md(cipher);
 	tls_ctx->tx.hp = tls_hp(cipher);
@@ -477,16 +449,16 @@ int ha_set_wsec(SSL *ssl, enum ssl_encryption_level_t level,
 	                          tls_ctx->tx.iv, sizeof tls_ctx->tx.iv,
 	                          tls_ctx->tx.hp_key, sizeof tls_ctx->tx.hp_key,
 	                          secret, secret_len)) {
-		TRACE_DEVEL("TX key derivation failed", QUIC_EV_CONN_WSEC, conn);
+		QTRACE_DEVEL("TX key derivation failed", QUIC_EV_CONN_WSEC, conn);
 		goto err;
 	}
 	tls_ctx->tx.flags |= QUIC_FL_TLS_SECRETS_SET;
-	TRACE_LEAVE(QUIC_EV_CONN_WSEC, conn, (int *)level);
+	QTRACE_LEAVE(QUIC_EV_CONN_WSEC, conn, (int *)level);
 
 	return 1;
 
  err:
-	TRACE_DEVEL("leaving in error", QUIC_EV_CONN_EWSEC, conn);
+	QTRACE_DEVEL("leaving in error", QUIC_EV_CONN_EWSEC, conn);
 	return 0;
 }
 #endif
@@ -923,16 +895,16 @@ static int qc_rm_hp(struct quic_rx_packet *pkt, struct quic_tls_ctx *tls_ctx,
 	EVP_CIPHER_CTX *ctx;
 	unsigned char *hp_key;
 
-	TRACE_ENTER(QUIC_EV_CONN_RMHP,, pkt);
+	QTRACE_ENTER(QUIC_EV_CONN_RMHP,, pkt);
 	/* Check there is enough data in this packet. */
 	if (end - pn < QUIC_PACKET_PN_MAXLEN + sizeof mask) {
-		TRACE_DEVEL("too short packet", QUIC_EV_CONN_RMHP,, pkt);
+		QTRACE_DEVEL("too short packet", QUIC_EV_CONN_RMHP,, pkt);
 		return 0;
 	}
 
 	ctx = EVP_CIPHER_CTX_new();
 	if (!ctx) {
-		TRACE_DEVEL("memory allocation failed", QUIC_EV_CONN_RMHP,, pkt);
+		QTRACE_DEVEL("memory allocation failed", QUIC_EV_CONN_RMHP,, pkt);
 		return 0;
 	}
 
@@ -943,7 +915,7 @@ static int qc_rm_hp(struct quic_rx_packet *pkt, struct quic_tls_ctx *tls_ctx,
 	if (!EVP_DecryptInit_ex(ctx, tls_ctx->rx.hp, NULL, hp_key, sample) ||
 	    !EVP_DecryptUpdate(ctx, mask, &outlen, mask, sizeof mask) ||
 	    !EVP_DecryptFinal_ex(ctx, mask, &outlen)) {
-		TRACE_DEVEL("decryption failed", QUIC_EV_CONN_RMHP,, pkt);
+		QTRACE_DEVEL("decryption failed", QUIC_EV_CONN_RMHP,, pkt);
 	    goto out;
 	}
 
@@ -963,7 +935,7 @@ static int qc_rm_hp(struct quic_rx_packet *pkt, struct quic_tls_ctx *tls_ctx,
 
  out:
 	EVP_CIPHER_CTX_free(ctx);
-	TRACE_LEAVE(QUIC_EV_CONN_RMHP,, pkt, &ret);
+	QTRACE_LEAVE(QUIC_EV_CONN_RMHP,, pkt, &ret);
 
 	return ret;
 }
@@ -984,13 +956,13 @@ static int quic_packet_encrypt(unsigned char *payload, size_t payload_len,
 	size_t tx_iv_sz = sizeof tls_ctx->tx.iv;
 
 	if (!quic_aead_iv_build(iv, sizeof iv, tx_iv, tx_iv_sz, pn)) {
-		TRACE_DEVEL("AEAD IV building for encryption failed", QUIC_EV_CONN_HPKT, conn);
+		QTRACE_DEVEL("AEAD IV building for encryption failed", QUIC_EV_CONN_HPKT, conn);
 		return 0;
 	}
 
 	if (!quic_tls_encrypt(payload, payload_len, aad, aad_len,
 	                      tls_ctx->tx.aead, tls_ctx->tx.key, iv)) {
-		TRACE_DEVEL("QUIC packet encryption failed", QUIC_EV_CONN_HPKT, conn);
+		QTRACE_DEVEL("QUIC packet encryption failed", QUIC_EV_CONN_HPKT, conn);
 		return 0;
 	}
 
@@ -1047,7 +1019,7 @@ quic_ack_range_crypto_frames(struct eb_root *frms, struct quic_conn_ctx *ctx,
 	while (node && node->key >= smallest) {
 		frm = eb64_entry(&node->node, struct quic_tx_crypto_frm, pn);
 		QDPRINTF("Removing CRYPTO frame #%llu\n", frm->pn.key);
-		TRACE_PROTO("cfrm ackd", QUIC_EV_CONN_PRSAFRM, ctx->conn,
+		QTRACE_PROTO("cfrm ackd", QUIC_EV_CONN_PRSAFRM, ctx->conn,
 		            &frm->pn.key, &frm->offset, &frm->len);
 		ctx->conn->quic_conn->crypto_in_flight -= frm->len,
 		node = eb64_prev(node);
@@ -1088,7 +1060,7 @@ quic_ack_range_with_gap_crypto_frames(struct eb_root *frms, struct quic_conn_ctx
 		frm = eb64_entry(&node->node, struct quic_tx_crypto_frm, pn);
 		QDPRINTF("Should retransmit CRYPTO frame #%llu offset: %lu len: %zu\n",
 		         frm->pn.key, frm->offset, frm->len);
-		TRACE_PROTO("to resend", QUIC_EV_CONN_PRSAFRM, ctx->conn,
+		QTRACE_PROTO("to resend", QUIC_EV_CONN_PRSAFRM, ctx->conn,
 		            &frm->pn.key, &frm->offset, &frm->len);
 		node = eb64_prev(node);
 		if (node && node->key > next_largest) {
@@ -1116,20 +1088,20 @@ static inline int qc_parse_ack_frm(struct quic_frame *frm, struct quic_conn_ctx 
 	uint64_t smallest, largest;
 
 	if (ack->largest_ack > qel->pktns->tx.next_pn) {
-		TRACE_DEVEL("ACK for not sent packet", QUIC_EV_CONN_PRSAFRM,
+		QTRACE_DEVEL("ACK for not sent packet", QUIC_EV_CONN_PRSAFRM,
 		            ctx->conn, &ack->largest_ack);
 		goto err;
 	}
 
 	if (ack->first_ack_range > ack->largest_ack) {
-		TRACE_DEVEL("too big first ACK range", QUIC_EV_CONN_PRSAFRM,
+		QTRACE_DEVEL("too big first ACK range", QUIC_EV_CONN_PRSAFRM,
 		            ctx->conn, &ack->first_ack_range);
 		goto err;
 	}
 
 	largest = ack->largest_ack;
 	smallest = largest - ack->first_ack_range;
-	TRACE_PROTO("ack range", QUIC_EV_CONN_PRSAFRM, ctx->conn, &largest, &smallest);
+	QTRACE_PROTO("ack range", QUIC_EV_CONN_PRSAFRM, ctx->conn, &largest, &smallest);
 	do {
 		uint64_t gap, ack_range;
 		struct quic_tx_crypto_frm *frm;
@@ -1141,13 +1113,13 @@ static inline int qc_parse_ack_frm(struct quic_frame *frm, struct quic_conn_ctx 
 		}
 
 		if (!quic_dec_int(&gap, pos, end) || smallest < gap + 2) {
-			TRACE_DEVEL("wrong gap value", QUIC_EV_CONN_PRSAFRM,
+			QTRACE_DEVEL("wrong gap value", QUIC_EV_CONN_PRSAFRM,
 						ctx->conn, &gap, &smallest);
 			goto err;
 		}
 
 		if (!quic_dec_int(&ack_range, pos, end) || smallest - gap - 2 < ack_range) {
-			TRACE_DEVEL("wrong ack range value", QUIC_EV_CONN_PRSAFRM,
+			QTRACE_DEVEL("wrong ack range value", QUIC_EV_CONN_PRSAFRM,
 						ctx->conn, &ack_range, &gap, &smallest);
 			goto err;
 		}
@@ -1163,7 +1135,7 @@ static inline int qc_parse_ack_frm(struct quic_frame *frm, struct quic_conn_ctx 
 		largest = smallest - gap - 2;
 		smallest = largest - ack_range;
 
-		TRACE_PROTO("ack range", QUIC_EV_CONN_PRSAFRM, ctx->conn, &largest, &smallest);
+		QTRACE_PROTO("ack range", QUIC_EV_CONN_PRSAFRM, ctx->conn, &largest, &smallest);
 	} while (1);
 
 	if (ack->largest_ack > qel->pktns->rx.largest_acked_pn)
@@ -1172,7 +1144,7 @@ static inline int qc_parse_ack_frm(struct quic_frame *frm, struct quic_conn_ctx 
 	return 1;
 
  err:
-	TRACE_DEVEL("leaving in error", QUIC_EV_CONN_PRSAFRM, ctx->conn);
+	QTRACE_DEVEL("leaving in error", QUIC_EV_CONN_PRSAFRM, ctx->conn);
 	return 0;
 }
 
@@ -1183,29 +1155,29 @@ static inline int qc_parse_ack_frm(struct quic_frame *frm, struct quic_conn_ctx 
 static inline int qc_parse_frm(struct quic_frame *frm, struct quic_conn_ctx *ctx,
                                const unsigned char **buf, const unsigned char *end)
 {
-	TRACE_ENTER(QUIC_EV_CONN_PRSFRM, ctx->conn);
+	QTRACE_ENTER(QUIC_EV_CONN_PRSFRM, ctx->conn);
 	if (end <= *buf) {
-		TRACE_DEVEL("wrong frame", QUIC_EV_CONN_PRSFRM, ctx->conn);
+		QTRACE_DEVEL("wrong frame", QUIC_EV_CONN_PRSFRM, ctx->conn);
 		goto err;
 	}
 
 	frm->type = *(*buf)++;
 	if (frm->type > QUIC_FT_MAX) {
-		TRACE_DEVEL("wrong frame type", QUIC_EV_CONN_PRSFRM, ctx->conn, frm);
+		QTRACE_DEVEL("wrong frame type", QUIC_EV_CONN_PRSFRM, ctx->conn, frm);
 		goto err;
 	}
 
 	QDPRINTF("%s: %s frame\n", __func__, quic_frame_type_string(frm->type));
 	if (!quic_parse_frame_funcs[frm->type](frm, buf, end)) {
-		TRACE_DEVEL("parsing error", QUIC_EV_CONN_PRSFRM, ctx->conn, frm);
+		QTRACE_DEVEL("parsing error", QUIC_EV_CONN_PRSFRM, ctx->conn, frm);
 		goto err;
 	}
 
-	TRACE_LEAVE(QUIC_EV_CONN_PRSFRM, ctx->conn, frm);
+	QTRACE_LEAVE(QUIC_EV_CONN_PRSFRM, ctx->conn, frm);
 	return 1;
 
  err:
-	TRACE_DEVEL("leaving in error", QUIC_EV_CONN_PRSFRM, ctx->conn);
+	QTRACE_DEVEL("leaving in error", QUIC_EV_CONN_PRSFRM, ctx->conn);
 	return 0;
 }
 
@@ -1216,24 +1188,24 @@ static inline int qc_parse_frm(struct quic_frame *frm, struct quic_conn_ctx *ctx
 static inline int qc_build_frm(unsigned char **buf, const unsigned char *end,
                                struct quic_frame *frm, struct quic_conn *conn)
 {
-	TRACE_ENTER(QUIC_EV_CONN_BFRM, conn->conn);
+	QTRACE_ENTER(QUIC_EV_CONN_BFRM, conn->conn);
 	if (end <= *buf) {
-		TRACE_DEVEL("not enough room", QUIC_EV_CONN_BFRM, conn->conn);
+		QTRACE_DEVEL("not enough room", QUIC_EV_CONN_BFRM, conn->conn);
 		goto err;
 	}
 
 	QDPRINTF("%s: %s frame\n", __func__, quic_frame_type_string(frm->type));
 	*(*buf)++ = frm->type;
 	if (!quic_build_frame_funcs[frm->type](buf, end, frm)) {
-		TRACE_DEVEL("frame building error", QUIC_EV_CONN_BFRM, conn->conn);
+		QTRACE_DEVEL("frame building error", QUIC_EV_CONN_BFRM, conn->conn);
 		goto err;
 	}
 
-	TRACE_LEAVE(QUIC_EV_CONN_BFRM, conn->conn, frm);
+	QTRACE_LEAVE(QUIC_EV_CONN_BFRM, conn->conn, frm);
 	return 1;
 
  err:
-	TRACE_DEVEL("leaving in error", QUIC_EV_CONN_BFRM, conn->conn, frm);
+	QTRACE_DEVEL("leaving in error", QUIC_EV_CONN_BFRM, conn->conn, frm);
 	return 0;
 }
 
@@ -1248,7 +1220,7 @@ static int qc_parse_hdshk_pkt(struct quic_rx_packet *qpkt, struct quic_conn_ctx 
 	struct quic_frame frm;
 	const unsigned char *pos, *end;
 
-	TRACE_ENTER(QUIC_EV_CONN_PRSHPKT, ctx->conn);
+	QTRACE_ENTER(QUIC_EV_CONN_PRSHPKT, ctx->conn);
 	/* Skip the AAD */
 	pos = qpkt->data + qpkt->aad_len;
 	end = qpkt->data + qpkt->len;
@@ -1291,11 +1263,11 @@ static int qc_parse_hdshk_pkt(struct quic_rx_packet *qpkt, struct quic_conn_ctx 
 		}
 	}
 
-	TRACE_LEAVE(QUIC_EV_CONN_PRSHPKT, ctx->conn);
+	QTRACE_LEAVE(QUIC_EV_CONN_PRSHPKT, ctx->conn);
 	return 1;
 
  err:
-	TRACE_DEVEL("leaving in error", QUIC_EV_CONN_PRSHPKT, ctx->conn);
+	QTRACE_DEVEL("leaving in error", QUIC_EV_CONN_PRSHPKT, ctx->conn);
 	return 0;
 }
 
@@ -1618,7 +1590,7 @@ int qc_parse_apkt(struct quic_rx_packet *qpkt, struct quic_conn_ctx *ctx)
 	const unsigned char *pos, *end;
 	struct quic_enc_level *qel;
 
-	TRACE_ENTER(QUIC_EV_CONN_PRSAPKT, ctx->conn);
+	QTRACE_ENTER(QUIC_EV_CONN_PRSAPKT, ctx->conn);
 	qel = &ctx->conn->quic_conn->enc_levels[QUIC_TLS_ENC_LEVEL_APP];
 	/* Skip the AAD */
 	pos = qpkt->data + qpkt->aad_len;
@@ -1664,11 +1636,11 @@ int qc_parse_apkt(struct quic_rx_packet *qpkt, struct quic_conn_ctx *ctx)
 		}
 	}
 
-	TRACE_LEAVE(QUIC_EV_CONN_PRSAPKT, ctx->conn);
+	QTRACE_LEAVE(QUIC_EV_CONN_PRSAPKT, ctx->conn);
 	return 1;
 
  err:
-	TRACE_DEVEL("leaving in error", QUIC_EV_CONN_PRSAPKT, ctx->conn);
+	QTRACE_DEVEL("leaving in error", QUIC_EV_CONN_PRSAPKT, ctx->conn);
 	return 0;
 }
 
@@ -1688,7 +1660,7 @@ static int qc_do_hdshk(struct quic_conn_ctx *ctx)
 	struct eb_root *rx_qpkts;
 	int ret;
 
-	TRACE_ENTER(QUIC_EV_CONN_HDSHK, ctx->conn, &ctx->state);
+	QTRACE_ENTER(QUIC_EV_CONN_HDSHK, ctx->conn, &ctx->state);
 
 	quic_conn = ctx->conn->quic_conn;
 	if (!quic_get_tls_enc_levels(&tel, &next_tel, ctx->state))
@@ -1817,11 +1789,11 @@ static int qc_do_hdshk(struct quic_conn_ctx *ctx)
 		if (ret == SSL_ERROR_WANT_READ || ret == SSL_ERROR_WANT_WRITE)
 			goto out;
 
-		TRACE_DEVEL("SSL handshake error", QUIC_EV_CONN_HDSHK, ctx->conn, &ctx->state);
+		QTRACE_DEVEL("SSL handshake error", QUIC_EV_CONN_HDSHK, ctx->conn, &ctx->state);
 		goto err;
 	}
 
-	TRACE_DEVEL("SSL handshake OK", QUIC_EV_CONN_HDSHK, ctx->conn, &ctx->state);
+	QTRACE_DEVEL("SSL handshake OK", QUIC_EV_CONN_HDSHK, ctx->conn, &ctx->state);
 
 	if (ctx->state == QUIC_HS_ST_SERVER_HANDSHAKE ||
 	    ctx->state == QUIC_HS_ST_CLIENT_HANDSHAKE)
@@ -1829,12 +1801,12 @@ static int qc_do_hdshk(struct quic_conn_ctx *ctx)
 
 	ret = SSL_process_quic_post_handshake(ctx->ssl);
 	if (ret != 1) {
-		TRACE_DEVEL("SSL post handshake error",
+		QTRACE_DEVEL("SSL post handshake error",
 		            QUIC_EV_CONN_HDSHK, ctx->conn, &ctx->state);
 		goto err;
 	}
 
-	TRACE_DEVEL("SSL post handshake succeeded",
+	QTRACE_DEVEL("SSL post handshake succeeded",
 	            QUIC_EV_CONN_HDSHK, ctx->conn, &ctx->state);
 
 	if (!quic_build_post_handshake_frames(quic_conn) ||
@@ -1843,11 +1815,11 @@ static int qc_do_hdshk(struct quic_conn_ctx *ctx)
 		goto err;
 
  out:
-	TRACE_LEAVE(QUIC_EV_CONN_HDSHK, ctx->conn, &ctx->state);
+	QTRACE_LEAVE(QUIC_EV_CONN_HDSHK, ctx->conn, &ctx->state);
 	return ret;
 
  err:
-	TRACE_DEVEL("leaving in error", QUIC_EV_CONN_HDSHK, ctx->conn, &ctx->state);
+	QTRACE_DEVEL("leaving in error", QUIC_EV_CONN_HDSHK, ctx->conn, &ctx->state);
 	return 0;
 }
 
@@ -2111,7 +2083,7 @@ static int qc_new_conn_init(struct quic_conn *conn,
 	/* Initial CID. */
 	struct quic_connection_id *icid;
 
-	TRACE_ENTER(QUIC_EV_CONN_INIT, conn->conn);
+	QTRACE_ENTER(QUIC_EV_CONN_INIT, conn->conn);
 	conn->cids = EB_ROOT;
 	QDPRINTF("%s: new quic_conn @%p\n", __func__, conn);
 	/* QUIC Server (or listener). */
@@ -2172,12 +2144,12 @@ static int qc_new_conn_init(struct quic_conn *conn,
 
 	conn->retransmit = 0;
 	conn->crypto_in_flight = 0;
-	TRACE_LEAVE(QUIC_EV_CONN_INIT, conn->conn);
+	QTRACE_LEAVE(QUIC_EV_CONN_INIT, conn->conn);
 
 	return 1;
 
  err:
-	TRACE_DEVEL("leaving in error", QUIC_EV_CONN_INIT, conn->conn);
+	QTRACE_DEVEL("leaving in error", QUIC_EV_CONN_INIT, conn->conn);
 	quic_conn_free(conn);
 	return 0;
 }
@@ -2200,7 +2172,7 @@ static int qc_new_isecs(struct connection *conn,
 	struct quic_tls_secrets *rx_ctx, *tx_ctx;
 	struct quic_tls_ctx *ctx;
 
-	TRACE_ENTER(QUIC_EV_CONN_ISEC, conn);
+	QTRACE_ENTER(QUIC_EV_CONN_ISEC, conn);
 	ctx = &conn->quic_conn->enc_levels[QUIC_TLS_ENC_LEVEL_INITIAL].tls_ctx;
 	quic_initial_tls_ctx_init(ctx);
 	if (!quic_derive_initial_secret(ctx->rx.md,
@@ -2232,12 +2204,12 @@ static int qc_new_isecs(struct connection *conn,
 		goto err;
 
 	tx_ctx->flags |= QUIC_FL_TLS_SECRETS_SET;
-	TRACE_LEAVE(QUIC_EV_CONN_ISEC, conn);
+	QTRACE_LEAVE(QUIC_EV_CONN_ISEC, conn);
 
 	return 1;
 
  err:
-	TRACE_DEVEL("leaving in error", QUIC_EV_CONN_EISEC, conn);
+	QTRACE_DEVEL("leaving in error", QUIC_EV_CONN_EISEC, conn);
 	return 0;
 }
 
@@ -2250,7 +2222,7 @@ static int qc_conn_init(struct connection *conn, void **xprt_ctx)
 {
 	struct quic_conn_ctx *ctx;
 
-	TRACE_ENTER(QUIC_EV_CONN_NEW, conn);
+	QTRACE_ENTER(QUIC_EV_CONN_NEW, conn);
 
 	if (*xprt_ctx)
 		return 0;
@@ -2343,7 +2315,7 @@ static int qc_conn_init(struct connection *conn, void **xprt_ctx)
 	/* Start the handshake */
 	tasklet_wakeup(ctx->wait_event.tasklet);
 
-	TRACE_LEAVE(QUIC_EV_CONN_NEW, conn);
+	QTRACE_LEAVE(QUIC_EV_CONN_NEW, conn);
 
 	return 0;
 
@@ -2351,7 +2323,7 @@ static int qc_conn_init(struct connection *conn, void **xprt_ctx)
 	if (ctx->wait_event.tasklet)
 		tasklet_free(ctx->wait_event.tasklet);
 	pool_free(pool_head_quic_conn_ctx, ctx);
-	TRACE_DEVEL("leaving in error", QUIC_EV_CONN_NEW|QUIC_EV_CONN_ENEW, conn);
+	QTRACE_DEVEL("leaving in error", QUIC_EV_CONN_NEW|QUIC_EV_CONN_ENEW, conn);
 	return -1;
 }
 
@@ -2747,7 +2719,7 @@ static ssize_t qc_srv_pkt_rcv(unsigned char **buf, const unsigned char *end,
 	struct quic_conn_ctx *conn_ctx;
 
 	conn = NULL;
-	TRACE_ENTER(QUIC_EV_CONN_SPKT);
+	QTRACE_ENTER(QUIC_EV_CONN_SPKT);
 	if (end <= *buf)
 		goto err;
 
@@ -2852,12 +2824,12 @@ static ssize_t qc_srv_pkt_rcv(unsigned char **buf, const unsigned char *end,
 	if (conn_ctx)
 		tasklet_wakeup(conn_ctx->wait_event.tasklet);
 
-	TRACE_LEAVE(QUIC_EV_CONN_SPKT, conn ? conn->conn : NULL, qpkt);
+	QTRACE_LEAVE(QUIC_EV_CONN_SPKT, conn ? conn->conn : NULL, qpkt);
 
 	return qpkt->len;
 
  err:
-	TRACE_DEVEL("Leaing in error", QUIC_EV_CONN_ESPKT, conn ? conn->conn : NULL);
+	QTRACE_DEVEL("Leaing in error", QUIC_EV_CONN_ESPKT, conn ? conn->conn : NULL);
 	return -1;
 }
 
@@ -2874,7 +2846,7 @@ static ssize_t qc_lstnr_pkt_rcv(unsigned char **buf, const unsigned char *end,
 	struct quic_conn_ctx *conn_ctx;
 
 	conn = NULL;
-	TRACE_ENTER(QUIC_EV_CONN_LPKT);
+	QTRACE_ENTER(QUIC_EV_CONN_LPKT);
 	if (end <= *buf)
 		goto err;
 
@@ -3038,12 +3010,12 @@ static ssize_t qc_lstnr_pkt_rcv(unsigned char **buf, const unsigned char *end,
 	if (conn_ctx)
 		tasklet_wakeup(conn_ctx->wait_event.tasklet);
 
-	TRACE_LEAVE(QUIC_EV_CONN_LPKT, conn ? conn->conn : NULL, qpkt);
+	QTRACE_LEAVE(QUIC_EV_CONN_LPKT, conn ? conn->conn : NULL, qpkt);
 
 	return qpkt->len;
 
  err:
-	TRACE_DEVEL("Leaving in error", QUIC_EV_CONN_ELPKT, conn ? conn->conn : NULL);
+	QTRACE_DEVEL("Leaving in error", QUIC_EV_CONN_ELPKT, conn ? conn->conn : NULL);
 	QDPRINTF("%s failed\n", __func__);
 	return -1;
 }
@@ -3206,14 +3178,14 @@ static ssize_t qc_do_build_hdshk_pkt(struct q_buf *wbuf, int pkt_type,
 	ssize_t ack_frm_len;
 	struct buffer *ack_buf;
 
-	TRACE_ENTER(QUIC_EV_CONN_CHPKT, conn->conn);
+	QTRACE_ENTER(QUIC_EV_CONN_CHPKT, conn->conn);
 	beg = pos = q_buf_getpos(wbuf);
 	end = q_buf_end(wbuf);
 	if (crypto_len) {
 		crypto_len = crypto_len > QUIC_CRYPTO_IN_FLIGHT_MAX - conn->crypto_in_flight ?
 			QUIC_CRYPTO_IN_FLIGHT_MAX - conn->crypto_in_flight : crypto_len;
 		if (!crypto_len) {
-			TRACE_DEVEL("ifcdada limit reached", QUIC_EV_CONN_CHPKT, conn->conn);
+			QTRACE_DEVEL("ifcdada limit reached", QUIC_EV_CONN_CHPKT, conn->conn);
 			goto out;
 		}
 
@@ -3307,11 +3279,11 @@ static ssize_t qc_do_build_hdshk_pkt(struct q_buf *wbuf, int pkt_type,
 		*offset += crypto->len;
 
  out:
-	TRACE_LEAVE(QUIC_EV_CONN_CHPKT, conn->conn, (int *)(pos - beg));
+	QTRACE_LEAVE(QUIC_EV_CONN_CHPKT, conn->conn, (int *)(pos - beg));
 	return pos - beg;
 
  err:
-	TRACE_DEVEL("leaving in error (buffer full)", QUIC_EV_CONN_ECHPKT, conn->conn);
+	QTRACE_DEVEL("leaving in error (buffer full)", QUIC_EV_CONN_ECHPKT, conn->conn);
 	return -1;
 }
 
@@ -3336,7 +3308,7 @@ static ssize_t qc_build_hdshk_pkt(struct q_buf *buf, struct quic_conn *qc, int p
 	struct quic_tx_crypto_frm *cf;
 	uint64_t next_offset;
 
-	TRACE_ENTER(QUIC_EV_CONN_HPKT, qc->conn);
+	QTRACE_ENTER(QUIC_EV_CONN_HPKT, qc->conn);
 	cf = NULL;
 	beg = q_buf_getpos(buf);
 
@@ -3359,7 +3331,7 @@ static ssize_t qc_build_hdshk_pkt(struct q_buf *buf, struct quic_conn *qc, int p
 	end += QUIC_TLS_TAG_LEN;
 	if (!quic_apply_header_protection(beg, buf_pn, pn_len,
 	                                  tls_ctx->tx.hp, tls_ctx->tx.hp_key)) {
-		TRACE_DEVEL("Could not apply the header protection", QUIC_EV_CONN_HPKT, qc->conn);
+		QTRACE_DEVEL("Could not apply the header protection", QUIC_EV_CONN_HPKT, qc->conn);
 		return -2;
 	}
 
@@ -3374,7 +3346,7 @@ static ssize_t qc_build_hdshk_pkt(struct q_buf *buf, struct quic_conn *qc, int p
 	if (next_offset - *offset) {
 		cf = pool_alloc(pool_head_quic_tx_crypto_frm);
 		if (!cf) {
-			TRACE_DEVEL("CRYPTO frame allocation failed", QUIC_EV_CONN_HPKT, qc->conn);
+			QTRACE_DEVEL("CRYPTO frame allocation failed", QUIC_EV_CONN_HPKT, qc->conn);
 			return -2;
 		}
 		/* The length of this TX CRYPTO frame is deduced from the offsets. */
@@ -3393,7 +3365,7 @@ static ssize_t qc_build_hdshk_pkt(struct q_buf *buf, struct quic_conn *qc, int p
 	/* Increment the number of bytes in <buf> buffer by the length of this packet. */
 	buf->data += end - beg;
 
-	TRACE_LEAVE(QUIC_EV_CONN_HPKT, qc->conn, cf);
+	QTRACE_LEAVE(QUIC_EV_CONN_HPKT, qc->conn, cf);
 
 	return end - beg;
 }
@@ -3461,7 +3433,7 @@ static ssize_t qc_build_phdshk_apkt(struct q_buf *wbuf, struct quic_conn *conn)
 	ssize_t pkt_len;
 	uint64_t pn;
 
-	TRACE_ENTER(QUIC_EV_CONN_PAPKT, conn->conn);
+	QTRACE_ENTER(QUIC_EV_CONN_PAPKT, conn->conn);
 	beg = q_buf_getpos(wbuf);
 	qel = &conn->enc_levels[QUIC_TLS_ENC_LEVEL_APP];
 	pn = qel->pktns->tx.next_pn + 1;
@@ -3495,7 +3467,7 @@ static ssize_t qc_build_phdshk_apkt(struct q_buf *wbuf, struct quic_conn *conn)
 	/* Increment the account of written data. */
 	wbuf->data += end - beg;
 
-	TRACE_LEAVE(QUIC_EV_CONN_PAPKT, conn->conn);
+	QTRACE_LEAVE(QUIC_EV_CONN_PAPKT, conn->conn);
 
 	return end - beg;
 }
@@ -3509,7 +3481,7 @@ static int qc_prep_phdshk_pkts(struct quic_conn *qc)
 {
 	struct q_buf *wbuf;
 
-	TRACE_ENTER(QUIC_EV_CONN_PAPKTS, qc->conn);
+	QTRACE_ENTER(QUIC_EV_CONN_PAPKTS, qc->conn);
 	wbuf = q_wbuf(qc);
 	while (q_buf_empty(wbuf) && !LIST_ISEMPTY(&qc->tx.frms_to_send)) {
 		ssize_t ret;
@@ -3524,7 +3496,7 @@ static int qc_prep_phdshk_pkts(struct quic_conn *qc)
 			continue;
 		}
 	}
-	TRACE_LEAVE(QUIC_EV_CONN_PAPKTS, qc->conn);
+	QTRACE_LEAVE(QUIC_EV_CONN_PAPKTS, qc->conn);
 
 	return 1;
 }

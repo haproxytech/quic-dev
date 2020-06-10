@@ -40,6 +40,39 @@
 
 #define QUIC_STATELESS_RESET_TOKEN_LEN 16
 
+#define           QUIC_EV_CONN_NEW       (1ULL << 0)
+#define           QUIC_EV_CONN_INIT      (1ULL << 1)
+#define           QUIC_EV_CONN_ISEC      (1ULL << 2)
+#define           QUIC_EV_CONN_RSEC      (1ULL << 3)
+#define           QUIC_EV_CONN_WSEC      (1ULL << 4)
+#define           QUIC_EV_CONN_LPKT      (1ULL << 5)
+#define           QUIC_EV_CONN_SPKT      (1ULL << 6)
+#define           QUIC_EV_CONN_CHPKT     (1ULL << 7)
+#define           QUIC_EV_CONN_HPKT      (1ULL << 8)
+#define           QUIC_EV_CONN_PAPKT     (1ULL << 9)
+#define           QUIC_EV_CONN_PAPKTS    (1ULL << 10)
+#define           QUIC_EV_CONN_HDSHK     (1ULL << 11)
+#define           QUIC_EV_CONN_RMHP      (1ULL << 12)
+#define           QUIC_EV_CONN_PRSHPKT   (1ULL << 13)
+#define           QUIC_EV_CONN_PRSAPKT   (1ULL << 14)
+#define           QUIC_EV_CONN_PRSFRM    (1ULL << 15)
+#define           QUIC_EV_CONN_PRSAFRM   (1ULL << 16)
+#define           QUIC_EV_CONN_BFRM      (1ULL << 17)
+
+#define           QUIC_EV_CONN_ENEW      (1ULL << 32)
+#define           QUIC_EV_CONN_EISEC     (1ULL << 33)
+#define           QUIC_EV_CONN_ERSEC     (1ULL << 34)
+#define           QUIC_EV_CONN_EWSEC     (1ULL << 35)
+#define           QUIC_EV_CONN_ELPKT     (1ULL << 36)
+#define           QUIC_EV_CONN_ESPKT     (1ULL << 37)
+#define           QUIC_EV_CONN_ECHPKT    (1ULL << 38)
+#define           QUIC_EV_CONN_EHPKT     (1ULL << 39)
+#define           QUIC_EV_CONN_EPAPKT    (1ULL << 40)
+
+#define QTRACE_SOURCE &trace_quic
+
+extern struct trace_source trace_quic;
+
 /*
  * This struct is used by ebmb_node structs as last member of flexible arrays.
  * So do not change the order of the member of quic_cid struct.
