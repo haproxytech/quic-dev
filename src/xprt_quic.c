@@ -288,26 +288,13 @@ static void quic_trace(enum trace_level level, uint64_t mask, const struct trace
 			if (state)
 				chunk_appendf(&trace_buf, " state=%s", quic_hdshk_state_str(*state));
 		}
+	}
 
-		if (mask & (QUIC_EV_CONN_PRSFRM|QUIC_EV_CONN_BFRM)) {
-			const struct quic_frame *frm = a2;
+	if (mask & (QUIC_EV_CONN_PRSFRM|QUIC_EV_CONN_BFRM)) {
+		const struct quic_frame *frm = a2;
 
-			if (a2)
-				chunk_appendf(&trace_buf, " %s", quic_frame_type_string(frm->type));
-		}
-
-		if (mask & QUIC_EV_CONN_PRSAFRM) {
-			const unsigned long *val1 = a2;
-			const unsigned long *val2 = a3;
-			const unsigned long *val3 = a4;
-
-			if (val1)
-				chunk_appendf(&trace_buf, " %lu", *val1);
-			if (val2)
-				chunk_appendf(&trace_buf, "..%lu", *val2);
-			if (val3)
-				chunk_appendf(&trace_buf, "..%lu", *val3);
-		}
+		if (a2)
+			chunk_appendf(&trace_buf, " %s", quic_frame_type_string(frm->type));
 	}
 
 	if (mask & QUIC_EV_CONN_RMHP) {
@@ -321,6 +308,19 @@ static void quic_trace(enum trace_level level, uint64_t mask, const struct trace
 			if (ret && *ret)
 				chunk_appendf(&trace_buf, "\n  pnl=%u pn=%lu", pkt->pnl, pkt->pn);
 		}
+	}
+
+	if (mask & QUIC_EV_CONN_PRSAFRM) {
+		const unsigned long *val1 = a2;
+		const unsigned long *val2 = a3;
+		const unsigned long *val3 = a4;
+
+		if (val1)
+			chunk_appendf(&trace_buf, " %lu", *val1);
+		if (val2)
+			chunk_appendf(&trace_buf, "..%lu", *val2);
+		if (val3)
+			chunk_appendf(&trace_buf, "..%lu", *val3);
 	}
 }
 
@@ -1009,7 +1009,7 @@ static int qc_pkt_decrypt(struct quic_rx_packet *qpkt, struct quic_tls_ctx *tls_
  * May be NULL if <largest> node could not be found.
  */
 static inline struct eb64_node *
-quic_ack_range_crypto_frames(struct eb_root *frms, struct quic_conn_ctx *ctx,
+quic_ack_range_crypto_frames(struct eb_root *frms, uint64_t *ifcdata,
                              uint64_t largest, uint64_t smallest)
 {
 	struct eb64_node *node;
@@ -1019,9 +1019,9 @@ quic_ack_range_crypto_frames(struct eb_root *frms, struct quic_conn_ctx *ctx,
 	while (node && node->key >= smallest) {
 		frm = eb64_entry(&node->node, struct quic_tx_crypto_frm, pn);
 		QDPRINTF("Removing CRYPTO frame #%llu\n", frm->pn.key);
-		QTRACE_PROTO("cfrm ackd", QUIC_EV_CONN_PRSAFRM, ctx->conn,
-		            &frm->pn.key, &frm->offset, &frm->len);
-		ctx->conn->quic_conn->crypto_in_flight -= frm->len,
+		QTRACE_PROTO("cfrm ackd", QUIC_EV_CONN_PRSAFRM,,
+		             &frm->pn.key, &frm->offset, &frm->len);
+		*ifcdata -= frm->len,
 		node = eb64_prev(node);
 		eb64_delete(&frm->pn);
 		pool_free(pool_head_quic_tx_crypto_frm, frm);
@@ -1038,18 +1038,20 @@ quic_ack_range_crypto_frames(struct eb_root *frms, struct quic_conn_ctx *ctx,
  * It is possible that this frame does not exist if the ranges have been already
  * parsed (but not acknowledged).
  * Note that <largest> >= <smallest> > <next_largest>.
+ * Also updates <ifcdata> in flight crypto data counter.
  * Returns a frame which results of the aggregation of the lost frames belonging
  * to the same gap.
  */
 static inline struct quic_tx_crypto_frm *
-quic_ack_range_with_gap_crypto_frames(struct eb_root *frms, struct quic_conn_ctx *ctx,
+quic_ack_range_with_gap_crypto_frames(struct eb_root *frms,
+                                      uint64_t *ifcdata,
                                       uint64_t largest, uint64_t smallest,
                                       uint64_t next_largest)
 {
 	struct eb64_node *node;
 	struct quic_tx_crypto_frm *frm;
 
-	node = quic_ack_range_crypto_frames(frms, ctx, largest, smallest);
+	node = quic_ack_range_crypto_frames(frms, ifcdata, largest, smallest);
 	if (!node)
 		return NULL;
 
@@ -1058,10 +1060,7 @@ quic_ack_range_with_gap_crypto_frames(struct eb_root *frms, struct quic_conn_ctx
 		struct quic_tx_crypto_frm *prev_frm;
 
 		frm = eb64_entry(&node->node, struct quic_tx_crypto_frm, pn);
-		QDPRINTF("Should retransmit CRYPTO frame #%llu offset: %lu len: %zu\n",
-		         frm->pn.key, frm->offset, frm->len);
-		QTRACE_PROTO("to resend", QUIC_EV_CONN_PRSAFRM, ctx->conn,
-		            &frm->pn.key, &frm->offset, &frm->len);
+		QTRACE_PROTO("to resend",QUIC_EV_CONN_PRSAFRM,, &frm->pn.key, &frm->offset, &frm->len);
 		node = eb64_prev(node);
 		if (node && node->key > next_largest) {
 			prev_frm = eb64_entry(&node->node, struct quic_tx_crypto_frm, pn);
@@ -1070,7 +1069,7 @@ quic_ack_range_with_gap_crypto_frames(struct eb_root *frms, struct quic_conn_ctx
 			pool_free(pool_head_quic_tx_crypto_frm, frm);
 		}
 	} while (node);
-	ctx->conn->quic_conn->crypto_in_flight -= frm->len;
+	*ifcdata -= frm->len;
 
 	return frm;
 }
@@ -1101,13 +1100,14 @@ static inline int qc_parse_ack_frm(struct quic_frame *frm, struct quic_conn_ctx 
 
 	largest = ack->largest_ack;
 	smallest = largest - ack->first_ack_range;
-	QTRACE_PROTO("ack range", QUIC_EV_CONN_PRSAFRM, ctx->conn, &largest, &smallest);
+	QTRACE_PROTO("ack range", QUIC_EV_CONN_PRSAFRM,, &largest, &smallest);
 	do {
 		uint64_t gap, ack_range;
 		struct quic_tx_crypto_frm *frm;
 
 		if (!ack->ack_range_num--) {
-			quic_ack_range_crypto_frames(&qel->tx.crypto.frms, ctx,
+			quic_ack_range_crypto_frames(&qel->tx.crypto.frms,
+			                             &ctx->conn->quic_conn->crypto_in_flight,
 			                             largest, smallest);
 			break;
 		}
@@ -1124,7 +1124,8 @@ static inline int qc_parse_ack_frm(struct quic_frame *frm, struct quic_conn_ctx 
 			goto err;
 		}
 
-		frm = quic_ack_range_with_gap_crypto_frames(&qel->tx.crypto.frms, ctx,
+		frm = quic_ack_range_with_gap_crypto_frames(&qel->tx.crypto.frms,
+		                                            &ctx->conn->quic_conn->crypto_in_flight,
 		                                            largest, smallest, smallest - gap - 2);
 		if (frm) {
 			eb64_delete(&frm->pn);
@@ -1135,7 +1136,7 @@ static inline int qc_parse_ack_frm(struct quic_frame *frm, struct quic_conn_ctx 
 		largest = smallest - gap - 2;
 		smallest = largest - ack_range;
 
-		QTRACE_PROTO("ack range", QUIC_EV_CONN_PRSAFRM, ctx->conn, &largest, &smallest);
+		QTRACE_PROTO("ack range", QUIC_EV_CONN_PRSAFRM,, &largest, &smallest);
 	} while (1);
 
 	if (ack->largest_ack > qel->pktns->rx.largest_acked_pn)
@@ -1145,67 +1146,6 @@ static inline int qc_parse_ack_frm(struct quic_frame *frm, struct quic_conn_ctx 
 
  err:
 	QTRACE_DEVEL("leaving in error", QUIC_EV_CONN_PRSAFRM, ctx->conn);
-	return 0;
-}
-
-/*
- * Decode a QUIC frame from <buf> buffer into <frm> frame.
- * Returns 1 if succeded (enough data to parse the frame), 0 if not.
- */
-static inline int qc_parse_frm(struct quic_frame *frm, struct quic_conn_ctx *ctx,
-                               const unsigned char **buf, const unsigned char *end)
-{
-	QTRACE_ENTER(QUIC_EV_CONN_PRSFRM, ctx->conn);
-	if (end <= *buf) {
-		QTRACE_DEVEL("wrong frame", QUIC_EV_CONN_PRSFRM, ctx->conn);
-		goto err;
-	}
-
-	frm->type = *(*buf)++;
-	if (frm->type > QUIC_FT_MAX) {
-		QTRACE_DEVEL("wrong frame type", QUIC_EV_CONN_PRSFRM, ctx->conn, frm);
-		goto err;
-	}
-
-	QDPRINTF("%s: %s frame\n", __func__, quic_frame_type_string(frm->type));
-	if (!quic_parse_frame_funcs[frm->type](frm, buf, end)) {
-		QTRACE_DEVEL("parsing error", QUIC_EV_CONN_PRSFRM, ctx->conn, frm);
-		goto err;
-	}
-
-	QTRACE_LEAVE(QUIC_EV_CONN_PRSFRM, ctx->conn, frm);
-	return 1;
-
- err:
-	QTRACE_DEVEL("leaving in error", QUIC_EV_CONN_PRSFRM, ctx->conn);
-	return 0;
-}
-
-/*
- * Encode <frm> QUIC frame into <buf> buffer.
- * Returns 1 if succeded (enough room in <buf> to encode the frame), 0 if not.
- */
-static inline int qc_build_frm(unsigned char **buf, const unsigned char *end,
-                               struct quic_frame *frm, struct quic_conn *conn)
-{
-	QTRACE_ENTER(QUIC_EV_CONN_BFRM, conn->conn);
-	if (end <= *buf) {
-		QTRACE_DEVEL("not enough room", QUIC_EV_CONN_BFRM, conn->conn);
-		goto err;
-	}
-
-	QDPRINTF("%s: %s frame\n", __func__, quic_frame_type_string(frm->type));
-	*(*buf)++ = frm->type;
-	if (!quic_build_frame_funcs[frm->type](buf, end, frm)) {
-		QTRACE_DEVEL("frame building error", QUIC_EV_CONN_BFRM, conn->conn);
-		goto err;
-	}
-
-	QTRACE_LEAVE(QUIC_EV_CONN_BFRM, conn->conn, frm);
-	return 1;
-
- err:
-	QTRACE_DEVEL("leaving in error", QUIC_EV_CONN_BFRM, conn->conn, frm);
 	return 0;
 }
 
@@ -1226,7 +1166,7 @@ static int qc_parse_hdshk_pkt(struct quic_rx_packet *qpkt, struct quic_conn_ctx 
 	end = qpkt->data + qpkt->len;
 
 	while (pos < end) {
-		if (!qc_parse_frm(&frm, ctx, &pos, end))
+		if (!qc_parse_frm(&frm, &pos, end))
 			goto err;
 
 		switch (frm.type) {
@@ -1597,7 +1537,7 @@ int qc_parse_apkt(struct quic_rx_packet *qpkt, struct quic_conn_ctx *ctx)
 	end = qpkt->data + qpkt->len;
 
 	while (pos < end) {
-		if (!qc_parse_frm(&frm, ctx, &pos, end))
+		if (!qc_parse_frm(&frm, &pos, end))
 			goto err;
 
 		switch (frm.type) {
@@ -3118,15 +3058,14 @@ static int quic_apply_header_protection(unsigned char *buf, unsigned char *pn, s
  * Return 0 if failed, or the strictly positive length of the ACK frame if not.
  */
 static inline ssize_t quic_do_build_ack_frame(struct buffer *buf,
-                                              struct quic_ack_ranges *qars,
-                                              struct quic_conn *conn)
+                                              struct quic_ack_ranges *qars)
 {
 	struct quic_frame ack_frm = { .type = QUIC_FT_ACK, };
 	unsigned char *pos = (unsigned char *)b_orig(buf);
 
 	ack_frm.tx_ack.ack_delay = 0;
 	ack_frm.tx_ack.ack_ranges = qars;
-	if (!qc_build_frm(&pos, pos + buf->size, &ack_frm, conn))
+	if (!qc_build_frm(&pos, pos + buf->size, &ack_frm))
 		return 0;
 
 	return pos - (unsigned char *)b_orig(buf);
@@ -3223,7 +3162,7 @@ static ssize_t qc_do_build_hdshk_pkt(struct q_buf *wbuf, int pkt_type,
 	ack_buf = get_trash_chunk();
 	if ((qel->pktns->flags & QUIC_FL_PKTNS_ACK_REQUIRED) &&
 	    !LIST_ISEMPTY(&qel->pktns->rx.ack_ranges.list)) {
-		ack_frm_len = quic_do_build_ack_frame(ack_buf, &qel->pktns->rx.ack_ranges, conn);
+		ack_frm_len = quic_do_build_ack_frame(ack_buf, &qel->pktns->rx.ack_ranges);
 		if (!ack_frm_len)
 			goto err;
 
@@ -3264,14 +3203,14 @@ static ssize_t qc_do_build_hdshk_pkt(struct q_buf *wbuf, int pkt_type,
 	}
 
 	/* Crypto frame */
-	if (crypto_len && !qc_build_frm(&pos, end, &frm, conn))
+	if (crypto_len && !qc_build_frm(&pos, end, &frm))
 		goto err;
 
 	/* Build a PADDING frame if needed. */
 	if (padding_len) {
 		frm.type = QUIC_FT_PADDING;
 		frm.padding.len = padding_len;
-		if (!qc_build_frm(&pos, end, &frm, conn))
+		if (!qc_build_frm(&pos, end, &frm))
 			goto err;
 	}
 
@@ -3406,7 +3345,7 @@ static ssize_t qc_do_build_phdshk_apkt(struct q_buf *wbuf, uint64_t pn, size_t *
 		unsigned char *ppos;
 
 		ppos = pos;
-		if (!qc_build_frm(&ppos, end, frm, conn)) {
+		if (!qc_build_frm(&ppos, end, frm)) {
 			QDPRINTF("%s: Could not build frame %s\n",
 			         __func__, quic_frame_type_string(frm->type));
 			break;

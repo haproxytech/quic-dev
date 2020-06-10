@@ -24,6 +24,7 @@
 
 #include <types/quic_frame.h>
 
+#include <proto/trace.h>
 #include <proto/xprt_quic.h>
 
 static inline const char *quic_frame_type_string(enum quic_frame_type ft)
@@ -168,6 +169,7 @@ static int inline quic_build_ack_frame(unsigned char **buf, const unsigned char 
 	struct quic_ack_range *ack_range, *next_ack_range;
 
 	ack_range =  LIST_NEXT(&tx_ack->ack_ranges->list, struct quic_ack_range *, list);
+	QTRACE_PROTO("ack range", QUIC_EV_CONN_PRSAFRM,, &ack_range->last, &ack_range->first);
 	if (!quic_enc_int(buf, end, ack_range->last) ||
 	    !quic_enc_int(buf, end, tx_ack->ack_delay) ||
 	    !quic_enc_int(buf, end, tx_ack->ack_ranges->sz - 1) ||
@@ -176,6 +178,7 @@ static int inline quic_build_ack_frame(unsigned char **buf, const unsigned char 
 
 	next_ack_range = LIST_NEXT(&ack_range->list, struct quic_ack_range *, list);
 	while (&next_ack_range->list != &tx_ack->ack_ranges->list) {
+		QTRACE_PROTO("ack range", QUIC_EV_CONN_PRSAFRM,, &ack_range->last, &ack_range->first);
 		if (!quic_enc_int(buf, end, ack_range->first - next_ack_range->last - 2) ||
 		    !quic_enc_int(buf, end, next_ack_range->last - next_ack_range->first))
 			return 0;
@@ -885,6 +888,57 @@ static inline int quic_parse_handshake_done_frame(struct quic_frame *frm,
                                                   const unsigned char **buf, const unsigned char *end)
 {
 	/* No field */
+	return 1;
+}
+
+/*
+ * Decode a QUIC frame from <buf> buffer into <frm> frame.
+ * Returns 1 if succeded (enough data to parse the frame), 0 if not.
+ */
+static inline int qc_parse_frm(struct quic_frame *frm,
+                               const unsigned char **buf, const unsigned char *end)
+{
+	if (end <= *buf) {
+		QTRACE_DEVEL("wrong frame", QUIC_EV_CONN_PRSFRM);
+		return 0;
+	}
+
+	frm->type = *(*buf)++;
+	if (frm->type > QUIC_FT_MAX) {
+		QTRACE_DEVEL("wrong frame type", QUIC_EV_CONN_PRSFRM, frm);
+		return 0;
+	}
+
+	QDPRINTF("%s: %s frame\n", __func__, quic_frame_type_string(frm->type));
+	QTRACE_PROTO("frame", QUIC_EV_CONN_BFRM,, frm);
+	if (!quic_parse_frame_funcs[frm->type](frm, buf, end)) {
+		QTRACE_DEVEL("parsing error", QUIC_EV_CONN_PRSFRM, frm);
+		return 0;
+	}
+
+	return 1;
+}
+
+/*
+ * Encode <frm> QUIC frame into <buf> buffer.
+ * Returns 1 if succeded (enough room in <buf> to encode the frame), 0 if not.
+ */
+static inline int qc_build_frm(unsigned char **buf, const unsigned char *end,
+                               struct quic_frame *frm)
+{
+	if (end <= *buf) {
+		QTRACE_DEVEL("not enough room", QUIC_EV_CONN_BFRM, frm);
+		return 0;
+	}
+
+	QDPRINTF("%s: %s frame\n", __func__, quic_frame_type_string(frm->type));
+	QTRACE_PROTO("frame", QUIC_EV_CONN_BFRM,, frm);
+	*(*buf)++ = frm->type;
+	if (!quic_build_frame_funcs[frm->type](buf, end, frm)) {
+		QTRACE_DEVEL("frame building error", QUIC_EV_CONN_BFRM, frm);
+		return 0;
+	}
+
 	return 1;
 }
 
