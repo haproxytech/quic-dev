@@ -1775,7 +1775,7 @@ static int qc_do_hdshk(struct quic_conn_ctx *ctx)
 
  out:
 	QTRACE_LEAVE(QUIC_EV_CONN_HDSHK, ctx->conn, &ctx->state);
-	return ret;
+	return 1;
 
  err:
 	QTRACE_DEVEL("leaving in error", QUIC_EV_CONN_HDSHK, ctx->conn, &ctx->state);
