@@ -3312,6 +3312,8 @@ static ssize_t qc_build_hdshk_pkt(struct q_buf *buf, struct quic_conn *qc, int p
 	cf = NULL;
 	beg = q_buf_getpos(buf);
 
+	pn_len = 0;
+	buf_pn = NULL;
 	next_offset = *offset;
 	pkt_len = qc_do_build_hdshk_pkt(buf, pkt_type, &buf_pn, &pn_len,
 	                               &next_offset, len, qel, qc);
