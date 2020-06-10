@@ -58,6 +58,8 @@
 #define           QUIC_EV_CONN_PRSFRM    (1ULL << 15)
 #define           QUIC_EV_CONN_PRSAFRM   (1ULL << 16)
 #define           QUIC_EV_CONN_BFRM      (1ULL << 17)
+#define           QUIC_EV_CONN_PHPKTS    (1ULL << 18)
+#define           QUIC_EV_CONN_PHRPKTS   (1ULL << 19)
 
 #define           QUIC_EV_CONN_ENEW      (1ULL << 32)
 #define           QUIC_EV_CONN_EISEC     (1ULL << 33)

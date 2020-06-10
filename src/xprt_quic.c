@@ -88,6 +88,9 @@ static const struct trace_event quic_trace_events[] = {
 	{ .mask = QUIC_EV_CONN_PRSFRM,   .name = "parse_frm",        .desc = "parse frame" },
 	{ .mask = QUIC_EV_CONN_PRSAFRM,  .name = "parse_ack_frm",    .desc = "parse ACK frame" },
 	{ .mask = QUIC_EV_CONN_BFRM,     .name = "build_frm",        .desc = "build frame" },
+	{ .mask = QUIC_EV_CONN_PHPKTS,   .name = "phdshk_pkts",      .desc = "handhshake packets preparation" },
+	{ .mask = QUIC_EV_CONN_PHRPKTS,  .name = "phdshk_rpkts",     .desc = "handhshake packets preparation for retransmission" },
+
 	{ .mask = QUIC_EV_CONN_ENEW,     .name = "new_conn_err",     .desc = "error on new QUIC connection" },
 	{ .mask = QUIC_EV_CONN_EISEC,    .name = "init_secs_err",    .desc = "error on initial secrets derivation" },
 	{ .mask = QUIC_EV_CONN_ERSEC,    .name = "read_secs_err",    .desc = "error on read secrets derivation" },
@@ -1225,9 +1228,12 @@ static int qc_prep_hdshk_rpkts(struct quic_conn_ctx *ctx)
 	struct eb64_node *node;
 	int reuse_wbuf;
 
+	QTRACE_ENTER(QUIC_EV_CONN_PHRPKTS, ctx->conn);
 	qc = ctx->conn->quic_conn;
-	if (!quic_get_tls_enc_levels(&tel, &next_tel, ctx->state))
-		return 0;
+	if (!quic_get_tls_enc_levels(&tel, &next_tel, ctx->state)) {
+		QTRACE_DEVEL("unknown enc. levels", QUIC_EV_CONN_PHRPKTS, ctx->conn);
+		goto err;
+	}
 
 	reuse_wbuf = 0;
 	qel = &qc->enc_levels[tel];
@@ -1253,7 +1259,7 @@ static int qc_prep_hdshk_rpkts(struct quic_conn_ctx *ctx)
 			                         &frm->offset, frm->len, qel);
 			switch (ret) {
 			case -2:
-				return 0;
+				goto err;
 			case -1:
 				wbuf = q_next_wbuf(qc);
 				continue;
@@ -1291,10 +1297,15 @@ static int qc_prep_hdshk_rpkts(struct quic_conn_ctx *ctx)
 	}
 
  out:
+	QTRACE_LEAVE(QUIC_EV_CONN_PHRPKTS, ctx->conn);
 	if (eb_is_empty(frms))
 		qc->retransmit = 0;
 
 	return 1;
+
+ err:
+	QTRACE_DEVEL("leaving in error", QUIC_EV_CONN_PHRPKTS, ctx->conn);
+	return 0;
 }
 
 /*
@@ -1311,9 +1322,12 @@ static int qc_prep_hdshk_pkts(struct quic_conn_ctx *ctx)
 	/* A boolean to flag <wbuf> as reusable, even if not empty. */
 	int reuse_wbuf;
 
+	QTRACE_ENTER(QUIC_EV_CONN_PHPKTS, ctx->conn);
 	qc = ctx->conn->quic_conn;
-	if (!quic_get_tls_enc_levels(&tel, &next_tel, ctx->state))
-		return 0;
+	if (!quic_get_tls_enc_levels(&tel, &next_tel, ctx->state)) {
+		QTRACE_DEVEL("unknown enc. levels", QUIC_EV_CONN_PHPKTS, ctx->conn);
+		goto err;
+	}
 
 	reuse_wbuf = 0;
 	wbuf = q_wbuf(qc);
@@ -1335,7 +1349,7 @@ static int qc_prep_hdshk_pkts(struct quic_conn_ctx *ctx)
 		                         c_buf_remain(qel, qel->tx.crypto.offset), qel);
 		switch (ret) {
 		case -2:
-			return 0;
+			goto err;
 		case -1:
 			/* Not enough room in <wbuf>. */
 			wbuf = q_next_wbuf(qc);
@@ -1368,9 +1382,14 @@ static int qc_prep_hdshk_pkts(struct quic_conn_ctx *ctx)
 			}
 		}
 	}
- out:
 
+ out:
+	QTRACE_LEAVE(QUIC_EV_CONN_PHPKTS, ctx->conn);
 	return 1;
+
+ err:
+	QTRACE_DEVEL("leaving in error", QUIC_EV_CONN_PHPKTS, ctx->conn);
+	return 0;
 }
 
 /*
