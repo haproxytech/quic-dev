@@ -287,9 +287,12 @@ static void quic_trace(enum trace_level level, uint64_t mask, const struct trace
 		}
 		if (mask & QUIC_EV_CONN_HDSHK) {
 			const enum quic_handshake_state *state = a2;
+			const long int *err = a3;
 
 			if (state)
 				chunk_appendf(&trace_buf, " state=%s", quic_hdshk_state_str(*state));
+			if (err)
+				chunk_appendf(&trace_buf, " err=%ld", *err);
 		}
 	}
 
@@ -1748,7 +1751,7 @@ static int qc_do_hdshk(struct quic_conn_ctx *ctx)
 		if (ret == SSL_ERROR_WANT_READ || ret == SSL_ERROR_WANT_WRITE)
 			goto out;
 
-		QTRACE_DEVEL("SSL handshake error", QUIC_EV_CONN_HDSHK, ctx->conn, &ctx->state);
+		QTRACE_DEVEL("SSL handshake error", QUIC_EV_CONN_HDSHK, ctx->conn, &ctx->state, &ret);
 		goto err;
 	}
 
