@@ -1063,19 +1063,21 @@ quic_ack_range_with_gap_crypto_frames(struct eb_root *frms,
 		return NULL;
 
 	/* Aggregate the consecutive CRYPTO frames belonging to the same gap. */
-	do {
+	frm = eb64_entry(&node->node, struct quic_tx_crypto_frm, pn);
+	TRACE_PROTO("to resend",QUIC_EV_CONN_PRSAFRM,, &frm->pn.key, &frm->offset, &frm->len);
+	node = eb64_prev(node);
+	while (node && node->key > next_largest) {
 		struct quic_tx_crypto_frm *prev_frm;
 
-		frm = eb64_entry(&node->node, struct quic_tx_crypto_frm, pn);
-		TRACE_PROTO("to resend",QUIC_EV_CONN_PRSAFRM,, &frm->pn.key, &frm->offset, &frm->len);
+		prev_frm = eb64_entry(&node->node, struct quic_tx_crypto_frm, pn);
+		prev_frm->len += frm->len;
+		eb64_delete(&frm->pn);
+		pool_free(pool_head_quic_tx_crypto_frm, frm);
+		frm = prev_frm;
+		TRACE_PROTO("to resend",QUIC_EV_CONN_PRSAFRM,,
+					&frm->pn.key, &frm->offset, &frm->len);
 		node = eb64_prev(node);
-		if (node && node->key > next_largest) {
-			prev_frm = eb64_entry(&node->node, struct quic_tx_crypto_frm, pn);
-			prev_frm->len += frm->len;
-			eb64_delete(&frm->pn);
-			pool_free(pool_head_quic_tx_crypto_frm, frm);
-		}
-	} while (node);
+	}
 	*ifcdata -= frm->len;
 
 	return frm;
