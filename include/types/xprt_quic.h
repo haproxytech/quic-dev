@@ -71,8 +71,6 @@
 #define           QUIC_EV_CONN_EHPKT     (1ULL << 39)
 #define           QUIC_EV_CONN_EPAPKT    (1ULL << 40)
 
-#define QTRACE_SOURCE &trace_quic
-
 extern struct trace_source trace_quic;
 
 /*

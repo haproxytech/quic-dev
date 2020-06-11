@@ -45,45 +45,6 @@ void hexdump(const void *buf, size_t buflen, const char *title_fmt, ...);
 #define HEXDUMP(buf, len, fmt, ...)      do { } while(0)
 #endif
 
-
-/* For convenience, QTRACE() alone uses the file's default TRACE_LEVEL, most
- * likely TRACE_LEVEL_DEVELOPER, though the other explicit variants specify
- * the desired level and will work when TRACE_LEVEL is not set. The 5 optional
- * arguments are the 4 source-specific arguments that are passed to the cb()
- * callback dedicated to decoding, and which may be used for special tracking.
- * These 4 arguments as well as the cb() function pointer may all be NULL, or
- * simply omitted (in which case they will be replaced by a NULL). This
- * ordering allows many QTRACE() calls to be placed using copy-paste and just
- * change the message at the beginning. Only QTRACE_DEVEL(), QTRACE_ENTER() and
- * QTRACE_LEAVE() will report the calling function's name.
- */
-#define QTRACE(msg, mask, ...)    \
-	trace(TRACE_LEVEL,           (mask), QTRACE_SOURCE, ist(TRC_LOC), NULL, TRC_5ARGS(__VA_ARGS__,,,,,), ist(msg))
-
-#define QTRACE_USER(msg, mask, ...)			\
-	trace(TRACE_LEVEL_USER,      (mask), QTRACE_SOURCE, ist(TRC_LOC), NULL, TRC_5ARGS(__VA_ARGS__,,,,,), ist(msg))
-
-#define QTRACE_DATA(msg, mask, ...)  \
-	trace(TRACE_LEVEL_DATA,   (mask), QTRACE_SOURCE, ist(TRC_LOC), NULL, TRC_5ARGS(__VA_ARGS__,,,,,), ist(msg))
-
-#define QTRACE_PROTO(msg, mask, ...)    \
-	trace(TRACE_LEVEL_PROTO,     (mask), QTRACE_SOURCE, ist(TRC_LOC), NULL, TRC_5ARGS(__VA_ARGS__,,,,,), ist(msg))
-
-#define QTRACE_STATE(msg, mask, ...)    \
-	trace(TRACE_LEVEL_STATE,     (mask), QTRACE_SOURCE, ist(TRC_LOC), NULL, TRC_5ARGS(__VA_ARGS__,,,,,), ist(msg))
-
-#define QTRACE_DEVEL(msg, mask, ...)    \
-	trace(TRACE_LEVEL_DEVELOPER, (mask), QTRACE_SOURCE, ist(TRC_LOC), __FUNCTION__, TRC_5ARGS(__VA_ARGS__,,,,,), ist(msg))
-
-#define QTRACE_ENTER(mask, ...)  \
-	trace(TRACE_LEVEL_DEVELOPER, (mask), QTRACE_SOURCE, ist(TRC_LOC), __FUNCTION__, TRC_5ARGS(__VA_ARGS__,,,,,), ist("entering"))
-
-#define QTRACE_LEAVE(mask, ...)  \
-	trace(TRACE_LEVEL_DEVELOPER, (mask), QTRACE_SOURCE, ist(TRC_LOC), __FUNCTION__, TRC_5ARGS(__VA_ARGS__,,,,,), ist("leaving"))
-
-#define QTRACE_POINT(mask, ...)  \
-	trace(TRACE_LEVEL_DEVELOPER, (mask), QTRACE_SOURCE, ist(TRC_LOC), __FUNCTION__, TRC_5ARGS(__VA_ARGS__,,,,,), ist("in"))
-
 extern struct pool_head *pool_head_quic_connection_id;
 
 int ssl_quic_initial_ctx(struct bind_conf *bind_conf);
