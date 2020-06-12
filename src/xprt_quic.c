@@ -90,6 +90,7 @@ static const struct trace_event quic_trace_events[] = {
 	{ .mask = QUIC_EV_CONN_BFRM,     .name = "build_frm",        .desc = "build frame" },
 	{ .mask = QUIC_EV_CONN_PHPKTS,   .name = "phdshk_pkts",      .desc = "handhshake packets preparation" },
 	{ .mask = QUIC_EV_CONN_PHRPKTS,  .name = "phdshk_rpkts",     .desc = "handhshake packets preparation for retransmission" },
+	{ .mask = QUIC_EV_CONN_TRMHP,    .name = "rm_hp_try",        .desc = "header protection removing try" },
 
 	{ .mask = QUIC_EV_CONN_ENEW,     .name = "new_conn_err",     .desc = "error on new QUIC connection" },
 	{ .mask = QUIC_EV_CONN_EISEC,    .name = "init_secs_err",    .desc = "error on initial secrets derivation" },
@@ -264,20 +265,7 @@ static void quic_trace(enum trace_level level, uint64_t mask, const struct trace
 			if (len)
 				chunk_appendf(&trace_buf, " pktlen=%ld", len);
 		}
-		if (mask & (QUIC_EV_CONN_SPKT|QUIC_EV_CONN_LPKT)) {
-			const struct quic_rx_packet *qpkt = a2;
 
-			if (qpkt) {
-				chunk_appendf(&trace_buf, "\n  pkt@%p el=%c pnl=%u pn=%lu",
-				              qpkt, quic_packet_type_enc_level_char(qpkt->type, qpkt->long_header),
-				              qpkt->pnl, qpkt->pn);
-				if (qpkt->token_len)
-					chunk_appendf(&trace_buf, " toklen=%lu", qpkt->token_len);
-				if (qpkt->aad_len)
-					chunk_appendf(&trace_buf, " aadlen=%lu", qpkt->aad_len);
-				chunk_appendf(&trace_buf, " flags:0x%x len=%lu", qpkt->flags, qpkt->len);
-			}
-		}
 		if (mask & QUIC_EV_CONN_HPKT) {
 			const struct quic_tx_crypto_frm *cf = a2;
 
@@ -294,6 +282,24 @@ static void quic_trace(enum trace_level level, uint64_t mask, const struct trace
 				chunk_appendf(&trace_buf, " state=%s", quic_hdshk_state_str(*state));
 			if (err)
 				chunk_appendf(&trace_buf, " err=%ld", *err);
+		}
+
+		if (mask & QUIC_EV_CONN_TRMHP) {
+			const struct quic_rx_packet *qpkt = a2;
+			const unsigned long *pktlen = a3;
+
+			if (qpkt) {
+				chunk_appendf(&trace_buf, "\n  pkt@%p el=%c pnl=%u pn=%lu",
+				              qpkt, quic_packet_type_enc_level_char(qpkt->type, qpkt->long_header),
+				              qpkt->pnl, qpkt->pn);
+				if (qpkt->token_len)
+					chunk_appendf(&trace_buf, " toklen=%lu", qpkt->token_len);
+				if (qpkt->aad_len)
+					chunk_appendf(&trace_buf, " aadlen=%lu", qpkt->aad_len);
+				chunk_appendf(&trace_buf, " flags:0x%x len=%lu", qpkt->flags, qpkt->len);
+			}
+			if (pktlen)
+				chunk_appendf(&trace_buf, " (%ld)", *pktlen);
 		}
 	}
 
@@ -890,9 +896,9 @@ static uint64_t decode_packet_number(uint64_t largest_pn,
  * <end> points to one byte past the end of this packet.
  * Returns 1 if succeeded, 0 if not.
  */
-static int qc_rm_hp(struct quic_rx_packet *pkt, struct quic_tls_ctx *tls_ctx,
-                    int64_t largest_pn, unsigned char *pn,
-                    unsigned char *byte0, const unsigned char *end)
+static int qc_do_rm_hp(struct quic_rx_packet *pkt, struct quic_tls_ctx *tls_ctx,
+                       int64_t largest_pn, unsigned char *pn,
+                       unsigned char *byte0, const unsigned char *end)
 {
 	int ret, outlen, i, pnlen;
 	uint64_t packet_number;
@@ -1644,9 +1650,9 @@ static int qc_do_hdshk(struct quic_conn_ctx *ctx)
 
 		/* Remove protection of all the packet whose header protection could not be removed. */
 		list_for_each_entry_safe(pqpkt, qqpkt, &enc_level->rx.pqpkts, list) {
-			if (!qc_rm_hp(pqpkt, tls_ctx, enc_level->pktns->rx.largest_pn,
-			              pqpkt->data + pqpkt->pn_offset,
-			              pqpkt->data, pqpkt->data + pqpkt->len)) {
+			if (!qc_do_rm_hp(pqpkt, tls_ctx, enc_level->pktns->rx.largest_pn,
+			                 pqpkt->data + pqpkt->pn_offset,
+			                 pqpkt->data, pqpkt->data + pqpkt->len)) {
 				QDPRINTF("Could not remove packet header protection (state %d)\n", ctx->state);
 				/* XXX TO DO XXX */
 			}
@@ -2598,30 +2604,37 @@ static inline int quic_packet_read_long_header(unsigned char **buf, const unsign
 }
 
 /*
- * Parse the payload of a QUIC packet into <qpkt> from <*buf> buffer,
- * <end> being a pointer to one byte past the end of this buffer,
- * for <conn> QUIC connection.
+ * Try to remove the header protecttion of <qpkt> QUIC packet attached to <conn>
+ * QUIC connection with <buf> as packet number field address, <end> a pointer to one
+ * byte past the end of the buffer containing this packet and <beg> the address of
+ * the packet first byte.
+ * If succeeded, this function updates <*buf> to point to the next packet in the buffer.
  * Returns 1 if succeeded, 0 if not.
  */
-static inline int quic_packet_read_payload(struct quic_rx_packet *qpkt,
-                                           unsigned char **buf,
-                                           unsigned char *beg,
-                                           const unsigned char *end,
-                                           struct quic_conn *conn)
+static inline int qc_try_rm_hp(struct quic_rx_packet *qpkt,
+                               unsigned char **buf, unsigned char *beg,
+                               const unsigned char *end,
+                               struct quic_conn *conn)
 {
 	unsigned char *pn = NULL; /* Packet number field */
 	enum quic_tls_enc_level tel;
 	struct quic_enc_level *qel;
+	size_t pktlen;
+	/* Only for traces. */
+	struct quic_rx_packet *qpkt_trace;
 
+	qpkt_trace = NULL;
+	TRACE_ENTER(QUIC_EV_CONN_TRMHP, conn->conn);
 	/*
 	 * The packet number is here. This is also the start minus
 	 * QUIC_PACKET_PN_MAXLEN of the sample used to add/remove the header
 	 * protection.
 	 */
 	pn = *buf;
-	if (pn - beg + qpkt->len > sizeof qpkt->data) {
-		QDPRINTF("Too big packet %zu\n", pn - beg + qpkt->len);
-		return 0;
+	pktlen = pn - beg + qpkt->len;
+	if (pktlen > sizeof qpkt->data) {
+		TRACE_PROTO("Too big packet", QUIC_EV_CONN_TRMHP, conn->conn,, &pktlen);
+		goto err;
 	}
 
 	tel = qpkt->long_header ?
@@ -2634,10 +2647,10 @@ static inline int quic_packet_read_payload(struct quic_rx_packet *qpkt,
 		 * number and its length subsequently used to decrypt the entire
 		 * packets.
 		 */
-		if (!qc_rm_hp(qpkt, &qel->tls_ctx,
-		              qel->pktns->rx.largest_pn, pn, beg, end)) {
-			QDPRINTF("Could not remove packet header protection\n");
-			return 0;
+		if (!qc_do_rm_hp(qpkt, &qel->tls_ctx,
+		                 qel->pktns->rx.largest_pn, pn, beg, end)) {
+			TRACE_PROTO("hp error", QUIC_EV_CONN_TRMHP, conn->conn);
+			goto err;
 		}
 
 		QDPRINTF("%s inserting packet number: %lu enc. level: %d\n",
@@ -2648,21 +2661,26 @@ static inline int quic_packet_read_payload(struct quic_rx_packet *qpkt,
 		eb64_insert(&qel->rx.qpkts, &qpkt->pn_node);
 		/* The AAD includes the packet number field found at <pn>. */
 		qpkt->aad_len = pn - beg + qpkt->pnl;
+		qpkt_trace = qpkt;
 	}
 	else {
-		QDPRINTF("packet header protection was not "
-		         "removed (enc. level %d)\n", tel);
+		TRACE_PROTO("hp not removed", QUIC_EV_CONN_TRMHP, conn->conn);
 		qpkt->pn_offset = pn - beg;
 		LIST_ADDQ(&qel->rx.pqpkts, &qpkt->list);
 	}
 
-	/* The length of the packet includes the packet number field. */
+	/* Increase the total length of this packet by the header length. */
 	qpkt->len += pn - beg;
 	memcpy(qpkt->data, beg, qpkt->len);
 	/* Updtate the offset of <*buf> for the next QUIC packet. */
 	*buf = beg + qpkt->len;
 
+	TRACE_LEAVE(QUIC_EV_CONN_TRMHP, conn->conn, qpkt_trace);
 	return 1;
+
+ err:
+	TRACE_DEVEL("leaving in error", QUIC_EV_CONN_TRMHP, conn->conn, qpkt_trace);
+	return 0;
 }
 
 typedef ssize_t qpkt_read_func(unsigned char **buf,
@@ -2781,7 +2799,7 @@ static ssize_t qc_srv_pkt_rcv(unsigned char **buf, const unsigned char *end,
 	}
 	QDPRINTF("%s packet length: %zu\n", __func__, qpkt->len);
 
-	if (!quic_packet_read_payload(qpkt, buf, beg, end, conn))
+	if (!qc_try_rm_hp(qpkt, buf, beg, end, conn))
 		goto err;
 
 	conn_ctx = conn->conn->xprt_ctx;
@@ -2789,7 +2807,7 @@ static ssize_t qc_srv_pkt_rcv(unsigned char **buf, const unsigned char *end,
 	if (conn_ctx)
 		tasklet_wakeup(conn_ctx->wait_event.tasklet);
 
-	TRACE_LEAVE(QUIC_EV_CONN_SPKT, conn ? conn->conn : NULL, qpkt);
+	TRACE_LEAVE(QUIC_EV_CONN_SPKT, conn ? conn->conn : NULL);
 
 	return qpkt->len;
 
@@ -2963,7 +2981,7 @@ static ssize_t qc_lstnr_pkt_rcv(unsigned char **buf, const unsigned char *end,
 	}
 	QDPRINTF("%s packet length: %zu\n", __func__, qpkt->len);
 
-	if (!quic_packet_read_payload(qpkt, buf, beg, end, conn))
+	if (!qc_try_rm_hp(qpkt, buf, beg, end, conn))
 		goto err;
 
 	/* Update the state if needed. */
@@ -2975,7 +2993,7 @@ static ssize_t qc_lstnr_pkt_rcv(unsigned char **buf, const unsigned char *end,
 	if (conn_ctx)
 		tasklet_wakeup(conn_ctx->wait_event.tasklet);
 
-	TRACE_LEAVE(QUIC_EV_CONN_LPKT, conn ? conn->conn : NULL, qpkt);
+	TRACE_LEAVE(QUIC_EV_CONN_LPKT, conn ? conn->conn : NULL);
 
 	return qpkt->len;
 
