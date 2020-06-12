@@ -91,7 +91,8 @@ static const struct trace_event quic_trace_events[] = {
 	{ .mask = QUIC_EV_CONN_PHPKTS,   .name = "phdshk_pkts",      .desc = "handhshake packets preparation" },
 	{ .mask = QUIC_EV_CONN_PHRPKTS,  .name = "phdshk_rpkts",     .desc = "handhshake packets preparation for retransmission" },
 	{ .mask = QUIC_EV_CONN_TRMHP,    .name = "rm_hp_try",        .desc = "header protection removing try" },
-	{ .mask = QUIC_EV_CONN_ELRMHP,   .name = "el_rm_hp",         .desc = "enc. level header protection removing" },
+	{ .mask = QUIC_EV_CONN_ELRMHP,   .name = "el_rm_hp",         .desc = "handshake enc. level header protection removing" },
+	{ .mask = QUIC_EV_CONN_ELRXPKTS, .name = "el_treat_rx_pkts", .desc = "handshake enc. level rx packets treatment" },
 
 	{ .mask = QUIC_EV_CONN_ENEW,     .name = "new_conn_err",     .desc = "error on new QUIC connection" },
 	{ .mask = QUIC_EV_CONN_EISEC,    .name = "init_secs_err",    .desc = "error on initial secrets derivation" },
@@ -301,6 +302,21 @@ static void quic_trace(enum trace_level level, uint64_t mask, const struct trace
 			}
 			if (pktlen)
 				chunk_appendf(&trace_buf, " (%ld)", *pktlen);
+		}
+
+		if (mask & QUIC_EV_CONN_ELRXPKTS) {
+			const struct quic_rx_packet *pkt = a2;
+			const SSL *ssl = a3;
+
+			if (a2)
+				chunk_appendf(&trace_buf, "\n  pkt@%p el=%c pn=%lu offset=%lu len=%lu", pkt,
+							  quic_packet_type_enc_level_char(pkt->type, pkt->long_header),
+							  pkt->pn, pkt->crypto.offset, pkt->crypto.len);
+			if (ssl) {
+				enum ssl_encryption_level_t level = SSL_quic_read_level(ssl);
+				chunk_appendf(&trace_buf, " ssl_el=%c",
+							  quic_enc_level_char(ssl_to_quic_enc_level(level)));
+			}
 		}
 	}
 
@@ -1650,6 +1666,94 @@ static inline void qc_rm_hp_pkts(struct quic_enc_level *el, struct quic_conn_ctx
 }
 
 /*
+ * Process all the packets at <el> encryption level.
+ * Return 1 if succeeded, 0 if not.
+ */
+static inline int qc_treat_rx_pkts(struct quic_enc_level *el, struct quic_conn_ctx *ctx)
+{
+	struct quic_tls_ctx *tls_ctx;
+	struct eb64_node *node;
+
+	TRACE_ENTER(QUIC_EV_CONN_ELRXPKTS, ctx->conn);
+	tls_ctx = &el->tls_ctx;
+	node = eb64_first(&el->rx.qpkts);
+	while (node) {
+		struct quic_rx_packet *pkt;
+
+		pkt = eb64_entry(&node->node, struct quic_rx_packet, pn_node);
+		if (!(pkt->flags & QUIC_FL_RX_PACKET_OUT_OF_ORDER)) {
+			int drop;
+
+			drop = 0;
+		    if (!qc_pkt_decrypt(pkt, tls_ctx)) {
+				/* Drop the packet */
+				TRACE_PROTO("packet decryption failed -> dropped",
+				            QUIC_EV_CONN_ELRXPKTS, ctx->conn, pkt);
+				node = eb64_next(node);
+				eb64_delete(&pkt->pn_node);
+				pool_free(pool_head_quic_rx_packet, pkt);
+				continue;
+			}
+
+			if ((pkt->long_header && !qc_parse_hdshk_pkt(pkt, ctx, el)) ||
+			    (!pkt->long_header && !qc_parse_apkt(pkt, ctx)))
+				drop = 1;
+
+			if (drop) {
+				/* Drop the packet */
+				TRACE_PROTO("packet parsing failed -> dropped",
+				            QUIC_EV_CONN_ELRXPKTS, ctx->conn, pkt);
+				node = eb64_next(node);
+				eb64_delete(&pkt->pn_node);
+				pool_free(pool_head_quic_rx_packet, pkt);
+				continue;
+			}
+
+			if (pkt->flags & QUIC_FL_RX_PACKET_ACK_ELICITING) {
+				el->pktns->rx.nb_ack_eliciting++;
+				if (!(el->pktns->rx.nb_ack_eliciting & 1))
+					el->pktns->flags |= QUIC_FL_PKTNS_ACK_REQUIRED;
+			}
+
+			/* Update the largest packet number. */
+			if (pkt->pn > el->pktns->rx.largest_pn)
+				el->pktns->rx.largest_pn = pkt->pn;
+
+			/* Update the list of ranges to acknowledge. */
+			quic_update_ack_ranges_list(&el->pktns->rx.ack_ranges, pkt->pn);
+		}
+		node = eb64_next(node);
+		if (pkt->crypto.len) {
+			if (pkt->crypto.offset == el->rx.crypto.offset) {
+				HEXDUMP(pkt->crypto.data, pkt->crypto.len, "CRYPTO frame:\n");
+				if (SSL_provide_quic_data(ctx->ssl, SSL_quic_read_level(ctx->ssl),
+										  pkt->crypto.data, pkt->crypto.len) != 1) {
+					TRACE_PROTO("SSL_provide_quic_data() error",
+					            QUIC_EV_CONN_ELRXPKTS, ctx->conn, pkt, ctx->ssl);
+					goto err;
+				}
+				TRACE_PROTO("in order CRYPTO data ",
+				            QUIC_EV_CONN_ELRXPKTS, ctx->conn, pkt);
+				el->rx.crypto.offset += pkt->crypto.len;
+				eb64_delete(&pkt->pn_node);
+				pool_free(pool_head_quic_rx_packet, pkt);
+			}
+		}
+		else {
+			eb64_delete(&pkt->pn_node);
+			pool_free(pool_head_quic_rx_packet, pkt);
+		}
+	}
+
+	TRACE_LEAVE(QUIC_EV_CONN_ELRXPKTS, ctx->conn);
+	return 1;
+
+ err:
+	TRACE_DEVEL("leaving in error", QUIC_EV_CONN_ELRXPKTS, ctx->conn);
+	return 0;
+}
+
+/*
  * Called during handshakes to parse and build Initial and Handshake packets for QUIC
  * connections with <ctx> as I/O handler context.
  * Returns 1 if succeeded, 0 if not.
@@ -1659,10 +1763,7 @@ static int qc_do_hdshk(struct quic_conn_ctx *ctx)
 	struct quic_conn *quic_conn;
 	enum quic_tls_enc_level tel, next_tel;
 	struct quic_enc_level *enc_level, *next_enc_level;
-	struct quic_rx_packet *qpkt;
-	struct eb64_node *qpkt_node;
 	struct quic_tls_ctx *tls_ctx;
-	struct eb_root *rx_qpkts;
 	int ret;
 
 	TRACE_ENTER(QUIC_EV_CONN_HDSHK, ctx->conn, &ctx->state);
@@ -1676,7 +1777,6 @@ static int qc_do_hdshk(struct quic_conn_ctx *ctx)
 
  next_level:
 	tls_ctx = &enc_level->tls_ctx;
-	rx_qpkts = &enc_level->rx.qpkts;
 
 	/* If the header protection key for this level has been derived,
 	 * remove the packet header protections.
@@ -1685,72 +1785,10 @@ static int qc_do_hdshk(struct quic_conn_ctx *ctx)
 	    (tls_ctx->rx.flags & QUIC_FL_TLS_SECRETS_SET))
 		qc_rm_hp_pkts(enc_level, ctx);
 
-	qpkt_node = eb64_first(rx_qpkts);
-	while (qpkt_node) {
-		qpkt = eb64_entry(&qpkt_node->node, struct quic_rx_packet, pn_node);
-		if (!(qpkt->flags & QUIC_FL_RX_PACKET_OUT_OF_ORDER)) {
-			int drop;
+	if (!eb_is_empty(&enc_level->rx.qpkts) &&
+		!qc_treat_rx_pkts(enc_level, ctx))
+		goto err;
 
-			drop = 0;
-		    if (!qc_pkt_decrypt(qpkt, tls_ctx)) {
-				/* Drop the packet */
-				QDPRINTF( "packet #%lu long? %d dropped\n", qpkt->pn, !!qpkt->long_header);
-				qpkt_node = eb64_next(qpkt_node);
-				eb64_delete(&qpkt->pn_node);
-				pool_free(pool_head_quic_rx_packet, qpkt);
-				continue;
-			}
-
-			if ((qpkt->long_header && !qc_parse_hdshk_pkt(qpkt, ctx, enc_level)) ||
-			    (!qpkt->long_header && !qc_parse_apkt(qpkt, ctx)))
-				drop = 1;
-
-			if (drop) {
-				QDPRINTF( "Could not parse the packet frames\n");
-				/* Drop the packet */
-				QDPRINTF( "packet #%lu long? %d dropped\n", qpkt->pn, !!qpkt->long_header);
-				qpkt_node = eb64_next(qpkt_node);
-				eb64_delete(&qpkt->pn_node);
-				pool_free(pool_head_quic_rx_packet, qpkt);
-				continue;
-			}
-
-			if (qpkt->flags & QUIC_FL_RX_PACKET_ACK_ELICITING) {
-				enc_level->pktns->rx.nb_ack_eliciting++;
-				if (!(enc_level->pktns->rx.nb_ack_eliciting & 1))
-					enc_level->pktns->flags |= QUIC_FL_PKTNS_ACK_REQUIRED;
-			}
-
-			/* Update the largest packet number. */
-			if (qpkt->pn > enc_level->pktns->rx.largest_pn)
-				enc_level->pktns->rx.largest_pn = qpkt->pn;
-
-			/* Update the list of ranges to acknowledge. */
-			quic_update_ack_ranges_list(&enc_level->pktns->rx.ack_ranges, qpkt->pn);
-		}
-		qpkt_node = eb64_next(qpkt_node);
-		if (qpkt->crypto.len) {
-			if (qpkt->crypto.offset == enc_level->rx.crypto.offset) {
-				QDPRINTF("crypto frame as expected\n");
-				HEXDUMP(qpkt->crypto.data, qpkt->crypto.len, "CRYPTO frame:\n");
-				if (SSL_provide_quic_data(ctx->ssl, SSL_quic_read_level(ctx->ssl),
-										  qpkt->crypto.data, qpkt->crypto.len) != 1) {
-					QDPRINTF("%s SSL providing QUIC data error\n", __func__);
-					goto err;
-				}
-				enc_level->rx.crypto.offset += qpkt->crypto.len;
-				eb64_delete(&qpkt->pn_node);
-				pool_free(pool_head_quic_rx_packet, qpkt);
-			}
-		}
-		else {
-			eb64_delete(&qpkt->pn_node);
-			pool_free(pool_head_quic_rx_packet, qpkt);
-		}
-	}
-
-	if (quic_conn->retransmit)
-		QDPRINTF("%s retransmission asked\n", __func__);
 	if (quic_conn->retransmit && !qc_prep_hdshk_rpkts(ctx))
 		goto err;
 
