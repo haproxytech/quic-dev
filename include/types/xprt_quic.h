@@ -61,6 +61,7 @@
 #define           QUIC_EV_CONN_PHPKTS    (1ULL << 18)
 #define           QUIC_EV_CONN_PHRPKTS   (1ULL << 19)
 #define           QUIC_EV_CONN_TRMHP     (1ULL << 20)
+#define           QUIC_EV_CONN_ELRMHP    (1ULL << 21)
 
 #define           QUIC_EV_CONN_ENEW      (1ULL << 32)
 #define           QUIC_EV_CONN_EISEC     (1ULL << 33)

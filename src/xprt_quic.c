@@ -91,6 +91,7 @@ static const struct trace_event quic_trace_events[] = {
 	{ .mask = QUIC_EV_CONN_PHPKTS,   .name = "phdshk_pkts",      .desc = "handhshake packets preparation" },
 	{ .mask = QUIC_EV_CONN_PHRPKTS,  .name = "phdshk_rpkts",     .desc = "handhshake packets preparation for retransmission" },
 	{ .mask = QUIC_EV_CONN_TRMHP,    .name = "rm_hp_try",        .desc = "header protection removing try" },
+	{ .mask = QUIC_EV_CONN_ELRMHP,   .name = "el_rm_hp",         .desc = "enc. level header protection removing" },
 
 	{ .mask = QUIC_EV_CONN_ENEW,     .name = "new_conn_err",     .desc = "error on new QUIC connection" },
 	{ .mask = QUIC_EV_CONN_EISEC,    .name = "init_secs_err",    .desc = "error on initial secrets derivation" },
@@ -284,7 +285,7 @@ static void quic_trace(enum trace_level level, uint64_t mask, const struct trace
 				chunk_appendf(&trace_buf, " err=%ld", *err);
 		}
 
-		if (mask & QUIC_EV_CONN_TRMHP) {
+		if (mask & (QUIC_EV_CONN_TRMHP|QUIC_EV_CONN_ELRMHP)) {
 			const struct quic_rx_packet *qpkt = a2;
 			const unsigned long *pktlen = a3;
 
@@ -1616,6 +1617,39 @@ int qc_parse_apkt(struct quic_rx_packet *qpkt, struct quic_conn_ctx *ctx)
 }
 
 /*
+ * Remove the header protection of packets at <el> encryption level.
+ * Always succeeds.
+ */
+static inline void qc_rm_hp_pkts(struct quic_enc_level *el, struct quic_conn_ctx *ctx)
+{
+	struct quic_tls_ctx *tls_ctx;
+	struct quic_rx_packet *pqpkt, *qqpkt;
+
+	TRACE_ENTER(QUIC_EV_CONN_ELRMHP, ctx->conn);
+	tls_ctx = &el->tls_ctx;
+	list_for_each_entry_safe(pqpkt, qqpkt, &el->rx.pqpkts, list) {
+		if (!qc_do_rm_hp(pqpkt, tls_ctx, el->pktns->rx.largest_pn,
+		                 pqpkt->data + pqpkt->pn_offset,
+		                 pqpkt->data, pqpkt->data + pqpkt->len)) {
+			TRACE_PROTO("hp removing error", QUIC_EV_CONN_ELRMHP, ctx->conn);
+			/* XXX TO DO XXX */
+		}
+		else {
+			/* Store the packet into the tree of packets to decrypt. */
+			pqpkt->pn_node.key = pqpkt->pn;
+			eb64_insert(&el->rx.qpkts, &pqpkt->pn_node);
+			/* The AAD includes the packet number field */
+			pqpkt->aad_len = pqpkt->pn_offset + pqpkt->pnl;
+			TRACE_PROTO("hp removed", QUIC_EV_CONN_ELRMHP, ctx->conn, pqpkt);
+		}
+		LIST_DEL(&pqpkt->list);
+	}
+
+  out:
+	TRACE_LEAVE(QUIC_EV_CONN_ELRMHP, ctx->conn);
+}
+
+/*
  * Called during handshakes to parse and build Initial and Handshake packets for QUIC
  * connections with <ctx> as I/O handler context.
  * Returns 1 if succeeded, 0 if not.
@@ -1644,29 +1678,12 @@ static int qc_do_hdshk(struct quic_conn_ctx *ctx)
 	tls_ctx = &enc_level->tls_ctx;
 	rx_qpkts = &enc_level->rx.qpkts;
 
-	/* If the header protection key for this level has been derived. */
-	if (tls_ctx->rx.flags & QUIC_FL_TLS_SECRETS_SET) {
-		struct quic_rx_packet *pqpkt, *qqpkt;
-
-		/* Remove protection of all the packet whose header protection could not be removed. */
-		list_for_each_entry_safe(pqpkt, qqpkt, &enc_level->rx.pqpkts, list) {
-			if (!qc_do_rm_hp(pqpkt, tls_ctx, enc_level->pktns->rx.largest_pn,
-			                 pqpkt->data + pqpkt->pn_offset,
-			                 pqpkt->data, pqpkt->data + pqpkt->len)) {
-				QDPRINTF("Could not remove packet header protection (state %d)\n", ctx->state);
-				/* XXX TO DO XXX */
-			}
-			else {
-				QDPRINTF("Removed header protection of packet #%lu state: %d\n", pqpkt->pn, ctx->state);
-				/* Store the packet into the tree of packets to decrypt. */
-				pqpkt->pn_node.key = pqpkt->pn;
-				eb64_insert(&enc_level->rx.qpkts, &pqpkt->pn_node);
-				/* The AAD includes the packet number field */
-				pqpkt->aad_len = pqpkt->pn_offset + pqpkt->pnl;
-			}
-			LIST_DEL(&pqpkt->list);
-		}
-	}
+	/* If the header protection key for this level has been derived,
+	 * remove the packet header protections.
+	 */
+	if (!LIST_ISEMPTY(&enc_level->rx.pqpkts) &&
+	    (tls_ctx->rx.flags & QUIC_FL_TLS_SECRETS_SET))
+		qc_rm_hp_pkts(enc_level, ctx);
 
 	qpkt_node = eb64_first(rx_qpkts);
 	while (qpkt_node) {
