@@ -511,21 +511,23 @@ static int quic_crypto_data_cpy(struct quic_enc_level *qel,
 
 	nb_buf = &qel->tx.crypto.nb_buf;
 	qcb = &qel->tx.crypto.bufs[*nb_buf - 1];
-	pos = (*qcb)->data + (*qcb)->sz;
 
 	while (len > 0) {
 		size_t to_copy, room;
 
+		pos = (*qcb)->data + (*qcb)->sz;
 		room = QUIC_CRYPTO_BUF_SZ  - (*qcb)->sz;
 		to_copy = len > room ? room : len;
-		memcpy(pos, data, to_copy);
-		/* Increment the total size of this CRYPTO buffers by <to_copy>. */
-		qel->tx.crypto.sz += to_copy;
-		(*qcb)->sz += to_copy;
-		pos += to_copy;
-		len -= to_copy;
-		data += to_copy;
-		if ((*qcb)->sz >= QUIC_CRYPTO_BUF_SZ) {
+		if (to_copy) {
+			memcpy(pos, data, to_copy);
+			/* Increment the total size of this CRYPTO buffers by <to_copy>. */
+			qel->tx.crypto.sz += to_copy;
+			(*qcb)->sz += to_copy;
+			pos += to_copy;
+			len -= to_copy;
+			data += to_copy;
+		}
+		else {
 			struct quic_crypto_buf **tmp;
 
 			tmp = realloc(qel->tx.crypto.bufs,
@@ -539,11 +541,10 @@ static int quic_crypto_data_cpy(struct quic_enc_level *qel,
 					return 0;
 				}
 				(*qcb)->sz = 0;
-				pos = (*qcb)->data;
 				++*nb_buf;
 			}
 			else {
-				/* XXX deallocate everything */
+				break;
 			}
 		}
 	}
