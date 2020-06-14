@@ -3241,9 +3241,11 @@ static ssize_t qc_do_build_hdshk_pkt(struct q_buf *wbuf, int pkt_type,
 
 	/* Check there is enough room to build the header followed by a token. */
 	if (end - pos < QUIC_LONG_PACKET_MINLEN + conn->dcid.len +
-	    conn->scid.len + token_fields_len)
+	    conn->scid.len + token_fields_len + QUIC_TLS_TAG_LEN)
 		goto err;
 
+	/* Reserve enough room at the end of the packet for the AEAD TAG. */
+	end -= QUIC_TLS_TAG_LEN;
 	/* packet number */
 	pn = qel->pktns->tx.next_pn + 1;
 
