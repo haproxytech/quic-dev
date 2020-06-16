@@ -296,17 +296,23 @@ static inline size_t quic_max_int(size_t sz)
 /*
  * Return the maximum number of bytes we must use to completely fill a
  * buffer with <sz> as size for a data field of bytes prefixed by its QUIC
- * variable-length. Also put in <*len_sz> the size of this QUIC variable-length.
+ * variable-length (may be 0).
+ * Also put in <*len_sz> the size of this QUIC variable-length.
  * So after returning from this function we have : <*len_sz> + <ret> = <sz>.
  */
 static inline size_t max_available_room(size_t sz, size_t *len_sz)
 {
-	size_t ret;
-	ssize_t diff;
+	size_t sz_sz, ret;
+	size_t diff;
 
-	ret = sz - quic_int_getsize(sz);
+	sz_sz = quic_int_getsize(sz);
+	if (sz <= sz_sz)
+		return 0;
+
+	ret = sz - sz_sz;
 	*len_sz = quic_int_getsize(ret);
-	diff = sz - ret - *len_sz;
+	/* Difference between the two sizes. Note that <sz_sz> >= <*len_sz>. */
+	diff = sz_sz - *len_sz;
 	if (unlikely(diff > 0))
 		ret += diff;
 
@@ -316,28 +322,41 @@ static inline size_t max_available_room(size_t sz, size_t *len_sz)
 /*
  * This function computes the maximum data we can put into a buffer with <sz> as size
  * prefixed with a variable-length field "Length" whose value is the remaining data length, already filled
- * of <len> bytes which must be taken into an account by "Length" field, and finally followed
+ * of <ilen> bytes which must be taken into an account by "Length" field, and finally followed
  * by the data we want to put in this buffer prefixed again by a variable-length field.
  * <sz> the size of the buffer to fill.
- * <len> the number of bytes already put after the "Length" field.
+ * <ilen> the number of bytes already put after the "Length" field.
  * <dlen> the number of bytes we want to at most put in the buffer.
  * Also set <*dlen_sz> to the size of the data variable-length we want to put in the buffer.
  * This is typically this function which must be used to fill as much as possible a QUIC packet
  * made of only one CRYPTO or STREAM frames.
  */
-static inline size_t max_stream_data_size(size_t sz, size_t len, size_t dlen)
+static inline size_t max_stream_data_size(size_t sz, size_t ilen, size_t dlen)
 {
 	size_t ret, len_sz, dlen_sz;
 
-	/* The length of variable-length QUIC integers are powers of two. */
-	for (len_sz = 1; len_sz <= QUIC_VARINT_MAX_SIZE; len_sz <<= 1) {
-		ret = max_available_room(sz - len_sz - len, &dlen_sz);
+	/*
+	 * The length of variable-length QUIC integers are powers of two.
+	 * Look for the first 3length" field value <len_sz> which match our need.
+	 * As we must put <ilen> bytes in our buffer, the minimum value for
+	 * <len_sz> is the number of bytes required to encode <ilen>.
+	 */
+	for (len_sz = quic_int_getsize(ilen);
+	     len_sz <= QUIC_VARINT_MAX_SIZE;
+	     len_sz <<= 1) {
+		if (sz < len_sz + ilen)
+			return 0;
+
+		ret = max_available_room(sz - len_sz - ilen, &dlen_sz);
+		if (!ret)
+			return 0;
+
 		/* Check that <*len_sz> matches <ret> value */
-		if (len_sz + len + dlen_sz + ret <= quic_max_int(len_sz))
+		if (len_sz + ilen + dlen_sz + ret <= quic_max_int(len_sz))
 			return ret < dlen ? ret : dlen;
 	}
 
-	return -1;
+	return 0;
 }
 
 /*
