@@ -89,7 +89,6 @@ static const struct trace_event quic_trace_events[] = {
 	{ .mask = QUIC_EV_CONN_PRSAFRM,  .name = "parse_ack_frm",    .desc = "parse ACK frame" },
 	{ .mask = QUIC_EV_CONN_BFRM,     .name = "build_frm",        .desc = "build frame" },
 	{ .mask = QUIC_EV_CONN_PHPKTS,   .name = "phdshk_pkts",      .desc = "handhshake packets preparation" },
-	{ .mask = QUIC_EV_CONN_PHRPKTS,  .name = "phdshk_rpkts",     .desc = "handhshake packets preparation for retransmission" },
 	{ .mask = QUIC_EV_CONN_TRMHP,    .name = "rm_hp_try",        .desc = "header protection removing try" },
 	{ .mask = QUIC_EV_CONN_ELRMHP,   .name = "el_rm_hp",         .desc = "handshake enc. level header protection removing" },
 	{ .mask = QUIC_EV_CONN_ELRXPKTS, .name = "el_treat_rx_pkts", .desc = "handshake enc. level rx packets treatment" },
@@ -183,6 +182,8 @@ DECLARE_POOL(pool_head_quic_connection_id,
 
 DECLARE_STATIC_POOL(pool_head_quic_rx_packet, "quic_rx_packet_pool", sizeof(struct quic_rx_packet));
 
+DECLARE_STATIC_POOL(pool_head_quic_tx_packet, "quic_tx_packet_pool", sizeof(struct quic_tx_packet));
+
 DECLARE_STATIC_POOL(pool_head_quic_conn_ctx, "quic_conn_ctx_pool", sizeof(struct quic_conn_ctx));
 
 DECLARE_STATIC_POOL(pool_head_quic_tx_crypto_frm, "quic_tx_crypto_frm_pool", sizeof(struct quic_tx_crypto_frm));
@@ -197,7 +198,7 @@ static BIO_METHOD *ha_quic_meth;
 
 
 static ssize_t qc_build_hdshk_pkt(struct q_buf *buf, struct quic_conn *qc, int pkt_type,
-                                  uint64_t *offset, size_t len, struct quic_enc_level *qel);
+                                  struct quic_enc_level *qel);
 
 static int qc_prep_phdshk_pkts(struct quic_conn *qc);
 
@@ -262,20 +263,25 @@ static void quic_trace(enum trace_level level, uint64_t mask, const struct trace
 		if (mask & QUIC_EV_CONN_CHPKT) {
 			const long int len = (long int)a2;
 
-			if (qc->crypto_in_flight != QUIC_CRYPTO_IN_FLIGHT_MAX)
-				chunk_appendf(&trace_buf, "\n  ifcdata=%lu", qc->crypto_in_flight);
+			if (qc->ifcdata != QUIC_CRYPTO_IN_FLIGHT_MAX)
+				chunk_appendf(&trace_buf, "\n  ifcdata=%lu", qc->ifcdata);
 			if (len)
 				chunk_appendf(&trace_buf, " pktlen=%ld", len);
 		}
 
 		if (mask & QUIC_EV_CONN_HPKT) {
-			const struct quic_tx_crypto_frm *cf = a2;
+			const struct quic_tx_packet *pkt = a2;
 
-			if (cf)
-				chunk_appendf(&trace_buf, "\n  pn=%lu offset=%lu len=%lu ifcdata=%zu",
-				              (unsigned long)cf->pn.key, cf->offset, cf->len,
-				              qc->crypto_in_flight);
+			if (pkt) {
+				const struct quic_tx_crypto_frm *cf;
+				chunk_appendf(&trace_buf, "\n  pn=%lu cdata_len=%lu",
+				              (unsigned long)pkt->pn_node.key, pkt->cdata_len);
+				list_for_each_entry(cf, &pkt->frms, list)
+					chunk_appendf(&trace_buf, " cfoff=%lu cflen=%lu", cf->offset, cf->len);
+				chunk_appendf(&trace_buf, " ifcdata=%zu", qc->ifcdata);
+			}
 		}
+
 		if (mask & QUIC_EV_CONN_HDSHK) {
 			const enum quic_handshake_state *state = a2;
 			const long int *err = a3;
@@ -519,6 +525,16 @@ static int quic_crypto_data_cpy(struct quic_enc_level *qel,
 		room = QUIC_CRYPTO_BUF_SZ  - (*qcb)->sz;
 		to_copy = len > room ? room : len;
 		if (to_copy) {
+			struct quic_tx_crypto_frm *cf;
+
+			cf = pool_alloc(pool_head_quic_tx_crypto_frm);
+			if (!cf)
+				break;
+
+			cf->offset = (*nb_buf - 1) * QUIC_CRYPTO_BUF_SZ + (*qcb)->sz;
+			cf->len = to_copy;
+			LIST_ADDQ(&qel->tx.crypto.frms, &cf->list);
+
 			memcpy(pos, data, to_copy);
 			/* Increment the total size of this CRYPTO buffers by <to_copy>. */
 			qel->tx.crypto.sz += to_copy;
@@ -1034,28 +1050,35 @@ static int qc_pkt_decrypt(struct quic_rx_packet *qpkt, struct quic_tls_ctx *tls_
 }
 
 /*
- * Remove <largest> down to <smallest> node entries from <frms> root of CRYPTO frames
- * deallocating them, these frames being acknowledged.
+ * Remove <largest> down to <smallest> node entries from <pkts> tree of TX packet,
+ * deallocating them, and their TX frames.
  * Returns the last node reached to be used for the next range.
  * May be NULL if <largest> node could not be found.
  */
-static inline struct eb64_node *
-quic_ack_range_crypto_frames(struct eb_root *frms, uint64_t *ifcdata,
-                             uint64_t largest, uint64_t smallest)
+static inline struct eb64_node *qc_ackrng_pkts(struct eb_root *pkts, uint64_t *ifcdata,
+                                               uint64_t largest, uint64_t smallest)
 {
 	struct eb64_node *node;
-	struct quic_tx_crypto_frm *frm;
+	struct quic_tx_packet *pkt;
 
-	node = eb64_lookup(frms, largest);
+	node = eb64_lookup(pkts, largest);
 	while (node && node->key >= smallest) {
-		frm = eb64_entry(&node->node, struct quic_tx_crypto_frm, pn);
-		QDPRINTF("Removing CRYPTO frame #%llu\n", frm->pn.key);
-		TRACE_PROTO("cfrm ackd", QUIC_EV_CONN_PRSAFRM,,
-		             &frm->pn.key, &frm->offset, &frm->len);
-		*ifcdata -= frm->len,
+		struct quic_tx_crypto_frm *frm, *frmbak;
+
+		pkt = eb64_entry(&node->node, struct quic_tx_packet, pn_node);
+		QDPRINTF("Removing packet #%llu\n", pkt->pn_node.key);
+		TRACE_PROTO("Removing packet #", QUIC_EV_CONN_PRSAFRM,, &pkt->pn_node.key);
+		list_for_each_entry_safe(frm, frmbak, &pkt->frms, list) {
+			QDPRINTF("Removing CRYPTO frame #%llu\n", frm->pn.key);
+			TRACE_PROTO("CRYPTO frame", QUIC_EV_CONN_PRSAFRM,,
+						 &frm->offset, &frm->len);
+			*ifcdata -= frm->len;
+			LIST_DEL(&frm->list);
+			pool_free(pool_head_quic_tx_crypto_frm, frm);
+		}
 		node = eb64_prev(node);
-		eb64_delete(&frm->pn);
-		pool_free(pool_head_quic_tx_crypto_frm, frm);
+		eb64_delete(&pkt->pn_node);
+		pool_free(pool_head_quic_tx_packet, pkt);
 	}
 
 	return node;
@@ -1073,38 +1096,37 @@ quic_ack_range_crypto_frames(struct eb_root *frms, uint64_t *ifcdata,
  * Returns a frame which results of the aggregation of the lost frames belonging
  * to the same gap.
  */
-static inline struct quic_tx_crypto_frm *
-quic_ack_range_with_gap_crypto_frames(struct eb_root *frms,
-                                      uint64_t *ifcdata,
-                                      uint64_t largest, uint64_t smallest,
-                                      uint64_t next_largest)
+static inline void
+qc_ackrng_with_gap(struct eb_root *pkts, struct list *frms, uint64_t *ifcdata,
+                   uint64_t largest, uint64_t smallest, uint64_t next_largest)
 {
 	struct eb64_node *node;
-	struct quic_tx_crypto_frm *frm;
+	struct quic_tx_packet *pkt;
 
-	node = quic_ack_range_crypto_frames(frms, ifcdata, largest, smallest);
+	node = qc_ackrng_pkts(pkts, ifcdata, largest, smallest);
 	if (!node)
-		return NULL;
+		return;
 
 	/* Aggregate the consecutive CRYPTO frames belonging to the same gap. */
-	frm = eb64_entry(&node->node, struct quic_tx_crypto_frm, pn);
-	TRACE_PROTO("to resend",QUIC_EV_CONN_PRSAFRM,, &frm->pn.key, &frm->offset, &frm->len);
-	node = eb64_prev(node);
 	while (node && node->key > next_largest) {
-		struct quic_tx_crypto_frm *prev_frm;
+		struct quic_tx_crypto_frm *frm, *frmbak;
 
-		prev_frm = eb64_entry(&node->node, struct quic_tx_crypto_frm, pn);
-		prev_frm->len += frm->len;
-		eb64_delete(&frm->pn);
-		pool_free(pool_head_quic_tx_crypto_frm, frm);
-		frm = prev_frm;
-		TRACE_PROTO("to resend",QUIC_EV_CONN_PRSAFRM,,
-					&frm->pn.key, &frm->offset, &frm->len);
+		pkt = eb64_entry(&node->node, struct quic_tx_packet, pn_node);
+		QDPRINTF("to resend packet #%llu\n", pkt->pn_node.key);
+		TRACE_PROTO("to resend packet #", QUIC_EV_CONN_PRSAFRM,, &pkt->pn_node.key);
+		list_for_each_entry_safe(frm, frmbak, &pkt->frms, list) {
+			QDPRINTF("to resend CRYPTO frame %lu..%lu",
+			         frm->offset, frm->offset + frm->len);
+			TRACE_PROTO("to resend CRYPTO frame", QUIC_EV_CONN_PRSAFRM,,
+						 &frm->offset, &frm->len);
+			*ifcdata -= frm->len;
+			LIST_DEL(&frm->list);
+			LIST_ADD(frms, &frm->list);
+		}
 		node = eb64_prev(node);
+		eb64_delete(&pkt->pn_node);
+		pool_free(pool_head_quic_tx_packet, pkt);
 	}
-	*ifcdata -= frm->len;
-
-	return frm;
 }
 
 /*
@@ -1118,6 +1140,9 @@ static inline int qc_parse_ack_frm(struct quic_frame *frm, struct quic_conn_ctx 
 {
 	struct quic_ack *ack = &frm->ack;
 	uint64_t smallest, largest;
+	struct eb_root *pkts;
+	struct list *frms;
+	uint64_t *ifcdata;
 
 	if (ack->largest_ack > qel->pktns->tx.next_pn) {
 		TRACE_DEVEL("ACK for not sent packet", QUIC_EV_CONN_PRSAFRM,
@@ -1133,15 +1158,15 @@ static inline int qc_parse_ack_frm(struct quic_frame *frm, struct quic_conn_ctx 
 
 	largest = ack->largest_ack;
 	smallest = largest - ack->first_ack_range;
+	pkts = &qel->pktns->tx.pkts;
+	frms = &qel->tx.crypto.frms;
+	ifcdata =  &ctx->conn->quic_conn->ifcdata;
 	TRACE_PROTO("ack range", QUIC_EV_CONN_PRSAFRM,, &largest, &smallest);
 	do {
-		uint64_t gap, ack_range;
-		struct quic_tx_crypto_frm *frm;
+		uint64_t gap, ack_range, next_largest;
 
 		if (!ack->ack_range_num--) {
-			quic_ack_range_crypto_frames(&qel->tx.crypto.frms,
-			                             &ctx->conn->quic_conn->crypto_in_flight,
-			                             largest, smallest);
+			qc_ackrng_pkts(pkts, ifcdata, largest, smallest);
 			break;
 		}
 
@@ -1151,22 +1176,17 @@ static inline int qc_parse_ack_frm(struct quic_frame *frm, struct quic_conn_ctx 
 			goto err;
 		}
 
-		if (!quic_dec_int(&ack_range, pos, end) || smallest - gap - 2 < ack_range) {
+		next_largest = smallest - gap - 2;
+		if (!quic_dec_int(&ack_range, pos, end) || next_largest < ack_range) {
 			TRACE_DEVEL("wrong ack range value", QUIC_EV_CONN_PRSAFRM,
 						ctx->conn, &ack_range, &gap, &smallest);
 			goto err;
 		}
 
-		frm = quic_ack_range_with_gap_crypto_frames(&qel->tx.crypto.frms,
-		                                            &ctx->conn->quic_conn->crypto_in_flight,
-		                                            largest, smallest, smallest - gap - 2);
-		if (frm) {
-			eb64_delete(&frm->pn);
-			eb64_insert(&qel->tx.crypto.retransmit_frms, &frm->pn);
-			ctx->conn->quic_conn->retransmit = 1;
-		}
+		qc_ackrng_with_gap(pkts, frms, ifcdata,
+		                   largest, smallest, next_largest);
 		/* Next range */
-		largest = smallest - gap - 2;
+		largest = next_largest;
 		smallest = largest - ack_range;
 
 		TRACE_PROTO("ack range", QUIC_EV_CONN_PRSAFRM,, &largest, &smallest);
@@ -1245,100 +1265,6 @@ static int qc_parse_hdshk_pkt(struct quic_rx_packet *qpkt, struct quic_conn_ctx 
 }
 
 /*
- * Prepare as much as possible handshakes packets to retransmit for the QUIC
- * connection wich <ctx> as I/O handler context.
- * Returns 1 if succeeded, or 0 if something wrong happened.
- */
-static int qc_prep_hdshk_rpkts(struct quic_conn_ctx *ctx)
-{
-	struct quic_conn *qc;
-	enum quic_tls_enc_level tel, next_tel;
-	struct quic_enc_level *qel;
-	struct eb_root *frms;
-	struct eb64_node *node;
-	int reuse_wbuf;
-
-	TRACE_ENTER(QUIC_EV_CONN_PHRPKTS, ctx->conn);
-	qc = ctx->conn->quic_conn;
-	if (!quic_get_tls_enc_levels(&tel, &next_tel, ctx->state)) {
-		TRACE_DEVEL("unknown enc. levels", QUIC_EV_CONN_PHRPKTS, ctx->conn);
-		goto err;
-	}
-
-	reuse_wbuf = 0;
-	qel = &qc->enc_levels[tel];
-	frms = &qel->tx.crypto.retransmit_frms;
-	node = eb64_first(frms);
-	while (node) {
-		uint64_t offset;
-		struct q_buf *wbuf;
-		struct quic_tx_crypto_frm *frm;
-
-		wbuf = q_wbuf(qc);
-		frm = eb64_entry(&node->node, struct quic_tx_crypto_frm, pn);
-		while (frm->len) {
-			ssize_t ret;
-
-			if (!q_buf_empty(wbuf) && !reuse_wbuf)
-				goto out;
-
-			reuse_wbuf = 0;
-			offset = frm->offset;
-			ret = qc_build_hdshk_pkt(wbuf, qc,
-			                         quic_tls_level_pkt_type(tel),
-			                         &frm->offset, frm->len, qel);
-			switch (ret) {
-			case -2:
-				goto err;
-			case -1:
-				wbuf = q_next_wbuf(qc);
-				continue;
-			case 0:
-				goto out;
-			default:
-				frm->len -= frm->offset - offset;
-				if (frm->len)
-					wbuf = q_next_wbuf(qc);
-			}
-		}
-		node = eb64_next(node);
-		eb64_delete(&frm->pn);
-		pool_free(pool_head_quic_tx_crypto_frm, frm);
-		if (!node && tel == QUIC_TLS_ENC_LEVEL_INITIAL) {
-			/* Have a look at the next level. */
-			tel = next_tel;
-			qel = &qc->enc_levels[tel];
-			frms = &qel->tx.crypto.retransmit_frms;
-			node =  eb64_first(frms);
-			if (!node) {
-				/* If there is no more data for the next level, let's
-				 * consume a buffer.
-				 */
-				wbuf = q_next_wbuf(qc);
-			}
-			else {
-				/* Try to reuse the same buffer. */
-				reuse_wbuf = 1;
-			}
-		}
-		else {
-			wbuf = q_next_wbuf(qc);
-		}
-	}
-
- out:
-	TRACE_LEAVE(QUIC_EV_CONN_PHRPKTS, ctx->conn);
-	if (eb_is_empty(frms))
-		qc->retransmit = 0;
-
-	return 1;
-
- err:
-	TRACE_DEVEL("leaving in error", QUIC_EV_CONN_PHRPKTS, ctx->conn);
-	return 0;
-}
-
-/*
  * Prepare as much as possible handshake packets for the QUIC connection
  * with <ctx> as I/O handler context.
  * Returns 1 if succeeded, or 0 if something wrong happened.
@@ -1369,14 +1295,13 @@ static int qc_prep_hdshk_pkts(struct quic_conn_ctx *ctx)
 	while ((q_buf_empty(wbuf) || reuse_wbuf)) {
 		ssize_t ret;
 
-		if (c_buf_consumed(qel) && !(qel->pktns->flags & QUIC_FL_PKTNS_ACK_REQUIRED))
+		if (LIST_ISEMPTY(&qel->tx.crypto.frms) &&
+		    !(qel->pktns->flags & QUIC_FL_PKTNS_ACK_REQUIRED))
 			break;
 
 		reuse_wbuf = 0;
 		ret = qc_build_hdshk_pkt(wbuf, qc,
-		                         quic_tls_level_pkt_type(tel),
-		                         &qel->tx.crypto.offset,
-		                         c_buf_remain(qel, qel->tx.crypto.offset), qel);
+		                         quic_tls_level_pkt_type(tel), qel);
 		switch (ret) {
 		case -2:
 			goto err;
@@ -1390,10 +1315,11 @@ static int qc_prep_hdshk_pkts(struct quic_conn_ctx *ctx)
 			/* Special case for Initial packets: when they have all
 			 * been sent, select the next level.
 			 */
-			if (c_buf_consumed(qel) && tel == QUIC_TLS_ENC_LEVEL_INITIAL) {
+			if (LIST_ISEMPTY(&qel->tx.crypto.frms) &&
+			    tel == QUIC_TLS_ENC_LEVEL_INITIAL) {
 				tel = next_tel;
 				qel = &qc->enc_levels[tel];
-				if (c_buf_consumed(qel)) {
+				if (LIST_ISEMPTY(&qel->tx.crypto.frms)) {
 					/* If there is no more data for the next level, let's
 					 * consume a buffer. This is the case for a client
 					 * which sends only one Initial packet, then wait
@@ -1790,10 +1716,7 @@ static int qc_do_hdshk(struct quic_conn_ctx *ctx)
 		!qc_treat_rx_pkts(enc_level, ctx))
 		goto err;
 
-	if (quic_conn->retransmit && !qc_prep_hdshk_rpkts(ctx))
-		goto err;
-
-	if (!quic_conn->retransmit && !qc_prep_hdshk_pkts(ctx))
+	if (!qc_prep_hdshk_pkts(ctx))
 		goto err;
 
 	if (!qc_send_ppkts(ctx))
@@ -2005,8 +1928,7 @@ static int quic_conn_enc_level_init(struct quic_enc_level *qel)
 
 	qel->tx.crypto.sz = 0;
 	qel->tx.crypto.offset = 0;
-	qel->tx.crypto.frms = EB_ROOT;
-	qel->tx.crypto.retransmit_frms = EB_ROOT;
+	LIST_INIT(&qel->tx.crypto.frms);
 
 	return 1;
 
@@ -2169,8 +2091,7 @@ static int qc_new_conn_init(struct quic_conn *conn,
 	conn->tx.nb_buf = QUIC_CONN_TX_BUFS_NB;
 	conn->tx.wbuf = conn->tx.rbuf = 0;
 
-	conn->retransmit = 0;
-	conn->crypto_in_flight = 0;
+	conn->ifcdata = 0;
 	TRACE_LEAVE(QUIC_EV_CONN_INIT, conn->conn);
 
 	return 1;
@@ -3171,6 +3092,71 @@ static inline ssize_t quic_do_build_ack_frame(struct buffer *buf,
 }
 
 /*
+ * Prepare as most as possible CRYPTO frames from prebuilt CRYPTO frames for <qel>
+ * encryption level to be encoded in a buffer with <room> as available room,
+ * and <*len> as number of bytes already present in this buffer.
+ * Update consequently <*len> to reflect the size of these CRYPTO frames built
+ * by this function. Also attach these CRYPTO frames to <pkt> QUIC packet.
+ * Return 1 if succeeded, 0 if not.
+ */
+static inline int qc_build_cfrms(struct quic_tx_packet *pkt,
+                                 size_t room, size_t *len, size_t max_cdata_len,
+                                 struct quic_enc_level *qel,
+                                 struct quic_conn *conn)
+{
+	struct quic_tx_crypto_frm *cf, *cfbak;
+
+	list_for_each_entry_safe(cf, cfbak, &qel->tx.crypto.frms, list) {
+		/* header length, data length, frame length. */
+		size_t hlen, dlen, cflen;
+
+		if (!max_cdata_len)
+			break;
+
+		/* Compute the length of this CRYPTO frame header */
+		hlen = 1 + quic_int_getsize(cf->offset);
+		/* Compute the data length of this CRyPTO frame. */
+		dlen = max_stream_data_size(room, *len + hlen, cf->len);
+		if (!dlen)
+			break;
+
+		if (dlen > max_cdata_len)
+			dlen = max_cdata_len;
+		max_cdata_len -= dlen;
+		pkt->cdata_len += dlen;
+		/* CRYPTO frame length. */
+		cflen = hlen + quic_int_getsize(dlen) + dlen;
+		/* Add the CRYPTO data length and its encoded length to the packet
+		 * length and the length of this length.
+		 */
+		*len += cflen;
+		if (dlen == cf->len) {
+			/* <cf> CRYPTO data have been consumed. */
+			LIST_DEL(&cf->list);
+			LIST_ADDQ(&pkt->frms, &cf->list);
+		}
+		else {
+			struct quic_tx_crypto_frm *new_cf;
+
+			new_cf = pool_alloc(pool_head_quic_tx_crypto_frm);
+			if (!new_cf) {
+				TRACE_PROTO("No memory for new crypto frame", QUIC_EV_CONN_ECHPKT, conn->conn);
+				return 0;
+			}
+
+			new_cf->len = dlen;
+			new_cf->offset = cf->offset;
+			LIST_ADDQ(&pkt->frms, &new_cf->list);
+			/* Consume <dlen> bytes of the current frame. */
+			cf->len -= dlen;
+			cf->offset += dlen;
+		}
+	}
+
+	return 1;
+}
+
+/*
  * This function builds a clear handshake packet used during a QUIC TLS handshakes
  * into <wbuf> the current <wbuf> for <conn> QUIC connection with <qel> as QUIC
  * TLS encryption level for outgoing packets filling it with as much as CRYPTO
@@ -3192,9 +3178,9 @@ static inline ssize_t quic_do_build_ack_frame(struct buffer *buf,
  * failed (not enough room in <wbuf> to build this packet plus QUIC_TLS_TAG_LEN
  * bytes), -2 if there are too much CRYPTO data in flight to build a packet.
  */
-static ssize_t qc_do_build_hdshk_pkt(struct q_buf *wbuf, int pkt_type,
+static ssize_t qc_do_build_hdshk_pkt(struct q_buf *wbuf,
+                                     struct quic_tx_packet *pkt, int pkt_type,
                                      unsigned char **buf_pn, size_t *pn_len,
-                                     uint64_t *offset, size_t crypto_len,
                                      struct quic_enc_level *qel,
                                      struct quic_conn *conn)
 {
@@ -3206,34 +3192,19 @@ static ssize_t qc_do_build_hdshk_pkt(struct q_buf *wbuf, int pkt_type,
 	/* The Length QUIC packet field value which is the length
 	 * of the remaining data after this field after encryption.
 	 */
-	size_t len;
-	size_t token_fields_len;
-	/* The size of the CRYPTO frame heaeder (without the data). */
-	size_t frm_header_sz;
+	size_t len, token_fields_len, max_cdata_len, padding_len;
 	struct quic_frame frm = { .type = QUIC_FT_CRYPTO, };
 	struct quic_crypto *crypto = &frm.crypto;
-	size_t padding_len;
 	ssize_t ack_frm_len;
 	struct buffer *ack_buf;
 
 	TRACE_ENTER(QUIC_EV_CONN_CHPKT, conn->conn);
 	beg = pos = q_buf_getpos(wbuf);
 	end = q_buf_end(wbuf);
-	if (crypto_len) {
-		crypto_len = crypto_len > QUIC_CRYPTO_IN_FLIGHT_MAX - conn->crypto_in_flight ?
-			QUIC_CRYPTO_IN_FLIGHT_MAX - conn->crypto_in_flight : crypto_len;
-		if (!crypto_len) {
-			TRACE_DEVEL("ifcdada limit reached", QUIC_EV_CONN_CHPKT, conn->conn);
-			goto out;
-		}
-
-		crypto->data = c_buf_getpos(qel, *offset);
-		crypto->offset = *offset;
-		/* Crypto frame header size (without data and data length) */
-		frm_header_sz = sizeof frm.type + quic_int_getsize(crypto->offset);
-	}
-	else {
-		frm_header_sz = 0;
+	max_cdata_len = QUIC_CRYPTO_IN_FLIGHT_MAX - conn->ifcdata;
+	if (!LIST_ISEMPTY(&qel->tx.crypto.frms) && !max_cdata_len) {
+		TRACE_DEVEL("ifcdada limit reached", QUIC_EV_CONN_CHPKT, conn->conn);
+		goto out;
 	}
 
 	/* For a server, the token field of an Initial packet is empty. */
@@ -3270,15 +3241,11 @@ static ssize_t qc_do_build_hdshk_pkt(struct q_buf *wbuf, int pkt_type,
 		qel->pktns->flags &= ~QUIC_FL_PKTNS_ACK_REQUIRED;
 	}
 
-	/* Length field value without the CRYPTO frame data length. */
-	len = ack_frm_len + *pn_len + frm_header_sz + QUIC_TLS_TAG_LEN;
-	if (crypto_len) {
-		crypto->len = max_stream_data_size(end - pos, len, crypto_len);
-		/* Add the CRYPTO data length to the packet length (after encryption) and
-		 * the length of this length.
-		 */
-		len += quic_int_getsize(crypto->len) + crypto->len;
-	}
+	/* Length field value without the CRYPTO frames data length. */
+	len = ack_frm_len + *pn_len;
+	if (!LIST_ISEMPTY(&qel->tx.crypto.frms) &&
+	    !qc_build_cfrms(pkt, end - pos, &len, max_cdata_len, qel, conn))
+		goto err;
 
 	padding_len = 0;
 	if (objt_server(conn->conn->target) &&
@@ -3288,9 +3255,11 @@ static ssize_t qc_do_build_hdshk_pkt(struct q_buf *wbuf, int pkt_type,
 
 	/*
 	 * Length (of the remaining data). Must not fail because, the buffer size
-	 * has been checked above.
+	 * has been checked above. Note that we have reserved QUIC_TLS_TAG_LEN bytes
+	 * for the encryption TAG. It must be taken into an account for the length
+	 * of this packet.
 	 */
-	quic_enc_int(&pos, end, len);
+	quic_enc_int(&pos, end, len + QUIC_TLS_TAG_LEN);
 
 	/* Packet number field address. */
 	*buf_pn = pos;
@@ -3304,8 +3273,16 @@ static ssize_t qc_do_build_hdshk_pkt(struct q_buf *wbuf, int pkt_type,
 	}
 
 	/* Crypto frame */
-	if (crypto_len && !qc_build_frm(&pos, end, &frm))
-		goto err;
+	if (!LIST_ISEMPTY(&pkt->frms)) {
+		struct quic_tx_crypto_frm *cf;
+
+		list_for_each_entry(cf, &pkt->frms, list) {
+			crypto->data = c_buf_getpos(qel, cf->offset);
+			crypto->offset = cf->offset;
+			crypto->len = cf->len;
+			qc_build_frm(&pos, end, &frm);
+		}
+	}
 
 	/* Build a PADDING frame if needed. */
 	if (padding_len) {
@@ -3315,9 +3292,6 @@ static ssize_t qc_do_build_hdshk_pkt(struct q_buf *wbuf, int pkt_type,
 			goto err;
 	}
 
-	if (crypto_len)
-		*offset += crypto->len;
-
  out:
 	TRACE_LEAVE(QUIC_EV_CONN_CHPKT, conn->conn, (int *)(pos - beg));
 	return pos - beg;
@@ -3325,6 +3299,21 @@ static ssize_t qc_do_build_hdshk_pkt(struct q_buf *wbuf, int pkt_type,
  err:
 	TRACE_DEVEL("leaving in error (buffer full)", QUIC_EV_CONN_ECHPKT, conn->conn);
 	return -1;
+}
+
+static inline void quic_tx_packet_init(struct quic_tx_packet *pkt)
+{
+	pkt->cdata_len = 0;
+	LIST_INIT(&pkt->frms);
+}
+
+static inline void free_quic_tx_packet(struct quic_tx_packet *pkt)
+{
+	struct quic_tx_crypto_frm *frm, *frmbak;
+
+	list_for_each_entry_safe(frm, frmbak, &pkt->frms, list)
+		pool_free(pool_head_quic_tx_crypto_frm, frm);
+	pool_free(pool_head_quic_tx_packet, pkt);
 }
 
 /*
@@ -3336,7 +3325,7 @@ static ssize_t qc_do_build_hdshk_pkt(struct q_buf *wbuf, int pkt_type,
  * if succeeded (may be zero if there is too much crypto data in flight to build the packet).
  */
 static ssize_t qc_build_hdshk_pkt(struct q_buf *buf, struct quic_conn *qc, int pkt_type,
-                                  uint64_t *offset, size_t len, struct quic_enc_level *qel)
+                                  struct quic_enc_level *qel)
 {
 	/* The pointer to the packet number field. */
 	unsigned char *buf_pn;
@@ -3345,20 +3334,24 @@ static ssize_t qc_build_hdshk_pkt(struct q_buf *buf, struct quic_conn *qc, int p
 	size_t pn_len, payload_len, aad_len;
 	ssize_t pkt_len;
 	struct quic_tls_ctx *tls_ctx;
-	struct quic_tx_crypto_frm *cf;
-	uint64_t next_offset;
+	struct quic_tx_packet *pkt;
 
 	TRACE_ENTER(QUIC_EV_CONN_HPKT, qc->conn);
-	cf = NULL;
-	beg = q_buf_getpos(buf);
+	pkt = pool_alloc(pool_head_quic_tx_packet);
+	if (!pkt) {
+		TRACE_DEVEL("Not enough memory for a new packet", QUIC_EV_CONN_HPKT, qc->conn);
+		return -2;
+	}
 
+	quic_tx_packet_init(pkt);
+	beg = q_buf_getpos(buf);
 	pn_len = 0;
 	buf_pn = NULL;
-	next_offset = *offset;
-	pkt_len = qc_do_build_hdshk_pkt(buf, pkt_type, &buf_pn, &pn_len,
-	                               &next_offset, len, qel, qc);
-	if (pkt_len <= 0)
+	pkt_len = qc_do_build_hdshk_pkt(buf, pkt, pkt_type, &buf_pn, &pn_len, qel, qc);
+	if (pkt_len <= 0) {
+		free_quic_tx_packet(pkt);
 		return pkt_len;
+	}
 
 	end = beg + pkt_len;
 	pn = qel->pktns->tx.next_pn + 1;
@@ -3368,48 +3361,37 @@ static ssize_t qc_build_hdshk_pkt(struct q_buf *buf, struct quic_conn *qc, int p
 
 	tls_ctx = &qel->tls_ctx;
 	if (!quic_packet_encrypt(payload, payload_len, beg, aad_len, pn, tls_ctx, qc->conn))
-		return -2;
+		goto err;
 
 	end += QUIC_TLS_TAG_LEN;
 	if (!quic_apply_header_protection(beg, buf_pn, pn_len,
 	                                  tls_ctx->tx.hp, tls_ctx->tx.hp_key)) {
 		TRACE_DEVEL("Could not apply the header protection", QUIC_EV_CONN_HPKT, qc->conn);
-		return -2;
+		goto err;
 	}
 
 	/*
 	 * Now that a correct packet is built, let us set the position pointer of
-	 * <buf> buf for the next packet.
+	 * <buf> buffer for the next packet.
 	 */
 	q_buf_setpos(buf, end);
 	/* Consume a packet number. */
 	++qel->pktns->tx.next_pn;
-
-	if (next_offset - *offset) {
-		cf = pool_alloc(pool_head_quic_tx_crypto_frm);
-		if (!cf) {
-			TRACE_DEVEL("CRYPTO frame allocation failed", QUIC_EV_CONN_HPKT, qc->conn);
-			return -2;
-		}
-		/* The length of this TX CRYPTO frame is deduced from the offsets. */
-		cf->len = next_offset - *offset;
-		cf->pn.key = qel->pktns->tx.next_pn;
-		/* Set the offset value to the current value before updating it. */
-		cf->offset = *offset;
-		/* Insert the CRYPTO frame. */
-		eb64_insert(&qel->tx.crypto.frms, &cf->pn);
-		/* Increment the offset of this crypto data stream */
-		*offset += cf->len;
-		/* Increment the CRYPTO data in flight counter. */
-		qc->crypto_in_flight += cf->len;
-	}
-
+	/* Attach the built packet to its tree. */
+	pkt->pn_node.key = qel->pktns->tx.next_pn;
+	eb64_insert(&qel->pktns->tx.pkts, &pkt->pn_node);
 	/* Increment the number of bytes in <buf> buffer by the length of this packet. */
 	buf->data += end - beg;
-
-	TRACE_LEAVE(QUIC_EV_CONN_HPKT, qc->conn, cf);
+	/* Update the counter of the in flight CRYPTO data. */
+	qc->ifcdata += pkt->cdata_len;
+	TRACE_LEAVE(QUIC_EV_CONN_HPKT, qc->conn, pkt);
 
 	return end - beg;
+
+ err:
+	free_quic_tx_packet(pkt);
+	TRACE_DEVEL("leaving in error", QUIC_EV_CONN_HPKT, qc->conn);
+	return -2;
 }
 
 /*

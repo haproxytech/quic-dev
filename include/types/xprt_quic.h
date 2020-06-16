@@ -59,10 +59,9 @@
 #define           QUIC_EV_CONN_PRSAFRM   (1ULL << 16)
 #define           QUIC_EV_CONN_BFRM      (1ULL << 17)
 #define           QUIC_EV_CONN_PHPKTS    (1ULL << 18)
-#define           QUIC_EV_CONN_PHRPKTS   (1ULL << 19)
-#define           QUIC_EV_CONN_TRMHP     (1ULL << 20)
-#define           QUIC_EV_CONN_ELRMHP    (1ULL << 21)
-#define           QUIC_EV_CONN_ELRXPKTS  (1ULL << 22)
+#define           QUIC_EV_CONN_TRMHP     (1ULL << 19)
+#define           QUIC_EV_CONN_ELRMHP    (1ULL << 20)
+#define           QUIC_EV_CONN_ELRXPKTS  (1ULL << 21)
 
 #define           QUIC_EV_CONN_ENEW      (1ULL << 32)
 #define           QUIC_EV_CONN_EISEC     (1ULL << 33)
@@ -192,6 +191,8 @@ struct quic_pktns {
 	struct {
 		/* Next packet number to use for transmissions. */
 		int64_t next_pn;
+		/* The packet which has been sent. */
+		struct eb_root pkts;
 	} tx;
 	struct {
 		/* Largest packet number */
@@ -240,16 +241,20 @@ struct quic_rx_packet {
 	struct quic_crypto crypto;
 };
 
-/*
- * This structure is to store the CRYPTO frames information for outoing
- * QUIC packets. We make the assumption there is only one CRYPTO frame
- * by packet.
- */
+/* Structure to store enough information about TX QUIC packets. */
+struct quic_tx_packet {
+	struct eb64_node pn_node;
+	/* The number of bytes of CRYPTO data in this packet. */
+	size_t cdata_len;
+	/* The list of frames of this packet. */
+	struct list frms;
+};
+
+/* Structure to store enough information about the TX CRYPTO frames. */
 struct quic_tx_crypto_frm {
+	struct list list;
 	uint64_t offset;
 	size_t len;
-	/* Packet number this CRYPTO frame is attached to. */
-	struct eb64_node pn;
 };
 
 #define QUIC_CRYPTO_BUF_SHIFT  14
@@ -304,10 +309,7 @@ struct quic_enc_level {
 			size_t sz;
 			/* The offset of the CRYPT0 data stream. */
 			uint64_t offset;
-			/* The outgoing CRYPTO frames ordered by packet number. */
-			struct eb_root frms;
-			/* The outgoing CRYPTO frames to be retransmitted ordered by packet number. */
-			struct eb_root retransmit_frms;
+			struct list frms;
 		} crypto;
 	} tx;
 	struct quic_pktns *pktns;
@@ -366,9 +368,8 @@ struct quic_conn {
 		/* Reader index. */
 		int rbuf;
 	} tx;
-
-	size_t crypto_in_flight;
-	int retransmit;
+	/* In flight CRYPTO data counter. */
+	size_t ifcdata;
 };
 
 #endif /* _TYPES_XPRT_QUIC_H */
