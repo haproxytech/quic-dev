@@ -103,6 +103,7 @@ struct quic_stop_sending_frame {
 struct quic_crypto {
 	uint64_t offset;
 	uint64_t len;
+	const struct quic_enc_level *qel;
 	const unsigned char *data;
 };
 

@@ -320,13 +320,30 @@ static int inline quic_build_crypto_frame(unsigned char **buf, const unsigned ch
                                           struct quic_frame *frm)
 {
 	struct quic_crypto *crypto = &frm->crypto;
+	const struct quic_enc_level *qel = crypto->qel;
+	size_t offset, len;
 
 	if (!quic_enc_int(buf, end, crypto->offset) ||
 	    !quic_enc_int(buf, end, crypto->len) || end - *buf < crypto->len)
 		return 0;
 
-	memcpy(*buf, crypto->data, crypto->len);
-	*buf += crypto->len;
+	len = crypto->len;
+	offset = crypto->offset;
+	while (len) {
+		int idx;
+		size_t to_copy;
+		const unsigned char *data;
+
+		idx = offset >> QUIC_CRYPTO_BUF_SHIFT;
+		to_copy = qel->tx.crypto.bufs[idx]->sz - (offset & QUIC_CRYPTO_BUF_MASK);
+		if (to_copy > len)
+			to_copy = len;
+		data = qel->tx.crypto.bufs[idx]->data + (offset & QUIC_CRYPTO_BUF_MASK);
+		memcpy(*buf, data, to_copy);
+		*buf += to_copy;
+		offset += to_copy;
+		len -= to_copy;
+	}
 
 	return 1;
 }

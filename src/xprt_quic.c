@@ -3277,9 +3277,9 @@ static ssize_t qc_do_build_hdshk_pkt(struct q_buf *wbuf,
 		struct quic_tx_crypto_frm *cf;
 
 		list_for_each_entry(cf, &pkt->frms, list) {
-			crypto->data = c_buf_getpos(qel, cf->offset);
 			crypto->offset = cf->offset;
 			crypto->len = cf->len;
+			crypto->qel = qel;
 			qc_build_frm(&pos, end, &frm);
 		}
 	}
