@@ -257,10 +257,10 @@ struct quic_tx_crypto_frm {
 	size_t len;
 };
 
-#define QUIC_CRYPTO_BUF_SHIFT  14
+#define QUIC_CRYPTO_BUF_SHIFT  10
 #define QUIC_CRYPTO_BUF_MASK   ((1UL << QUIC_CRYPTO_BUF_SHIFT) - 1)
 /* The maximum allowed size of CRYPTO data buffer provided by the TLS stack. */
-#define QUIC_CRYPTO_BUF_SZ    (1UL << QUIC_CRYPTO_BUF_SHIFT) /* 16 KB */
+#define QUIC_CRYPTO_BUF_SZ    (1UL << QUIC_CRYPTO_BUF_SHIFT) /* 1 KB */
 
 /* The maximum number of bytes of CRYPTO data in flight during handshakes. */
 #define QUIC_CRYPTO_IN_FLIGHT_MAX 4096
