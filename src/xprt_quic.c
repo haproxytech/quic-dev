@@ -512,29 +512,21 @@ static int quic_crypto_data_cpy(struct quic_enc_level *qel,
 {
 	struct quic_crypto_buf **qcb;
 	/* The remaining byte to store in CRYPTO buffers. */
-	size_t *nb_buf;
+	size_t cf_offset, cf_len, *nb_buf;
 	unsigned char *pos;
 
 	nb_buf = &qel->tx.crypto.nb_buf;
 	qcb = &qel->tx.crypto.bufs[*nb_buf - 1];
+	cf_offset = (*nb_buf - 1) * QUIC_CRYPTO_BUF_SZ + (*qcb)->sz;
+	cf_len = len;
 
-	while (len > 0) {
+	while (len) {
 		size_t to_copy, room;
 
 		pos = (*qcb)->data + (*qcb)->sz;
 		room = QUIC_CRYPTO_BUF_SZ  - (*qcb)->sz;
 		to_copy = len > room ? room : len;
 		if (to_copy) {
-			struct quic_tx_crypto_frm *cf;
-
-			cf = pool_alloc(pool_head_quic_tx_crypto_frm);
-			if (!cf)
-				break;
-
-			cf->offset = (*nb_buf - 1) * QUIC_CRYPTO_BUF_SZ + (*qcb)->sz;
-			cf->len = to_copy;
-			LIST_ADDQ(&qel->tx.crypto.frms, &cf->list);
-
 			memcpy(pos, data, to_copy);
 			/* Increment the total size of this CRYPTO buffers by <to_copy>. */
 			qel->tx.crypto.sz += to_copy;
@@ -563,6 +555,22 @@ static int quic_crypto_data_cpy(struct quic_enc_level *qel,
 				break;
 			}
 		}
+	}
+
+	/*
+	 * Allocate a TX CRYPTO frame only if all the CRYPTO data
+	 * have been buffered.
+	 */
+	if (!len) {
+		struct quic_tx_crypto_frm *cf;
+
+		cf = pool_alloc(pool_head_quic_tx_crypto_frm);
+		if (!cf)
+			return 0;
+
+		cf->offset = cf_offset;
+		cf->len = cf_len;
+		LIST_ADDQ(&qel->tx.crypto.frms, &cf->list);
 	}
 
 	return len == 0;
