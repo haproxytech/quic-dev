@@ -1588,7 +1588,7 @@ static inline void qc_rm_hp_pkts(struct quic_enc_level *el, struct quic_conn_ctx
 		else {
 			/* Store the packet into the tree of packets to decrypt. */
 			pqpkt->pn_node.key = pqpkt->pn;
-			eb64_insert(&el->rx.qpkts, &pqpkt->pn_node);
+			eb64_insert(&el->rx.pkts, &pqpkt->pn_node);
 			/* The AAD includes the packet number field */
 			pqpkt->aad_len = pqpkt->pn_offset + pqpkt->pnl;
 			TRACE_PROTO("hp removed", QUIC_EV_CONN_ELRMHP, ctx->conn, pqpkt);
@@ -1611,7 +1611,7 @@ static inline int qc_treat_rx_pkts(struct quic_enc_level *el, struct quic_conn_c
 
 	TRACE_ENTER(QUIC_EV_CONN_ELRXPKTS, ctx->conn);
 	tls_ctx = &el->tls_ctx;
-	node = eb64_first(&el->rx.qpkts);
+	node = eb64_first(&el->rx.pkts);
 	while (node) {
 		struct quic_rx_packet *pkt;
 
@@ -1720,7 +1720,7 @@ static int qc_do_hdshk(struct quic_conn_ctx *ctx)
 	    (tls_ctx->rx.flags & QUIC_FL_TLS_SECRETS_SET))
 		qc_rm_hp_pkts(enc_level, ctx);
 
-	if (!eb_is_empty(&enc_level->rx.qpkts) &&
+	if (!eb_is_empty(&enc_level->rx.pkts) &&
 		!qc_treat_rx_pkts(enc_level, ctx))
 		goto err;
 
@@ -1734,7 +1734,7 @@ static int qc_do_hdshk(struct quic_conn_ctx *ctx)
 	 * Check if there is something to do for the next level.
 	 */
 	if ((next_enc_level->tls_ctx.rx.flags & QUIC_FL_TLS_SECRETS_SET) &&
-	    (!LIST_ISEMPTY(&next_enc_level->rx.pqpkts) || !eb_is_empty(&next_enc_level->rx.qpkts))) {
+	    (!LIST_ISEMPTY(&next_enc_level->rx.pqpkts) || !eb_is_empty(&next_enc_level->rx.pkts))) {
 		enc_level = next_enc_level;
 		if (ctx->state == QUIC_HS_ST_CLIENT_INITIAL)
 			ctx->state = QUIC_HS_ST_CLIENT_HANDSHAKE;
@@ -1797,12 +1797,12 @@ static int quic_treat_packets(struct quic_conn_ctx *ctx)
 
 	quic_conn = ctx->conn->quic_conn;
 	enc_level = &quic_conn->enc_levels[QUIC_TLS_ENC_LEVEL_APP];
-	if (eb_is_empty(&enc_level->rx.qpkts)) {
+	if (eb_is_empty(&enc_level->rx.pkts)) {
 		QDPRINTF("empty tree for APP level encryption\n");
 		enc_level = &quic_conn->enc_levels[QUIC_TLS_ENC_LEVEL_HANDSHAKE];
 	}
 	tls_ctx = &enc_level->tls_ctx;
-	rx_qpkts = &enc_level->rx.qpkts;
+	rx_qpkts = &enc_level->rx.pkts;
 
 	qpkt_node = eb64_first(rx_qpkts);
 	while (qpkt_node) {
@@ -1917,7 +1917,7 @@ static int quic_conn_enc_level_init(struct quic_enc_level *qel)
 	qel->tls_ctx.rx.flags = 0;
 	qel->tls_ctx.tx.flags = 0;
 
-	qel->rx.qpkts = EB_ROOT;
+	qel->rx.pkts = EB_ROOT;
 	LIST_INIT(&qel->rx.pqpkts);
 
 	/* Allocate only one buffer. */
@@ -2643,7 +2643,7 @@ static inline int qc_try_rm_hp(struct quic_rx_packet *qpkt,
 
 		/* Store the packet */
 		qpkt->pn_node.key = qpkt->pn;
-		eb64_insert(&qel->rx.qpkts, &qpkt->pn_node);
+		eb64_insert(&qel->rx.pkts, &qpkt->pn_node);
 		/* The AAD includes the packet number field found at <pn>. */
 		qpkt->aad_len = pn - beg + qpkt->pnl;
 		qpkt_trace = qpkt;
@@ -2651,7 +2651,7 @@ static inline int qc_try_rm_hp(struct quic_rx_packet *qpkt,
 	else {
 		TRACE_PROTO("hp not removed", QUIC_EV_CONN_TRMHP, conn->conn);
 		qpkt->pn_offset = pn - beg;
-		LIST_ADDQ(&qel->rx.pqpkts, &qpkt->list);
+		quic_rx_packet_list_addq(&qel->rx.pqpkts, qpkt);
 	}
 
 	/* Increase the total length of this packet by the header length. */

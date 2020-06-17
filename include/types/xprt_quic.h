@@ -291,7 +291,7 @@ struct quic_enc_level {
 	struct {
 		/* The packets received by the listener I/O handler
 		   with header protection removed. */
-		struct eb_root qpkts;
+		struct eb_root pkts;
 		/* Liste of QUIC packets with protected header. */
 		struct list pqpkts;
 		/* Crypto frames */
