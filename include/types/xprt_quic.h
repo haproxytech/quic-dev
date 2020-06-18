@@ -74,6 +74,7 @@
 #define           QUIC_EV_CONN_EPAPKT    (1ULL << 40)
 
 extern struct trace_source trace_quic;
+extern struct pool_head *pool_head_quic_rx_packet;
 
 /*
  * This struct is used by ebmb_node structs as last member of flexible arrays.
@@ -237,8 +238,16 @@ struct quic_rx_packet {
 	size_t aad_len;
 	unsigned char data[QUIC_PACKET_MAXLEN];
 	struct eb64_node pn_node;
+	volatile unsigned int refcnt;
 	unsigned int flags;
-	struct quic_crypto crypto;
+};
+
+/* Structure to store enough information about the RX CRYPTO frames. */
+struct quic_rx_crypto_frm {
+	struct eb64_node offset_node;
+	uint64_t len;
+	const unsigned char *data;
+	struct quic_rx_packet *pkt;
 };
 
 /* Structure to store enough information about TX QUIC packets. */
@@ -256,6 +265,7 @@ struct quic_tx_crypto_frm {
 	uint64_t offset;
 	size_t len;
 };
+
 
 #define QUIC_CRYPTO_BUF_SHIFT  10
 #define QUIC_CRYPTO_BUF_MASK   ((1UL << QUIC_CRYPTO_BUF_SHIFT) - 1)

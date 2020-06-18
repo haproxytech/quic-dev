@@ -180,11 +180,13 @@ DECLARE_STATIC_POOL(pool_head_quic_conn, "quic_conn", sizeof(struct quic_conn));
 DECLARE_POOL(pool_head_quic_connection_id,
              "quic_connnection_id_pool", sizeof(struct quic_connection_id));
 
-DECLARE_STATIC_POOL(pool_head_quic_rx_packet, "quic_rx_packet_pool", sizeof(struct quic_rx_packet));
+DECLARE_POOL(pool_head_quic_rx_packet, "quic_rx_packet_pool", sizeof(struct quic_rx_packet));
 
 DECLARE_STATIC_POOL(pool_head_quic_tx_packet, "quic_tx_packet_pool", sizeof(struct quic_tx_packet));
 
 DECLARE_STATIC_POOL(pool_head_quic_conn_ctx, "quic_conn_ctx_pool", sizeof(struct quic_conn_ctx));
+
+DECLARE_STATIC_POOL(pool_head_quic_rx_crypto_frm, "quic_rx_crypto_frm_pool", sizeof(struct quic_rx_crypto_frm));
 
 DECLARE_STATIC_POOL(pool_head_quic_tx_crypto_frm, "quic_tx_crypto_frm_pool", sizeof(struct quic_tx_crypto_frm));
 
@@ -315,9 +317,8 @@ static void quic_trace(enum trace_level level, uint64_t mask, const struct trace
 			const SSL *ssl = a3;
 
 			if (a2)
-				chunk_appendf(&trace_buf, "\n  pkt@%p el=%c pn=%lu offset=%lu len=%lu", pkt,
-							  quic_packet_type_enc_level_char(pkt->type, pkt->long_header),
-							  pkt->pn, pkt->crypto.offset, pkt->crypto.len);
+				chunk_appendf(&trace_buf, "\n  pkt@%p el=%c pn=%lu", pkt,
+							  quic_packet_type_enc_level_char(pkt->type, pkt->long_header), pkt->pn);
 			if (ssl) {
 				enum ssl_encryption_level_t level = SSL_quic_read_level(ssl);
 				chunk_appendf(&trace_buf, " ssl_el=%c",
@@ -1215,7 +1216,7 @@ static inline int qc_parse_ack_frm(struct quic_frame *frm, struct quic_conn_ctx 
  * as I/O handler context and <qel> as encryption level.
  * Returns 1 if succeeded, 0 if failed.
  */
-static int qc_parse_hdshk_pkt(struct quic_rx_packet *qpkt, struct quic_conn_ctx *ctx,
+static int qc_parse_hdshk_pkt(struct quic_rx_packet *pkt, struct quic_conn_ctx *ctx,
                               struct quic_enc_level *qel)
 {
 	struct quic_frame frm;
@@ -1223,8 +1224,8 @@ static int qc_parse_hdshk_pkt(struct quic_rx_packet *qpkt, struct quic_conn_ctx 
 
 	TRACE_ENTER(QUIC_EV_CONN_PRSHPKT, ctx->conn);
 	/* Skip the AAD */
-	pos = qpkt->data + qpkt->aad_len;
-	end = qpkt->data + qpkt->len;
+	pos = pkt->data + pkt->aad_len;
+	end = pkt->data + pkt->len;
 
 	while (pos < end) {
 		if (!qc_parse_frm(&frm, &pos, end))
@@ -1232,15 +1233,34 @@ static int qc_parse_hdshk_pkt(struct quic_rx_packet *qpkt, struct quic_conn_ctx 
 
 		switch (frm.type) {
 		case QUIC_FT_CRYPTO:
-			if (frm.crypto.offset != qel->rx.crypto.offset)
-				qpkt->flags |= QUIC_FL_RX_PACKET_OUT_OF_ORDER;
+			if (frm.crypto.offset != qel->rx.crypto.offset) {
+				struct quic_rx_crypto_frm *cf;
 
-			/* Store the CRYPTO frame information. */
-			qpkt->crypto.offset = frm.crypto.offset;
-			qpkt->crypto.len = frm.crypto.len;
-			qpkt->crypto.data = frm.crypto.data;
+				cf = pool_alloc(pool_head_quic_rx_crypto_frm);
+				if (!cf) {
+					TRACE_DEVEL("CRYPTO frame allocation failed",
+					            QUIC_EV_CONN_PRSHPKT, ctx->conn);
+					goto err;
+				}
+
+				cf->offset_node.key = frm.crypto.offset;
+				cf->len = frm.crypto.len;
+				cf->data = frm.crypto.data;
+				cf->pkt = pkt;
+				eb64_insert(&qel->rx.crypto.frms, &cf->offset_node);
+				quic_rx_packet_refinc(pkt);
+			}
+			else {
+				if (SSL_provide_quic_data(ctx->ssl, SSL_quic_read_level(ctx->ssl),
+										  frm.crypto.data, frm.crypto.len) != 1) {
+					TRACE_PROTO("SSL_provide_quic_data() error",
+								QUIC_EV_CONN_PRSHPKT, ctx->conn, pkt, ctx->ssl);
+					goto err;
+				}
+				qel->rx.crypto.offset += frm.crypto.len;
+			}
 			/* ack-eliciting frame. */
-			qpkt->flags |= QUIC_FL_RX_PACKET_ACK_ELICITING;
+			pkt->flags |= QUIC_FL_RX_PACKET_ACK_ELICITING;
 			break;
 		case QUIC_FT_PADDING:
 			if (pos != end) {
@@ -1255,7 +1275,7 @@ static int qc_parse_hdshk_pkt(struct quic_rx_packet *qpkt, struct quic_conn_ctx 
 			tasklet_wakeup(ctx->wait_event.tasklet);
 			break;
 		case QUIC_FT_PING:
-			qpkt->flags |= QUIC_FL_RX_PACKET_ACK_ELICITING;
+			pkt->flags |= QUIC_FL_RX_PACKET_ACK_ELICITING;
 			break;
 		case QUIC_FT_CONNECTION_CLOSE:
 			break;
@@ -1586,18 +1606,53 @@ static inline void qc_rm_hp_pkts(struct quic_enc_level *el, struct quic_conn_ctx
 			/* XXX TO DO XXX */
 		}
 		else {
-			/* Store the packet into the tree of packets to decrypt. */
-			pqpkt->pn_node.key = pqpkt->pn;
-			eb64_insert(&el->rx.pkts, &pqpkt->pn_node);
 			/* The AAD includes the packet number field */
 			pqpkt->aad_len = pqpkt->pn_offset + pqpkt->pnl;
+			/* Store the packet into the tree of packets to decrypt. */
+			pqpkt->pn_node.key = pqpkt->pn;
+			quic_rx_packet_eb64_insert(&el->rx.pkts, &pqpkt->pn_node);
 			TRACE_PROTO("hp removed", QUIC_EV_CONN_ELRMHP, ctx->conn, pqpkt);
 		}
-		LIST_DEL(&pqpkt->list);
+		quic_rx_packet_list_del(pqpkt);
 	}
 
   out:
 	TRACE_LEAVE(QUIC_EV_CONN_ELRMHP, ctx->conn);
+}
+
+/*
+ * Process all the CRYPTO frame at <el> encryption level.
+ * Return 1 if succeeded, 0 if not.
+ */
+static inline void qc_treat_rx_crypto_frms(struct quic_enc_level *el,
+                                           struct quic_conn_ctx *ctx)
+{
+	struct eb64_node *node;
+
+	node = eb64_first(&el->rx.crypto.frms);
+	while (node) {
+		struct quic_rx_crypto_frm *cf;
+
+		cf = eb64_entry(&node->node, struct quic_rx_crypto_frm, offset_node);
+		if (cf->offset_node.key != el->rx.crypto.offset)
+			break;
+
+		HEXDUMP(cf->data, cf->len, "CRYPTO frame:\n");
+		if (SSL_provide_quic_data(ctx->ssl, SSL_quic_read_level(ctx->ssl),
+								  cf->data, cf->len) != 1) {
+			TRACE_PROTO("SSL_provide_quic_data() error",
+						QUIC_EV_CONN_ELRXPKTS, ctx->conn, cf, ctx->ssl);
+		}
+		else {
+			TRACE_PROTO("in order CRYPTO data ",
+						QUIC_EV_CONN_ELRXPKTS, ctx->conn, cf);
+			el->rx.crypto.offset += cf->len;
+		}
+		node = eb64_next(node);
+		quic_rx_packet_refdec(cf->pkt);
+		eb64_delete(&cf->offset_node);
+		pool_free(pool_head_quic_rx_crypto_frm, cf);
+	}
 }
 
 /*
@@ -1616,69 +1671,45 @@ static inline int qc_treat_rx_pkts(struct quic_enc_level *el, struct quic_conn_c
 		struct quic_rx_packet *pkt;
 
 		pkt = eb64_entry(&node->node, struct quic_rx_packet, pn_node);
-		if (!(pkt->flags & QUIC_FL_RX_PACKET_OUT_OF_ORDER)) {
+		if (!qc_pkt_decrypt(pkt, tls_ctx)) {
+			/* Drop the packet */
+			TRACE_PROTO("packet decryption failed -> dropped",
+						QUIC_EV_CONN_ELRXPKTS, ctx->conn, pkt);
+		}
+		else {
 			int drop;
 
 			drop = 0;
-		    if (!qc_pkt_decrypt(pkt, tls_ctx)) {
-				/* Drop the packet */
-				TRACE_PROTO("packet decryption failed -> dropped",
-				            QUIC_EV_CONN_ELRXPKTS, ctx->conn, pkt);
-				node = eb64_next(node);
-				eb64_delete(&pkt->pn_node);
-				pool_free(pool_head_quic_rx_packet, pkt);
-				continue;
-			}
-
 			if ((pkt->long_header && !qc_parse_hdshk_pkt(pkt, ctx, el)) ||
-			    (!pkt->long_header && !qc_parse_apkt(pkt, ctx)))
+				(!pkt->long_header && !qc_parse_apkt(pkt, ctx)))
 				drop = 1;
 
 			if (drop) {
 				/* Drop the packet */
 				TRACE_PROTO("packet parsing failed -> dropped",
-				            QUIC_EV_CONN_ELRXPKTS, ctx->conn, pkt);
-				node = eb64_next(node);
-				eb64_delete(&pkt->pn_node);
-				pool_free(pool_head_quic_rx_packet, pkt);
-				continue;
+							QUIC_EV_CONN_ELRXPKTS, ctx->conn, pkt);
 			}
+			else {
+				if (pkt->flags & QUIC_FL_RX_PACKET_ACK_ELICITING) {
+					el->pktns->rx.nb_ack_eliciting++;
+					if (!(el->pktns->rx.nb_ack_eliciting & 1))
+						el->pktns->flags |= QUIC_FL_PKTNS_ACK_REQUIRED;
+				}
 
-			if (pkt->flags & QUIC_FL_RX_PACKET_ACK_ELICITING) {
-				el->pktns->rx.nb_ack_eliciting++;
-				if (!(el->pktns->rx.nb_ack_eliciting & 1))
-					el->pktns->flags |= QUIC_FL_PKTNS_ACK_REQUIRED;
+				/* Update the largest packet number. */
+				if (pkt->pn > el->pktns->rx.largest_pn)
+					el->pktns->rx.largest_pn = pkt->pn;
+
+				/* Update the list of ranges to acknowledge. */
+				quic_update_ack_ranges_list(&el->pktns->rx.ack_ranges, pkt->pn);
 			}
-
-			/* Update the largest packet number. */
-			if (pkt->pn > el->pktns->rx.largest_pn)
-				el->pktns->rx.largest_pn = pkt->pn;
-
-			/* Update the list of ranges to acknowledge. */
-			quic_update_ack_ranges_list(&el->pktns->rx.ack_ranges, pkt->pn);
 		}
 		node = eb64_next(node);
-		if (pkt->crypto.len) {
-			if (pkt->crypto.offset == el->rx.crypto.offset) {
-				HEXDUMP(pkt->crypto.data, pkt->crypto.len, "CRYPTO frame:\n");
-				if (SSL_provide_quic_data(ctx->ssl, SSL_quic_read_level(ctx->ssl),
-										  pkt->crypto.data, pkt->crypto.len) != 1) {
-					TRACE_PROTO("SSL_provide_quic_data() error",
-					            QUIC_EV_CONN_ELRXPKTS, ctx->conn, pkt, ctx->ssl);
-					goto err;
-				}
-				TRACE_PROTO("in order CRYPTO data ",
-				            QUIC_EV_CONN_ELRXPKTS, ctx->conn, pkt);
-				el->rx.crypto.offset += pkt->crypto.len;
-				eb64_delete(&pkt->pn_node);
-				pool_free(pool_head_quic_rx_packet, pkt);
-			}
-		}
-		else {
-			eb64_delete(&pkt->pn_node);
-			pool_free(pool_head_quic_rx_packet, pkt);
-		}
+		quic_rx_packet_eb64_delete(&pkt->pn_node);
+		free_quic_rx_packet(pkt);
 	}
+
+	qc_treat_rx_crypto_frms(el, ctx);
 
 	TRACE_LEAVE(QUIC_EV_CONN_ELRXPKTS, ctx->conn);
 	return 1;
@@ -2641,12 +2672,12 @@ static inline int qc_try_rm_hp(struct quic_rx_packet *qpkt,
 		QDPRINTF("%s inserting packet number: %lu enc. level: %d\n",
 		         __func__, qpkt->pn, tel);
 
-		/* Store the packet */
-		qpkt->pn_node.key = qpkt->pn;
-		eb64_insert(&qel->rx.pkts, &qpkt->pn_node);
 		/* The AAD includes the packet number field found at <pn>. */
 		qpkt->aad_len = pn - beg + qpkt->pnl;
 		qpkt_trace = qpkt;
+		/* Store the packet */
+		qpkt->pn_node.key = qpkt->pn;
+		quic_rx_packet_eb64_insert(&qel->rx.pkts, &qpkt->pn_node);
 	}
 	else {
 		TRACE_PROTO("hp not removed", QUIC_EV_CONN_TRMHP, conn->conn);
@@ -3560,12 +3591,15 @@ static ssize_t quic_packets_read(char *buf, size_t len, void *ctx,
 			QDPRINTF("Not enough memory to allocate a new packet\n");
 			goto err;
 		}
+
 		memset(qpkt, 0, sizeof(*qpkt));
+		qpkt->refcnt = 1;
 		ret = func(&pos, end, qpkt, ctx, saddr, saddrlen);
 		if (ret == -1) {
-			pool_free(pool_head_quic_rx_packet, qpkt);
+			free_quic_rx_packet(qpkt);
 			goto err;
 		}
+
 		QDPRINTF("long header? %d packet type: 0x%02x \n", !!qpkt->long_header, qpkt->type);
 	} while (pos < end);
 
