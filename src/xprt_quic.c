@@ -1323,9 +1323,17 @@ static int qc_prep_hdshk_pkts(struct quic_conn_ctx *ctx)
 	while ((q_buf_empty(wbuf) || reuse_wbuf)) {
 		ssize_t ret;
 
-		if (LIST_ISEMPTY(&qel->tx.crypto.frms) &&
-		    !(qel->pktns->flags & QUIC_FL_PKTNS_ACK_REQUIRED))
+		/* Do not build any more packet if no ACK are required
+		 * and if there is not more CRYPTO data available or in flight
+		 * CRYPTO data limit reached.
+		 */
+		if (!(qel->pktns->flags & QUIC_FL_PKTNS_ACK_REQUIRED) &&
+			((LIST_ISEMPTY(&qel->tx.crypto.frms) ||
+			    qc->ifcdata >= QUIC_CRYPTO_IN_FLIGHT_MAX))) {
+			TRACE_DEVEL("no more CRYPTO data or ifcdada limit reached",
+			            QUIC_EV_CONN_PHPKTS, ctx->conn);
 			break;
+		}
 
 		reuse_wbuf = 0;
 		ret = qc_build_hdshk_pkt(wbuf, qc,
