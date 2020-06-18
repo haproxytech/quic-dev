@@ -51,7 +51,7 @@ void quic_tls_keys_hexdump(struct buffer *buf, struct quic_tls_secrets *secs)
 #if defined(OPENSSL_IS_BORINGSSL)
 int quic_hkdf_extract(const EVP_MD *md,
                       unsigned char *buf, size_t *buflen,
-                      unsigned char *key, size_t keylen,
+                      const unsigned char *key, size_t keylen,
                       unsigned char *salt, size_t saltlen)
 {
 	return HKDF_extract(buf, buflen, md, key, keylen, salt, saltlen);
@@ -176,12 +176,12 @@ int quic_hkdf_expand_label(const EVP_MD *md,
  * ->hp_key is the key to be derived for header protection.
  * Obviouly these keys have the same size becaused derived with the same TLS cryptographic context.
  */
-ssize_t quic_tls_derive_keys(const EVP_CIPHER *aead, const EVP_CIPHER *hp,
-                             const EVP_MD *md,
-                             unsigned char *key, size_t keylen,
-                             unsigned char *iv, size_t ivlen,
-                             unsigned char *hp_key, size_t hp_keylen,
-                             const unsigned char *secret, size_t secretlen)
+int quic_tls_derive_keys(const EVP_CIPHER *aead, const EVP_CIPHER *hp,
+                         const EVP_MD *md,
+                         unsigned char *key, size_t keylen,
+                         unsigned char *iv, size_t ivlen,
+                         unsigned char *hp_key, size_t hp_keylen,
+                         const unsigned char *secret, size_t secretlen)
 {
 	size_t aead_keylen = (size_t)EVP_CIPHER_key_length(aead);
 	size_t aead_ivlen = (size_t)EVP_CIPHER_iv_length(aead);
@@ -217,7 +217,7 @@ ssize_t quic_tls_derive_keys(const EVP_CIPHER *aead, const EVP_CIPHER *hp,
  */
 int quic_derive_initial_secret(const EVP_MD *md,
                                unsigned char *initial_secret, size_t initial_secret_sz,
-                               unsigned char *secret, size_t secret_sz)
+                               const unsigned char *secret, size_t secret_sz)
 {
 	if (!quic_hkdf_extract(md, initial_secret, &initial_secret_sz, secret, secret_sz,
 	                       initial_salt, sizeof initial_salt))
@@ -230,11 +230,11 @@ int quic_derive_initial_secret(const EVP_MD *md,
  * Derive the client initial secret from the initial secret.
  * Returns the size of the derived secret if succeeded, 0 if not.
  */
-ssize_t quic_tls_derive_initial_secrets(const EVP_MD *md,
-                                        unsigned char *rx, size_t rx_sz,
-                                        unsigned char *tx, size_t tx_sz,
-                                        const unsigned char *secret, size_t secret_sz,
-                                        int server)
+int quic_tls_derive_initial_secrets(const EVP_MD *md,
+                                    unsigned char *rx, size_t rx_sz,
+                                    unsigned char *tx, size_t tx_sz,
+                                    const unsigned char *secret, size_t secret_sz,
+                                    int server)
 {
 	const unsigned char client_label[] = "client in";
 	const unsigned char server_label[] = "server in";
