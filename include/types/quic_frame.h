@@ -25,6 +25,7 @@
 #include <stdint.h>
 #include <stdlib.h>
 
+#include <types/xprt_quic.h>
 #include <common/mini-clist.h>
 
 /* QUIC frame types. */
@@ -209,9 +210,4 @@ struct quic_frame {
 	};
 };
 
-extern int (*quic_build_frame_funcs[])(unsigned char **buf, const unsigned char *end,
-                                       struct quic_frame *frame);
-
-extern int (*quic_parse_frame_funcs[])(struct quic_frame *frame,
-                                       const unsigned char **buf, const unsigned char *end);
 #endif /* _TYPES_QUIC_FRAME_H */
