@@ -220,7 +220,6 @@ extern struct quic_transport_params quid_dflt_transport_params;
 
 struct quic_rx_packet {
 	struct list list;
-	int long_header;
 	unsigned char type;
 	uint32_t version;
 	/* Initial desctination connection ID. */
