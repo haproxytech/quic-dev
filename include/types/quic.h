@@ -79,6 +79,12 @@
 #define QUIC_PACKET_TYPE_0RTT        0x01
 #define QUIC_PACKET_TYPE_HANDSHAKE   0x02
 #define QUIC_PACKET_TYPE_RETRY       0x03
+/*
+ * The following one is not defined by the RFC but we define it for our
+ * own convenience.
+ */
+#define QUIC_PACKET_HEADER_SHORT_BIT     0x07
+#define QUIC_PACKET_HEADER_SHORT_BITMASK (1 << QUIC_PACKET_HEADER_SHORT_BIT)
 
 /* Packet number field length. */
 #define QUIC_PACKET_PNL_BITMASK      0x03

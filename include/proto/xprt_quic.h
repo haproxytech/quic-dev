@@ -992,11 +992,16 @@ static inline void q_buf_reset(struct q_buf *buf)
 	buf->data = 0;
 }
 
-/*
- * Returns 1 if <buf> is empty, 0 if not. */
+/* * Returns 1 if <buf> is empty, 0 if not. */
 static inline int q_buf_empty(struct q_buf *buf)
 {
 	return !buf->data;
+}
+
+/* Return 1 if <pkt> header form is long, 0 if not. */
+static inline int qc_pkt_long(const struct quic_rx_packet *pkt)
+{
+	return !(pkt->type & QUIC_PACKET_HEADER_SHORT_BITMASK);
 }
 
 /* Increment the reference counter of <pkt> */

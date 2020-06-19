@@ -932,49 +932,56 @@ int (*quic_build_frame_funcs[])(unsigned char **, const unsigned char *,
 	[QUIC_FT_HANDSHAKE_DONE]       = quic_build_handshake_done_frame,
 };
 
-int (*quic_parse_frame_funcs[])(struct quic_frame *frm,
-                                const unsigned char **, const unsigned char *) = {
-	[QUIC_FT_PADDING]      = quic_parse_padding_frame,
-	[QUIC_FT_PING]         = quic_parse_ping_frame,
-	[QUIC_FT_ACK]          = quic_parse_ack_frame_header,
-	[QUIC_FT_ACK_ECN]      = quic_parse_ack_ecn_frame,
-	[QUIC_FT_RESET_STREAM] = quic_parse_reset_stream_frame,
-	[QUIC_FT_STOP_SENDING] = quic_parse_stop_sending_frame,
-	[QUIC_FT_CRYPTO]       = quic_parse_crypto_frame,
-	[QUIC_FT_NEW_TOKEN]    = quic_parse_new_token_frame,
-	[QUIC_FT_STREAM_8]     = quic_parse_stream_frame,
-	[QUIC_FT_STREAM_9]     = quic_parse_stream_frame,
-	[QUIC_FT_STREAM_A]     = quic_parse_stream_frame,
-	[QUIC_FT_STREAM_B]     = quic_parse_stream_frame,
-	[QUIC_FT_STREAM_C]     = quic_parse_stream_frame,
-	[QUIC_FT_STREAM_D]     = quic_parse_stream_frame,
-	[QUIC_FT_STREAM_E]     = quic_parse_stream_frame,
-	[QUIC_FT_STREAM_F]     = quic_parse_stream_frame,
-	[QUIC_FT_MAX_DATA]     = quic_parse_max_data_frame,
-	[QUIC_FT_MAX_STREAM_DATA]      = quic_parse_max_stream_data_frame,
-	[QUIC_FT_MAX_STREAMS_BIDI]     = quic_parse_max_streams_bidi_frame,
-	[QUIC_FT_MAX_STREAMS_UNI]      = quic_parse_max_streams_uni_frame,
-	[QUIC_FT_DATA_BLOCKED]         = quic_parse_data_blocked_frame,
-	[QUIC_FT_STREAM_DATA_BLOCKED]  = quic_parse_stream_data_blocked_frame,
-	[QUIC_FT_STREAMS_BLOCKED_BIDI] = quic_parse_streams_blocked_bidi_frame,
-	[QUIC_FT_STREAMS_BLOCKED_UNI]  = quic_parse_streams_blocked_uni_frame,
-	[QUIC_FT_NEW_CONNECTION_ID]    = quic_parse_new_connection_id_frame,
-	[QUIC_FT_RETIRE_CONNECTION_ID] = quic_parse_retire_connection_id_frame,
-	[QUIC_FT_PATH_CHALLENGE]       = quic_parse_path_challenge_frame,
-	[QUIC_FT_PATH_RESPONSE]        = quic_parse_path_response_frame,
-	[QUIC_FT_CONNECTION_CLOSE]     = quic_parse_connection_close_frame,
-	[QUIC_FT_CONNECTION_CLOSE_APP] = quic_parse_connection_close_app_frame,
-	[QUIC_FT_HANDSHAKE_DONE]       = quic_parse_handshake_done_frame,
+struct quic_frame_parser {
+	int (*func)(struct quic_frame *frm,
+                const unsigned char **, const unsigned char *);
+	unsigned char mask;
+};
+
+struct quic_frame_parser quic_frame_parsers[] = {
+	[QUIC_FT_PADDING]              = { .func = quic_parse_padding_frame,              .mask = QUIC_FT_PKT_TYPE_IH01_BITMASK, },
+	[QUIC_FT_PING]                 = { .func = quic_parse_ping_frame,                 .mask = QUIC_FT_PKT_TYPE_IH01_BITMASK, },
+	[QUIC_FT_ACK]                  = { .func = quic_parse_ack_frame_header,           .mask = QUIC_FT_PKT_TYPE_IH_1_BITMASK, },
+	[QUIC_FT_ACK_ECN]              = { .func = quic_parse_ack_ecn_frame,              .mask = QUIC_FT_PKT_TYPE_IH_1_BITMASK, },
+	[QUIC_FT_RESET_STREAM]         = { .func = quic_parse_reset_stream_frame,         .mask = QUIC_FT_PKT_TYPE___01_BITMASK, },
+	[QUIC_FT_STOP_SENDING]         = { .func = quic_parse_stop_sending_frame,         .mask = QUIC_FT_PKT_TYPE___01_BITMASK, },
+	[QUIC_FT_CRYPTO]               = { .func = quic_parse_crypto_frame,               .mask = QUIC_FT_PKT_TYPE_IH_1_BITMASK, },
+	[QUIC_FT_NEW_TOKEN]            = { .func = quic_parse_new_token_frame,            .mask = QUIC_FT_PKT_TYPE____1_BITMASK, },
+	[QUIC_FT_STREAM_8]             = { .func = quic_parse_stream_frame,               .mask = QUIC_FT_PKT_TYPE___01_BITMASK, },
+	[QUIC_FT_STREAM_9]             = { .func = quic_parse_stream_frame,               .mask = QUIC_FT_PKT_TYPE___01_BITMASK, },
+	[QUIC_FT_STREAM_A]             = { .func = quic_parse_stream_frame,               .mask = QUIC_FT_PKT_TYPE___01_BITMASK, },
+	[QUIC_FT_STREAM_B]             = { .func = quic_parse_stream_frame,               .mask = QUIC_FT_PKT_TYPE___01_BITMASK, },
+	[QUIC_FT_STREAM_C]             = { .func = quic_parse_stream_frame,               .mask = QUIC_FT_PKT_TYPE___01_BITMASK, },
+	[QUIC_FT_STREAM_D]             = { .func = quic_parse_stream_frame,               .mask = QUIC_FT_PKT_TYPE___01_BITMASK, },
+	[QUIC_FT_STREAM_E]             = { .func = quic_parse_stream_frame,               .mask = QUIC_FT_PKT_TYPE___01_BITMASK, },
+	[QUIC_FT_STREAM_F]             = { .func = quic_parse_stream_frame,               .mask = QUIC_FT_PKT_TYPE___01_BITMASK, },
+	[QUIC_FT_MAX_DATA]             = { .func = quic_parse_max_data_frame,             .mask = QUIC_FT_PKT_TYPE___01_BITMASK, },
+	[QUIC_FT_MAX_STREAM_DATA]      = { .func = quic_parse_max_stream_data_frame,      .mask = QUIC_FT_PKT_TYPE___01_BITMASK, },
+	[QUIC_FT_MAX_STREAMS_BIDI]     = { .func = quic_parse_max_streams_bidi_frame,     .mask = QUIC_FT_PKT_TYPE___01_BITMASK, },
+	[QUIC_FT_MAX_STREAMS_UNI]      = { .func = quic_parse_max_streams_uni_frame,      .mask = QUIC_FT_PKT_TYPE___01_BITMASK, },
+	[QUIC_FT_DATA_BLOCKED]         = { .func = quic_parse_data_blocked_frame,         .mask = QUIC_FT_PKT_TYPE___01_BITMASK, },
+	[QUIC_FT_STREAM_DATA_BLOCKED]  = { .func = quic_parse_stream_data_blocked_frame,  .mask = QUIC_FT_PKT_TYPE___01_BITMASK, },
+	[QUIC_FT_STREAMS_BLOCKED_BIDI] = { .func = quic_parse_streams_blocked_bidi_frame, .mask = QUIC_FT_PKT_TYPE___01_BITMASK, },
+	[QUIC_FT_STREAMS_BLOCKED_UNI]  = { .func = quic_parse_streams_blocked_uni_frame,  .mask = QUIC_FT_PKT_TYPE___01_BITMASK, },
+	[QUIC_FT_NEW_CONNECTION_ID]    = { .func = quic_parse_new_connection_id_frame,    .mask = QUIC_FT_PKT_TYPE___01_BITMASK, },
+	[QUIC_FT_RETIRE_CONNECTION_ID] = { .func = quic_parse_retire_connection_id_frame, .mask = QUIC_FT_PKT_TYPE___01_BITMASK, },
+	[QUIC_FT_PATH_CHALLENGE]       = { .func = quic_parse_path_challenge_frame,       .mask = QUIC_FT_PKT_TYPE___01_BITMASK, },
+	[QUIC_FT_PATH_RESPONSE]        = { .func = quic_parse_path_response_frame,        .mask = QUIC_FT_PKT_TYPE___01_BITMASK, },
+	[QUIC_FT_CONNECTION_CLOSE]     = { .func = quic_parse_connection_close_frame,     .mask = QUIC_FT_PKT_TYPE_IH01_BITMASK, },
+	[QUIC_FT_CONNECTION_CLOSE_APP] = { .func = quic_parse_connection_close_app_frame, .mask = QUIC_FT_PKT_TYPE___01_BITMASK, },
+	[QUIC_FT_HANDSHAKE_DONE]       = { .func = quic_parse_handshake_done_frame,       .mask = QUIC_FT_PKT_TYPE____1_BITMASK, },
 };
 
 /*
  * Decode a QUIC frame from <buf> buffer into <frm> frame.
  * Returns 1 if succeded (enough data to parse the frame), 0 if not.
  */
-int qc_parse_frm(struct quic_frame *frm,
+int qc_parse_frm(struct quic_frame *frm, struct quic_rx_packet *pkt,
                  const unsigned char **buf, const unsigned char *end,
                  struct quic_conn *conn)
 {
+	struct quic_frame_parser *parser;
+
 	if (end <= *buf) {
 		TRACE_DEVEL("wrong frame", QUIC_EV_CONN_PRSFRM, conn->conn);
 		return 0;
@@ -986,8 +993,14 @@ int qc_parse_frm(struct quic_frame *frm,
 		return 0;
 	}
 
+	parser = &quic_frame_parsers[frm->type];
+	if (!(parser->mask & (1 << pkt->type))) {
+		TRACE_DEVEL("unauthorized frame", QUIC_EV_CONN_PRSFRM, conn->conn, frm);
+		return 0;
+	}
+
 	TRACE_PROTO("frame", QUIC_EV_CONN_PRSFRM, conn->conn, frm);
-	if (!quic_parse_frame_funcs[frm->type](frm, buf, end)) {
+	if (!quic_frame_parsers[frm->type].func(frm, buf, end)) {
 		TRACE_DEVEL("parsing error", QUIC_EV_CONN_PRSFRM, conn->conn, frm);
 		return 0;
 	}

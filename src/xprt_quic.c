@@ -306,7 +306,7 @@ static void quic_trace(enum trace_level level, uint64_t mask, const struct trace
 
 			if (pkt) {
 				chunk_appendf(&trace_buf, "\n  pkt@%p el=%c",
-				              pkt, quic_packet_type_enc_level_char(pkt->type, pkt->long_header));
+				              pkt, quic_packet_type_enc_level_char(pkt->type, qc_pkt_long(pkt)));
 				if (pkt->pnl)
 					chunk_appendf(&trace_buf, " pnl=%u pn=%lu", pkt->pnl, pkt->pn);
 				if (pkt->token_len)
@@ -331,7 +331,7 @@ static void quic_trace(enum trace_level level, uint64_t mask, const struct trace
 
 			if (pkt)
 				chunk_appendf(&trace_buf, "\n  pkt@%p el=%c pn=%lu", pkt,
-							  quic_packet_type_enc_level_char(pkt->type, pkt->long_header), pkt->pn);
+							  quic_packet_type_enc_level_char(pkt->type, qc_pkt_long(pkt)), pkt->pn);
 			if (cf)
 				chunk_appendf(&trace_buf, " cfoff=%lu cflen=%lu",
 							  (unsigned long)cf->offset_node.key, cf->len);
@@ -375,6 +375,13 @@ static void quic_trace(enum trace_level level, uint64_t mask, const struct trace
 				chunk_appendf(&trace_buf, "..%lu", *val3);
 		}
 	}
+	if (mask & QUIC_EV_CONN_LPKT) {
+		const struct quic_rx_packet *pkt = a2;
+
+		if (pkt)
+			chunk_appendf(&trace_buf, " type=0x%02x long? %d", pkt->type, qc_pkt_long(pkt));
+	}
+
 }
 
 #ifndef OPENSSL_IS_BORINGSSL
@@ -1063,14 +1070,14 @@ static int qc_pkt_decrypt(struct quic_rx_packet *qpkt, struct quic_tls_ctx *tls_
 	                       tls_ctx->rx.aead, tls_ctx->rx.key, iv);
 	if (!ret) {
 		QDPRINTF("%s: qpkt #%lu long %d decryption failed\n",
-		         __func__, qpkt->pn, qpkt->long_header);
+		         __func__, qpkt->pn, qc_pkt_long(qpkt));
 		return 0;
 	}
 
 	/* Update the packet length (required to parse the frames). */
 	qpkt->len = qpkt->aad_len + ret;
 	QDPRINTF("QUIC packet #%lu long header? %d decryption done\n",
-	         qpkt->pn, !!qpkt->long_header);
+	         qpkt->pn, qc_pkt_long(qpkt));
 
 	return 1;
 }
@@ -1236,8 +1243,8 @@ static inline int qc_parse_ack_frm(struct quic_frame *frm, struct quic_conn_ctx 
  * as I/O handler context and <qel> as encryption level.
  * Returns 1 if succeeded, 0 if failed.
  */
-static int qc_parse_hdshk_pkt(struct quic_rx_packet *pkt, struct quic_conn_ctx *ctx,
-                              struct quic_enc_level *qel)
+static int qc_parse_pkt_frms(struct quic_rx_packet *pkt, struct quic_conn_ctx *ctx,
+                             struct quic_enc_level *qel)
 {
 	struct quic_frame frm;
 	const unsigned char *pos, *end;
@@ -1248,7 +1255,7 @@ static int qc_parse_hdshk_pkt(struct quic_rx_packet *pkt, struct quic_conn_ctx *
 	end = pkt->data + pkt->len;
 
 	while (pos < end) {
-		if (!qc_parse_frm(&frm, &pos, end, ctx->conn->quic_conn))
+		if (!qc_parse_frm(&frm, pkt, &pos, end, ctx->conn->quic_conn))
 			goto err;
 
 		switch (frm.type) {
@@ -1278,7 +1285,7 @@ static int qc_parse_hdshk_pkt(struct quic_rx_packet *pkt, struct quic_conn_ctx *
 				cf.len = frm.crypto.len;
 				if (SSL_provide_quic_data(ctx->ssl, SSL_quic_read_level(ctx->ssl),
 										  frm.crypto.data, frm.crypto.len) != 1) {
-					TRACE_PROTO("SSL_provide_quic_data() error",
+					TRACE_DEVEL("SSL_provide_quic_data() error",
 								QUIC_EV_CONN_PRSHPKT, ctx->conn, pkt, &cf, ctx->ssl);
 				}
 				else {
@@ -1292,8 +1299,8 @@ static int qc_parse_hdshk_pkt(struct quic_rx_packet *pkt, struct quic_conn_ctx *
 			break;
 		case QUIC_FT_PADDING:
 			if (pos != end) {
-				QDPRINTF("Wrong frame (remainging: %ld padding len: %lu)\n",
-				         end - pos, frm.padding.len);
+				TRACE_DEVEL("wrong frame", QUIC_EV_CONN_PRSHPKT, pkt);
+				goto err;
 			}
 			break;
 		case QUIC_FT_ACK:
@@ -1306,6 +1313,12 @@ static int qc_parse_hdshk_pkt(struct quic_rx_packet *pkt, struct quic_conn_ctx *
 			pkt->flags |= QUIC_FL_RX_PACKET_ACK_ELICITING;
 			break;
 		case QUIC_FT_CONNECTION_CLOSE:
+		case QUIC_FT_CONNECTION_CLOSE_APP:
+			break;
+		case QUIC_FT_NEW_CONNECTION_ID:
+		case QUIC_FT_STREAM_A:
+		case QUIC_FT_STREAM_B:
+			pkt->flags |= QUIC_FL_RX_PACKET_ACK_ELICITING;
 			break;
 		default:
 			goto err;
@@ -1560,71 +1573,6 @@ int quic_update_ack_ranges_list(struct quic_ack_ranges *ack_ranges, int64_t pn)
 }
 
 /*
- * Parse all the frames of <qpkt> QUIC packet from <ctx> I/O connection handler context
- * at <qel> encryption level.
- * Return 1 if succeeded, 0 if not.
- */
-int qc_parse_apkt(struct quic_rx_packet *qpkt, struct quic_conn_ctx *ctx)
-{
-	struct quic_frame frm;
-	const unsigned char *pos, *end;
-	struct quic_enc_level *qel;
-
-	TRACE_ENTER(QUIC_EV_CONN_PRSAPKT, ctx->conn);
-	qel = &ctx->conn->quic_conn->enc_levels[QUIC_TLS_ENC_LEVEL_APP];
-	/* Skip the AAD */
-	pos = qpkt->data + qpkt->aad_len;
-	end = qpkt->data + qpkt->len;
-
-	while (pos < end) {
-		if (!qc_parse_frm(&frm, &pos, end, ctx->conn->quic_conn))
-			goto err;
-
-		switch (frm.type) {
-			case QUIC_FT_CRYPTO:
-				qpkt->flags |= QUIC_FL_RX_PACKET_ACK_ELICITING;
-				break;
-
-			case QUIC_FT_PADDING:
-				/* This frame must be the last found in the packet. */
-				if (pos != end) {
-					QDPRINTF("Wrong frame! (%ld len: %lu)\n", end - pos, frm.padding.len);
-					goto err;
-				}
-				break;
-
-			case QUIC_FT_ACK:
-				if (!qc_parse_ack_frm(&frm, ctx, qel, &pos, end))
-					goto err;
-
-				break;
-
-			case QUIC_FT_PING:
-				qpkt->flags |= QUIC_FL_RX_PACKET_ACK_ELICITING;
-				break;
-
-			case QUIC_FT_CONNECTION_CLOSE:
-			case QUIC_FT_CONNECTION_CLOSE_APP:
-				break;
-			case QUIC_FT_NEW_CONNECTION_ID:
-			case QUIC_FT_STREAM_A:
-			case QUIC_FT_STREAM_B:
-				qpkt->flags |= QUIC_FL_RX_PACKET_ACK_ELICITING;
-				break;
-			default:
-				goto err;
-		}
-	}
-
-	TRACE_LEAVE(QUIC_EV_CONN_PRSAPKT, ctx->conn);
-	return 1;
-
- err:
-	TRACE_DEVEL("leaving in error", QUIC_EV_CONN_PRSAPKT, ctx->conn);
-	return 0;
-}
-
-/*
  * Remove the header protection of packets at <el> encryption level.
  * Always succeeds.
  */
@@ -1717,8 +1665,7 @@ static inline int qc_treat_rx_pkts(struct quic_enc_level *el, struct quic_conn_c
 			int drop;
 
 			drop = 0;
-			if ((pkt->long_header && !qc_parse_hdshk_pkt(pkt, ctx, el)) ||
-				(!pkt->long_header && !qc_parse_apkt(pkt, ctx)))
+			if (!qc_parse_pkt_frms(pkt, ctx, el))
 				drop = 1;
 
 			if (drop) {
@@ -1857,37 +1804,37 @@ static int qc_do_hdshk(struct quic_conn_ctx *ctx)
 static int quic_treat_packets(struct quic_conn_ctx *ctx)
 {
 	struct quic_conn *quic_conn;
-	struct quic_enc_level *enc_level;
+	struct quic_enc_level *qel;
 	struct quic_tls_ctx *tls_ctx;
 	struct eb_root *rx_qpkts;
 	struct quic_rx_packet *qpkt;
 	struct eb64_node *qpkt_node;
 
 	quic_conn = ctx->conn->quic_conn;
-	enc_level = &quic_conn->enc_levels[QUIC_TLS_ENC_LEVEL_APP];
-	if (eb_is_empty(&enc_level->rx.pkts)) {
+	qel = &quic_conn->enc_levels[QUIC_TLS_ENC_LEVEL_APP];
+	if (eb_is_empty(&qel->rx.pkts)) {
 		QDPRINTF("empty tree for APP level encryption\n");
-		enc_level = &quic_conn->enc_levels[QUIC_TLS_ENC_LEVEL_HANDSHAKE];
+		qel = &quic_conn->enc_levels[QUIC_TLS_ENC_LEVEL_HANDSHAKE];
 	}
-	tls_ctx = &enc_level->tls_ctx;
-	rx_qpkts = &enc_level->rx.pkts;
+	tls_ctx = &qel->tls_ctx;
+	rx_qpkts = &qel->rx.pkts;
 
 	qpkt_node = eb64_first(rx_qpkts);
 	while (qpkt_node) {
 		qpkt = eb64_entry(&qpkt_node->node, struct quic_rx_packet, pn_node);
 		if (!qc_pkt_decrypt(qpkt, tls_ctx)) {
 			/* Drop the packet */
-			QDPRINTF( "packet #%lu long? %d dropped\n", qpkt->pn, !!qpkt->long_header);
+			QDPRINTF( "packet #%lu long? %d dropped\n", qpkt->pn, qc_pkt_long(qpkt));
 			qpkt_node = eb64_next(qpkt_node);
 			eb64_delete(&qpkt->pn_node);
 			pool_free(pool_head_quic_rx_packet, qpkt);
 			continue;
 		}
 
-		if (!qc_parse_apkt(qpkt, ctx)) {
+		if (!qc_parse_pkt_frms(qpkt, ctx, qel)) {
 			QDPRINTF( "Could not parse the packet frames\n");
 			/* Drop the packet */
-			QDPRINTF( "packet #%lu long? %d dropped\n", qpkt->pn, !!qpkt->long_header);
+			QDPRINTF( "packet #%lu long? %d dropped\n", qpkt->pn, qc_pkt_long(qpkt));
 			qpkt_node = eb64_next(qpkt_node);
 			eb64_delete(&qpkt->pn_node);
 			pool_free(pool_head_quic_rx_packet, qpkt);
@@ -1895,13 +1842,13 @@ static int quic_treat_packets(struct quic_conn_ctx *ctx)
 		}
 
 		if (qpkt->flags & QUIC_FL_RX_PACKET_ACK_ELICITING) {
-			enc_level->pktns->rx.nb_ack_eliciting++;
-			if (!(enc_level->pktns->rx.nb_ack_eliciting & 1))
-				enc_level->pktns->flags |= QUIC_FL_PKTNS_ACK_REQUIRED;
+			qel->pktns->rx.nb_ack_eliciting++;
+			if (!(qel->pktns->rx.nb_ack_eliciting & 1))
+				qel->pktns->flags |= QUIC_FL_PKTNS_ACK_REQUIRED;
 		}
 
 		/* Update the list of ranges to acknowledge. */
-		quic_update_ack_ranges_list(&enc_level->pktns->rx.ack_ranges, qpkt->pn);
+		quic_update_ack_ranges_list(&qel->pktns->rx.ack_ranges, qpkt->pn);
 
 		qpkt_node = eb64_next(qpkt_node);
 		eb64_delete(&qpkt->pn_node);
@@ -2690,7 +2637,7 @@ static inline int qc_try_rm_hp(struct quic_rx_packet *qpkt,
 		goto err;
 	}
 
-	tel = qpkt->long_header ?
+	tel = qc_pkt_long(qpkt) ?
 		quic_packet_type_enc_level(qpkt->type) : QUIC_TLS_ENC_LEVEL_APP;
 	qel = &ctx->conn->quic_conn->enc_levels[tel];
 
@@ -2740,6 +2687,24 @@ typedef ssize_t qpkt_read_func(unsigned char **buf,
                                struct sockaddr_storage *saddr,
                                socklen_t *saddrlen);
 
+/*
+ * Parse the header form from <byte0> first byte of <pkt> pacekt to set type.
+ * Also set <*long_header> to 1 if this form is long, 0 if not.
+ */
+static inline void qc_parse_hd_form(struct quic_rx_packet *pkt,
+                                    unsigned char byte0, int *long_header)
+{
+	if (byte0 & QUIC_PACKET_LONG_HEADER_BIT) {
+		pkt->type |=
+			(byte0 >> QUIC_PACKET_TYPE_SHIFT) & QUIC_PACKET_TYPE_BITMASK;
+		*long_header = 1;
+	}
+	else {
+		pkt->type |= QUIC_PACKET_HEADER_SHORT_BITMASK;
+		*long_header = 0;
+	}
+}
+
 static ssize_t qc_srv_pkt_rcv(unsigned char **buf, const unsigned char *end,
                               struct quic_rx_packet *qpkt, void *ctx,
                               struct sockaddr_storage *saddr, socklen_t *saddrlen)
@@ -2751,6 +2716,7 @@ static ssize_t qc_srv_pkt_rcv(unsigned char **buf, const unsigned char *end,
 	struct ebmb_node *node;
 	struct connection *srv_conn;
 	struct quic_conn_ctx *conn_ctx;
+	int long_header;
 
 	conn = NULL;
 	TRACE_ENTER(QUIC_EV_CONN_SPKT);
@@ -2765,10 +2731,8 @@ static ssize_t qc_srv_pkt_rcv(unsigned char **buf, const unsigned char *end,
 	srv_conn = ctx;
 	beg = *buf;
 	/* Header form */
-	qpkt->long_header = **buf & QUIC_PACKET_LONG_HEADER_BIT;
-	/* Packet type XXX does not exist for short headers XXX */
-	qpkt->type = (*(*buf)++ >> QUIC_PACKET_TYPE_SHIFT) & QUIC_PACKET_TYPE_BITMASK;
-	if (qpkt->long_header) {
+	qc_parse_hd_form(qpkt, *(*buf)++, &long_header);
+	if (long_header) {
 		size_t cid_lookup_len;
 
 		if (!quic_packet_read_long_header(buf, end, qpkt))
@@ -2836,7 +2800,7 @@ static ssize_t qc_srv_pkt_rcv(unsigned char **buf, const unsigned char *end,
 	 * Only packets packets with long headers and not RETRY or VERSION as type
 	 * have a length field.
 	 */
-	if (qpkt->long_header && qpkt->type != QUIC_PACKET_TYPE_RETRY && qpkt->version) {
+	if (long_header && qpkt->type != QUIC_PACKET_TYPE_RETRY && qpkt->version) {
 		if (!quic_dec_int(&len, (const unsigned char **)buf, end) || end - *buf < len) {
 			QDPRINTF("Could not decode the packet length or "
 			         "too short packet (%zu, %zu)\n", len, end - *buf);
@@ -2844,7 +2808,7 @@ static ssize_t qc_srv_pkt_rcv(unsigned char **buf, const unsigned char *end,
 		}
 		qpkt->len = len;
 	}
-	else if (!qpkt->long_header) {
+	else if (!long_header) {
 		/* A short packet is the last one of an UDP datagram. */
 		qpkt->len = end - *buf;
 	}
@@ -2879,6 +2843,7 @@ static ssize_t qc_lstnr_pkt_rcv(unsigned char **buf, const unsigned char *end,
 	struct ebmb_node *node;
 	struct listener *l;
 	struct quic_conn_ctx *conn_ctx;
+	int long_header = 0;
 
 	conn = NULL;
 	TRACE_ENTER(QUIC_EV_CONN_LPKT);
@@ -2893,10 +2858,8 @@ static ssize_t qc_lstnr_pkt_rcv(unsigned char **buf, const unsigned char *end,
 	l = ctx;
 	beg = *buf;
 	/* Header form */
-	qpkt->long_header = **buf & QUIC_PACKET_LONG_HEADER_BIT;
-	/* Packet type XXX does not exist for short headers XXX */
-	qpkt->type = (*(*buf)++ >> QUIC_PACKET_TYPE_SHIFT) & QUIC_PACKET_TYPE_BITMASK;
-	if (qpkt->long_header) {
+	qc_parse_hd_form(qpkt, *(*buf)++, &long_header);
+	if (long_header) {
 		size_t cid_lookup_len;
 		unsigned char dcid_len;
 		size_t saddr_len;
@@ -3019,7 +2982,7 @@ static ssize_t qc_lstnr_pkt_rcv(unsigned char **buf, const unsigned char *end,
 	 * Only packets packets with long headers and not RETRY or VERSION as type
 	 * have a length field.
 	 */
-	if (qpkt->long_header && qpkt->type != QUIC_PACKET_TYPE_RETRY && qpkt->version) {
+	if (long_header && qpkt->type != QUIC_PACKET_TYPE_RETRY && qpkt->version) {
 		if (!quic_dec_int(&len, (const unsigned char **)buf, end) || end - *buf < len) {
 			QDPRINTF("Could not decode the packet length or "
 			         "too short packet (%zu, %zu)\n", len, end - *buf);
@@ -3027,7 +2990,7 @@ static ssize_t qc_lstnr_pkt_rcv(unsigned char **buf, const unsigned char *end,
 		}
 		qpkt->len = len;
 	}
-	else if (!qpkt->long_header) {
+	else if (!long_header) {
 		/* A short packet is the last one of an UDP datagram. */
 		qpkt->len = end - *buf;
 	}
@@ -3046,12 +3009,12 @@ static ssize_t qc_lstnr_pkt_rcv(unsigned char **buf, const unsigned char *end,
 	if (conn_ctx)
 		tasklet_wakeup(conn_ctx->wait_event.tasklet);
 
-	TRACE_LEAVE(QUIC_EV_CONN_LPKT, conn ? conn->conn : NULL);
+	TRACE_LEAVE(QUIC_EV_CONN_LPKT, conn ? conn->conn : NULL, qpkt);
 
 	return qpkt->len;
 
  err:
-	TRACE_DEVEL("Leaving in error", QUIC_EV_CONN_ELPKT, conn ? conn->conn : NULL);
+	TRACE_DEVEL("Leaving in error", QUIC_EV_CONN_LPKT|QUIC_EV_CONN_ELPKT, conn ? conn->conn : NULL, qpkt);
 	QDPRINTF("%s failed\n", __func__);
 	return -1;
 }
@@ -3638,7 +3601,7 @@ static ssize_t quic_packets_read(char *buf, size_t len, void *ctx,
 			goto err;
 		}
 
-		QDPRINTF("long header? %d packet type: 0x%02x \n", !!qpkt->long_header, qpkt->type);
+		QDPRINTF("long header? %d packet type: 0x%02x \n", qc_pkt_long(qpkt), qpkt->type);
 	} while (pos < end);
 
 	return pos - (unsigned char *)buf;
