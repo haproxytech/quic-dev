@@ -2823,7 +2823,7 @@ static ssize_t qc_srv_pkt_rcv(unsigned char **buf, const unsigned char *end,
 	if (conn_ctx)
 		tasklet_wakeup(conn_ctx->wait_event.tasklet);
 
-	TRACE_LEAVE(QUIC_EV_CONN_SPKT, conn ? conn->conn : NULL);
+	TRACE_LEAVE(QUIC_EV_CONN_SPKT, conn);
 
 	return qpkt->len;
 
