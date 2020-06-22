@@ -1101,7 +1101,7 @@ static int qc_pkt_decrypt(struct quic_rx_packet *qpkt, struct quic_tls_ctx *tls_
 static inline void qc_treat_acked_tx_frm(struct quic_tx_frm *frm,
                                          struct quic_conn_ctx *ctx)
 {
-	TRACE_PROTO("Removing frame", QUIC_EV_CONN_PRSAFRM, ctx->conn, &frm);
+	TRACE_PROTO("Removing frame", QUIC_EV_CONN_PRSAFRM, ctx->conn, frm);
 	switch (frm->type) {
 	case QUIC_FT_CRYPTO:
 		ctx->conn->quic_conn->ifcdata -= frm->crypto.len;
