@@ -258,11 +258,14 @@ struct quic_tx_packet {
 	struct list frms;
 };
 
-/* Structure to store enough information about the TX CRYPTO frames. */
-struct quic_tx_crypto_frm {
+/* Structure to stora enough information about the TX frames. */
+struct quic_tx_frm {
 	struct list list;
-	uint64_t offset;
-	size_t len;
+	unsigned char type;
+	union {
+		struct quic_crypto crypto;
+		struct quic_new_connection_id new_connection_id;
+	};
 };
 
 
