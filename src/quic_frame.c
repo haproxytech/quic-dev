@@ -157,7 +157,7 @@ static int quic_build_ack_frame(unsigned char **buf, const unsigned char *end,
 	struct quic_ack_range *ack_range, *next_ack_range;
 
 	ack_range =  LIST_NEXT(&tx_ack->ack_ranges->list, struct quic_ack_range *, list);
-	TRACE_PROTO("ack range", QUIC_EV_CONN_PRSAFRM, conn->conn, &ack_range->last, &ack_range->first);
+	TRACE_PROTO("ack range", QUIC_EV_CONN_PRSAFRM, conn->conn,, &ack_range->last, &ack_range->first);
 	if (!quic_enc_int(buf, end, ack_range->last) ||
 	    !quic_enc_int(buf, end, tx_ack->ack_delay) ||
 	    !quic_enc_int(buf, end, tx_ack->ack_ranges->sz - 1) ||
@@ -166,7 +166,7 @@ static int quic_build_ack_frame(unsigned char **buf, const unsigned char *end,
 
 	next_ack_range = LIST_NEXT(&ack_range->list, struct quic_ack_range *, list);
 	while (&next_ack_range->list != &tx_ack->ack_ranges->list) {
-		TRACE_PROTO("ack range", QUIC_EV_CONN_PRSAFRM, conn->conn,
+		TRACE_PROTO("ack range", QUIC_EV_CONN_PRSAFRM,, conn->conn,
 		            &next_ack_range->last, &next_ack_range->first);
 		if (!quic_enc_int(buf, end, ack_range->first - next_ack_range->last - 2) ||
 		    !quic_enc_int(buf, end, next_ack_range->last - next_ack_range->first))
