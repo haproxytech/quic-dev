@@ -2672,12 +2672,12 @@ static inline void qc_parse_hd_form(struct quic_rx_packet *pkt,
                                     unsigned char byte0, int *long_header)
 {
 	if (byte0 & QUIC_PACKET_LONG_HEADER_BIT) {
-		pkt->type |=
+		pkt->type =
 			(byte0 >> QUIC_PACKET_TYPE_SHIFT) & QUIC_PACKET_TYPE_BITMASK;
 		*long_header = 1;
 	}
 	else {
-		pkt->type |= QUIC_PACKET_HEADER_SHORT_BITMASK;
+		pkt->type = QUIC_PACKET_TYPE_SHORT;
 		*long_header = 0;
 	}
 }
