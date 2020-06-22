@@ -1001,7 +1001,7 @@ static inline int q_buf_empty(struct q_buf *buf)
 /* Return 1 if <pkt> header form is long, 0 if not. */
 static inline int qc_pkt_long(const struct quic_rx_packet *pkt)
 {
-	return !(pkt->type & QUIC_PACKET_TYPE_SHORT_BITMASK);
+	return pkt->type != QUIC_PACKET_TYPE_SHORT;
 }
 
 /* Increment the reference counter of <pkt> */

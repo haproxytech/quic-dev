@@ -84,7 +84,6 @@
  * own convenience.
  */
 #define QUIC_PACKET_TYPE_SHORT         0x07
-#define QUIC_PACKET_TYPE_SHORT_BITMASK (1 << QUIC_PACKET_TYPE_SHORT)
 
 /* Packet number field length. */
 #define QUIC_PACKET_PNL_BITMASK      0x03
