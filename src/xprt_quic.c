@@ -320,7 +320,7 @@ static void quic_trace(enum trace_level level, uint64_t mask, const struct trace
 
 			if (pkt) {
 				chunk_appendf(&trace_buf, "\n  pkt@%p el=%c",
-				              pkt, quic_packet_type_enc_level_char(pkt->type, qc_pkt_long(pkt)));
+				              pkt, quic_packet_type_enc_level_char(pkt->type));
 				if (pkt->pnl)
 					chunk_appendf(&trace_buf, " pnl=%u pn=%lu", pkt->pnl, pkt->pn);
 				if (pkt->token_len)
@@ -345,7 +345,7 @@ static void quic_trace(enum trace_level level, uint64_t mask, const struct trace
 
 			if (pkt)
 				chunk_appendf(&trace_buf, "\n  pkt@%p el=%c pn=%lu", pkt,
-							  quic_packet_type_enc_level_char(pkt->type, qc_pkt_long(pkt)), pkt->pn);
+							  quic_packet_type_enc_level_char(pkt->type), pkt->pn);
 			if (cf)
 				chunk_appendf(&trace_buf, " cfoff=%lu cflen=%lu",
 							  (unsigned long)cf->offset_node.key, cf->len);

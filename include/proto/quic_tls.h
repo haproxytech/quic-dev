@@ -201,11 +201,8 @@ static inline char quic_enc_level_char(enum quic_tls_enc_level level)
  * Initial -> 'I', ORTT -> '0', Handshake -> 'H', Application -> 'A' and
  * '-' if undefined.
  */
-static inline char quic_packet_type_enc_level_char(int packet_type, int long_header)
+static inline char quic_packet_type_enc_level_char(int packet_type)
 {
-	if (!long_header)
-		return 'A';
-
 	switch (packet_type) {
 	case QUIC_PACKET_TYPE_INITIAL:
 		return 'I';
@@ -213,6 +210,8 @@ static inline char quic_packet_type_enc_level_char(int packet_type, int long_hea
 		return '0';
 	case QUIC_PACKET_TYPE_HANDSHAKE:
 		return 'H';
+	case QUIC_PACKET_TYPE_SHORT:
+		return 'A';
 	default:
 		return '-';
 	}
