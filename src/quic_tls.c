@@ -67,7 +67,7 @@ int quic_hkdf_expand(const EVP_MD *md,
 #else
 int quic_hkdf_extract(const EVP_MD *md,
                       unsigned char *buf, size_t *buflen,
-                      unsigned char *key, size_t keylen,
+                      const unsigned char *key, size_t keylen,
                       unsigned char *salt, size_t saltlen)
 {
     EVP_PKEY_CTX *ctx;
