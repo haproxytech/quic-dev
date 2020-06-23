@@ -1290,8 +1290,7 @@ static inline int qc_provide_cdata(struct quic_enc_level *el,
 	int ret;
 
 	TRACE_ENTER(QUIC_EV_CONN_SSLDATA, ctx->conn);
-	if (SSL_provide_quic_data(ctx->ssl, SSL_quic_read_level(ctx->ssl),
-	                          data, len) != 1) {
+	if (SSL_provide_quic_data(ctx->ssl, el->level, data, len) != 1) {
 		TRACE_PROTO("SSL_provide_quic_data() error",
 					QUIC_EV_CONN_SSLDATA, ctx->conn, pkt, cf, ctx->ssl);
 		goto err;
