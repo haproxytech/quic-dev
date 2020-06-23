@@ -241,6 +241,19 @@ static void quic_trace(enum trace_level level, uint64_t mask, const struct trace
 			chunk_appendf(&trace_buf, " scid");
 			quic_cid_dump(&trace_buf, &qc->scid);
 		}
+
+		if (mask & QUIC_EV_CONN_ADDDATA) {
+			const enum ssl_encryption_level_t *level = a2;
+			const size_t *len = a3;
+
+			if (level) {
+				enum quic_tls_enc_level lvl = ssl_to_quic_enc_level(*level);
+
+				chunk_appendf(&trace_buf, " el=%c", quic_enc_level_char(lvl));
+			}
+			if (len)
+				chunk_appendf(&trace_buf, " len=%zu", *len);
+		}
 		if ((mask & QUIC_EV_CONN_ISEC) && qc) {
 			/* Initial read & write secrets. */
 			enum quic_tls_enc_level level = QUIC_TLS_ENC_LEVEL_INITIAL;
@@ -633,21 +646,25 @@ int ha_quic_add_handshake_data(SSL *ssl, enum ssl_encryption_level_t level,
 	tls_enc_level = ssl_to_quic_enc_level(level);
 	qel = &conn->quic_conn->enc_levels[tls_enc_level];
 
-	if (tls_enc_level != QUIC_TLS_ENC_LEVEL_INITIAL &&
-	    tls_enc_level != QUIC_TLS_ENC_LEVEL_HANDSHAKE)
-		return 0;
+	if (tls_enc_level == -1) {
+		TRACE_PROTO("Wrong encryption level", QUIC_EV_CONN_ADDDATA, conn);
+		goto err;
+	}
 
-	if (!qel->tx.crypto.bufs) {
-		QDPRINTF("Crypto buffers could not be allacated\n");
-		return 0;
-	}
 	if (!quic_crypto_data_cpy(qel, data, len)) {
-		QDPRINTF("Too much crypto data (%zu bytes)\n", len);
-		return 0;
+		TRACE_PROTO("Could not bufferize", QUIC_EV_CONN_ADDDATA, conn);
+		goto err;
 	}
+
+	TRACE_PROTO("CRYPTO data buffered", QUIC_EV_CONN_ADDDATA,
+	            conn, &level, &len);
 
 	TRACE_LEAVE(QUIC_EV_CONN_ADDDATA, conn);
 	return 1;
+
+ err:
+	TRACE_DEVEL("leaving in error", QUIC_EV_CONN_ADDDATA, conn);
+	return 0;
 }
 
 int ha_quic_flush_flight(SSL *ssl)
