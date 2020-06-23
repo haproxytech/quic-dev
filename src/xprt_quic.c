@@ -629,6 +629,7 @@ int ha_quic_add_handshake_data(SSL *ssl, enum ssl_encryption_level_t level,
 	struct quic_enc_level *qel;
 
 	conn = SSL_get_ex_data(ssl, ssl_app_data_index);
+	TRACE_ENTER(QUIC_EV_CONN_ADDDATA, conn);
 	tls_enc_level = ssl_to_quic_enc_level(level);
 	qel = &conn->quic_conn->enc_levels[tls_enc_level];
 
@@ -645,15 +646,18 @@ int ha_quic_add_handshake_data(SSL *ssl, enum ssl_encryption_level_t level,
 		return 0;
 	}
 
+	TRACE_LEAVE(QUIC_EV_CONN_ADDDATA, conn);
 	return 1;
 }
 
 int ha_quic_flush_flight(SSL *ssl)
 {
 	struct connection *conn = SSL_get_ex_data(ssl, ssl_app_data_index);
+	struct quic_conn_ctx *ctx = conn->xprt_ctx;
 
-	QDPRINTF("%s\n", __func__);
-	tasklet_wakeup(((struct quic_conn_ctx *)conn->xprt_ctx)->wait_event.tasklet);
+	TRACE_ENTER(QUIC_EV_CONN_FFLIGHT, conn);
+	tasklet_wakeup(ctx->wait_event.tasklet);
+	TRACE_LEAVE(QUIC_EV_CONN_FFLIGHT, conn);
 
 	return 1;
 }

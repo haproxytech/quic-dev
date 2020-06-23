@@ -65,6 +65,8 @@
 #define           QUIC_EV_CONN_ELRXPKTS  (1ULL << 21)
 #define           QUIC_EV_CONN_SSLDATA   (1ULL << 22)
 #define           QUIC_EV_CONN_RXCDATA   (1ULL << 23)
+#define           QUIC_EV_CONN_ADDDATA   (1ULL << 24)
+#define           QUIC_EV_CONN_FFLIGHT   (1ULL << 25)
 
 #define           QUIC_EV_CONN_ENEW      (1ULL << 32)
 #define           QUIC_EV_CONN_EISEC     (1ULL << 33)
