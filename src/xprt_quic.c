@@ -421,14 +421,14 @@ int ha_quic_set_encryption_secrets(SSL *ssl, enum ssl_encryption_level_t level,
 		&conn->quic_conn->enc_levels[ssl_to_quic_enc_level(level)].tls_ctx;
 	const SSL_CIPHER *cipher = SSL_get_current_cipher(ssl);
 
-	tls_ctx->aead = tls_aead(cipher);
-	tls_ctx->md = tls_md(cipher);
-	tls_ctx->hp = tls_hp(cipher);
+	tls_ctx->rx.aead = tls_ctx->tx.aead = tls_aead(cipher);
+	tls_ctx->rx.md   = tls_ctx->tx.md   = tls_md(cipher);
+	tls_ctx->rx.hp   = tls_ctx->tx.hp   = tls_hp(cipher);
 
 	HEXDUMP(read_secret, secret_len, "read_secret (level %d):\n", level);
 	HEXDUMP(write_secret, secret_len, "write_secret:\n");
 
-	if (!quic_tls_derive_keys(tls_ctx->aead, tls_ctx->hp, tls_ctx->md,
+	if (!quic_tls_derive_keys(tls_ctx->rx.aead, tls_ctx->rx.hp, tls_ctx->rx.md,
 	                          tls_ctx->rx.key, sizeof tls_ctx->rx.key,
 	                          tls_ctx->rx.iv, sizeof tls_ctx->rx.iv,
 	                          tls_ctx->rx.hp_key, sizeof tls_ctx->rx.hp_key,
@@ -437,7 +437,7 @@ int ha_quic_set_encryption_secrets(SSL *ssl, enum ssl_encryption_level_t level,
 		return 0;
 	}
 
-	if (!quic_tls_derive_keys(tls_ctx->aead, tls_ctx->hp, tls_ctx->md,
+	if (!quic_tls_derive_keys(tls_ctx->tx.aead, tls_ctx->tx.hp, tls_ctx->tx.md,
 	                          tls_ctx->tx.key, sizeof tls_ctx->tx.key,
 	                          tls_ctx->tx.iv, sizeof tls_ctx->tx.iv,
 	                          tls_ctx->tx.hp_key, sizeof tls_ctx->tx.hp_key,
