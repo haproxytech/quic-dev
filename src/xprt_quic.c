@@ -269,7 +269,7 @@ static void quic_trace(enum trace_level level, uint64_t mask, const struct trace
 				quic_tls_keys_hexdump(&trace_buf, secs);
 			}
 		}
-		if ((mask & QUIC_EV_CONN_RSEC)) {
+		if (mask & (QUIC_EV_CONN_RSEC|QUIC_EV_CONN_RWSEC)) {
 			//const long int level = (long int)a2;
 			const enum ssl_encryption_level_t *level = a2;
 			if (level) {
@@ -282,7 +282,7 @@ static void quic_trace(enum trace_level level, uint64_t mask, const struct trace
 				}
 			}
 		}
-		if ((mask & QUIC_EV_CONN_WSEC)) {
+		if (mask & (QUIC_EV_CONN_WSEC|QUIC_EV_CONN_RWSEC)) {
 			const enum ssl_encryption_level_t *level = a2;
 			if (level) {
 				enum quic_tls_enc_level lvl = ssl_to_quic_enc_level(*level);
@@ -421,6 +421,7 @@ int ha_quic_set_encryption_secrets(SSL *ssl, enum ssl_encryption_level_t level,
 		&conn->quic_conn->enc_levels[ssl_to_quic_enc_level(level)].tls_ctx;
 	const SSL_CIPHER *cipher = SSL_get_current_cipher(ssl);
 
+	TRACE_ENTER(QUIC_EV_CONN_RWSEC, conn);
 	tls_ctx->rx.aead = tls_ctx->tx.aead = tls_aead(cipher);
 	tls_ctx->rx.md   = tls_ctx->tx.md   = tls_md(cipher);
 	tls_ctx->rx.hp   = tls_ctx->tx.hp   = tls_hp(cipher);
@@ -433,7 +434,7 @@ int ha_quic_set_encryption_secrets(SSL *ssl, enum ssl_encryption_level_t level,
 	                          tls_ctx->rx.iv, sizeof tls_ctx->rx.iv,
 	                          tls_ctx->rx.hp_key, sizeof tls_ctx->rx.hp_key,
 	                          read_secret, secret_len)) {
-		QDPRINTF("%s: RX key derivation failed\n", __func__);
+		TRACE_DEVEL("RX key derivation failed", QUIC_EV_CONN_RWSEC, conn);
 		return 0;
 	}
 
@@ -442,7 +443,7 @@ int ha_quic_set_encryption_secrets(SSL *ssl, enum ssl_encryption_level_t level,
 	                          tls_ctx->tx.iv, sizeof tls_ctx->tx.iv,
 	                          tls_ctx->tx.hp_key, sizeof tls_ctx->tx.hp_key,
 	                          write_secret, secret_len)) {
-		QDPRINTF("%s: TX key derivation failed\n", __func__);
+		TRACE_DEVEL("TX key derivation failed", QUIC_EV_CONN_RWSEC, conn);
 		return 0;
 	}
 
@@ -458,6 +459,7 @@ int ha_quic_set_encryption_secrets(SSL *ssl, enum ssl_encryption_level_t level,
 		if (!quic_transport_params_decode(tp, 1, buf, buf + buflen))
 			return 0;
 	}
+	TRACE_LEAVE(QUIC_EV_CONN_RWSEC, conn);
 
 	return 1;
 }
