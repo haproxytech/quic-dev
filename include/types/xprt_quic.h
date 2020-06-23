@@ -23,6 +23,7 @@
 #define _TYPES_XPRT_QUIC_H
 
 #include <sys/socket.h>
+#include <openssl/ssl.h>
 
 #include <common/mini-clist.h>
 
@@ -301,6 +302,7 @@ struct q_buf {
 };
 
 struct quic_enc_level {
+	enum ssl_encryption_level_t level;
 	struct quic_tls_ctx tls_ctx;
 	struct {
 		/* The packets received by the listener I/O handler

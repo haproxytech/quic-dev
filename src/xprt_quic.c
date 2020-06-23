@@ -1930,11 +1930,17 @@ static void quic_conn_enc_level_uninit(struct quic_enc_level *qel)
 }
 
 /*
- * Initialize <qel> QUIC TLS encryption level, allocating everything needed.
+ * Initialize QUIC TLS encryption level with <level<> as level for <qc> QUIC
+ * connetion allocating everything needed.
  * Returns 1 if succeeded, 0 if not.
  */
-static int quic_conn_enc_level_init(struct quic_enc_level *qel)
+static int quic_conn_enc_level_init(struct quic_conn *qc,
+                                    enum quic_tls_enc_level level)
 {
+	struct quic_enc_level *qel;
+
+	qel = &qc->enc_levels[level];
+	qel->level = quic_to_ssl_enc_level(level);
 	qel->tls_ctx.rx.aead = qel->tls_ctx.tx.aead = NULL;
 	qel->tls_ctx.rx.md   = qel->tls_ctx.tx.md = NULL;
 	qel->tls_ctx.rx.hp   = qel->tls_ctx.tx.hp = NULL;
@@ -2109,7 +2115,7 @@ static int qc_new_conn_init(struct quic_conn *conn,
 	}
 	/* QUIC encryption level context initialization. */
 	for (i = 0; i < QUIC_TLS_ENC_LEVEL_MAX; i++) {
-		if (!quic_conn_enc_level_init(&conn->enc_levels[i]))
+		if (!quic_conn_enc_level_init(conn, i))
 			goto err;
 		/* Initialize the packet number space. */
 		conn->enc_levels[i].pktns = &conn->pktns[quic_tls_pktns(i)];

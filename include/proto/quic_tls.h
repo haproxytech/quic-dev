@@ -115,8 +115,8 @@ static inline const EVP_CIPHER *tls_hp(const SSL_CIPHER *cipher)
 
 }
 
-/* These two following functions map TLS implementation encryption level to ours */
-static inline enum quic_tls_enc_level ssl_to_quic_enc_level(int level)
+/* These following functions map TLS implementation encryption level to ours */
+static inline enum quic_tls_enc_level ssl_to_quic_enc_level(enum ssl_encryption_level_t level)
 {
 	switch (level) {
 	case ssl_encryption_initial:
@@ -127,6 +127,23 @@ static inline enum quic_tls_enc_level ssl_to_quic_enc_level(int level)
 		return QUIC_TLS_ENC_LEVEL_HANDSHAKE;
 	case ssl_encryption_application:
 		return QUIC_TLS_ENC_LEVEL_APP;
+	default:
+		return -1;
+	}
+}
+
+/* These two following functions map our encryption level to the TLS implementation ones. */
+static inline enum quic_tls_enc_level quic_to_ssl_enc_level(enum quic_tls_enc_level level)
+{
+	switch (level) {
+	case QUIC_TLS_ENC_LEVEL_INITIAL:
+		return ssl_encryption_initial;
+	case QUIC_TLS_ENC_LEVEL_EARLY_DATA:
+		return ssl_encryption_early_data;
+	case QUIC_TLS_ENC_LEVEL_HANDSHAKE:
+		return ssl_encryption_handshake;
+	case QUIC_TLS_ENC_LEVEL_APP:
+		return ssl_encryption_application;
 	default:
 		return -1;
 	}
