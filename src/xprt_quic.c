@@ -1291,8 +1291,6 @@ static inline int qc_provide_cdata(struct quic_enc_level *el,
                                    struct quic_rx_packet *pkt,
                                    struct quic_rx_crypto_frm *cf)
 {
-	int ret;
-
 	TRACE_ENTER(QUIC_EV_CONN_SSLDATA, ctx->conn);
 	if (SSL_provide_quic_data(ctx->ssl, el->level, data, len) != 1) {
 		TRACE_PROTO("SSL_provide_quic_data() error",
@@ -1303,32 +1301,6 @@ static inline int qc_provide_cdata(struct quic_enc_level *el,
 	el->rx.crypto.offset += len;
 	TRACE_PROTO("in order CRYPTO data",
 	            QUIC_EV_CONN_SSLDATA, ctx->conn,, cf, ctx->ssl);
-
-	if (ctx->conn->flags & CO_FL_SSL_WAIT_HS) {
-		ret = SSL_do_handshake(ctx->ssl);
-		if (ret != 1) {
-			ret = SSL_get_error(ctx->ssl, ret);
-			if (ret == SSL_ERROR_WANT_READ || ret == SSL_ERROR_WANT_WRITE)
-				goto out;
-
-			TRACE_DEVEL("SSL handshake error",
-						QUIC_EV_CONN_SSLDATA, ctx->conn, pkt, cf, ctx->ssl);
-			goto err;
-		}
-		TRACE_DEVEL("SSL handshake OK", QUIC_EV_CONN_SSLDATA, ctx->conn);
-		ctx->conn->flags &= ~CO_FL_SSL_WAIT_HS;
-	}
-
-	ret = SSL_process_quic_post_handshake(ctx->ssl);
-	if (ret != 1) {
-		TRACE_DEVEL("SSL post handshake error",
-		            QUIC_EV_CONN_SSLDATA, ctx->conn, pkt, cf, ctx->ssl);
-		goto err;
-	}
-
-	TRACE_DEVEL("SSL post handshake succeeded",
-	            QUIC_EV_CONN_HDSHK, ctx->conn, &ctx->state);
- out:
 	TRACE_LEAVE(QUIC_EV_CONN_SSLDATA, ctx->conn);
 	return 1;
 
@@ -1850,6 +1822,31 @@ static int qc_do_hdshk(struct quic_conn_ctx *ctx)
 		goto next_level;
 	}
 
+	if (ctx->conn->flags & CO_FL_SSL_WAIT_HS) {
+		int err;
+
+		err = SSL_do_handshake(ctx->ssl);
+		if (err != 1) {
+			err = SSL_get_error(ctx->ssl, err);
+			if (err == SSL_ERROR_WANT_READ || err == SSL_ERROR_WANT_WRITE)
+				goto out;
+
+			TRACE_DEVEL("SSL handshake error",
+						QUIC_EV_CONN_HDSHK, ctx->conn, &ctx->state, &err);
+			goto err;
+		}
+		TRACE_DEVEL("SSL handshake OK", QUIC_EV_CONN_HDSHK, ctx->conn);
+		ctx->conn->flags &= ~CO_FL_SSL_WAIT_HS;
+	}
+
+	if (SSL_process_quic_post_handshake(ctx->ssl) != 1) {
+		TRACE_DEVEL("SSL post handshake error",
+		            QUIC_EV_CONN_HDSHK, ctx->conn, &ctx->state);
+		goto err;
+	}
+
+	TRACE_DEVEL("SSL post handshake succeeded",
+	            QUIC_EV_CONN_HDSHK, ctx->conn, &ctx->state);
 	/* If the handshake has not been completed -> out! */
 	if (ctx->conn->flags & CO_FL_SSL_WAIT_HS)
 		goto out;
