@@ -338,7 +338,7 @@ static void quic_trace(enum trace_level level, uint64_t mask, const struct trace
 			}
 		}
 
-		if (mask & (QUIC_EV_CONN_ELRXPKTS|QUIC_EV_CONN_PRSHPKT)) {
+		if (mask & (QUIC_EV_CONN_ELRXPKTS|QUIC_EV_CONN_PRSHPKT|QUIC_EV_CONN_SSLDATA)) {
 			const struct quic_rx_packet *pkt = a2;
 			const struct quic_rx_crypto_frm *cf = a3;
 			const SSL *ssl = a4;
@@ -1276,6 +1276,65 @@ static inline int qc_parse_ack_frm(struct quic_frame *frm, struct quic_conn_ctx 
 }
 
 /*
+ * Provide CRYPTO data to the TLS stack found at <data> with <len> as length
+ * from <qel> encryption level with <ctx> as QUIC connection context.
+ * Remaining parameter are there for debuging purposes.
+ * Return 1 if succeeded, 0 if not.
+ */
+static inline int qc_provide_cdata(struct quic_enc_level *el,
+                                   struct quic_conn_ctx *ctx,
+                                   const unsigned char *data, size_t len,
+                                   struct quic_rx_packet *pkt,
+                                   struct quic_rx_crypto_frm *cf)
+{
+	int ret;
+
+	TRACE_ENTER(QUIC_EV_CONN_SSLDATA, ctx->conn);
+	if (SSL_provide_quic_data(ctx->ssl, SSL_quic_read_level(ctx->ssl),
+	                          data, len) != 1) {
+		TRACE_PROTO("SSL_provide_quic_data() error",
+					QUIC_EV_CONN_SSLDATA, ctx->conn, pkt, cf, ctx->ssl);
+		goto err;
+	}
+
+	el->rx.crypto.offset += len;
+	TRACE_PROTO("in order CRYPTO data",
+	            QUIC_EV_CONN_SSLDATA, ctx->conn,, cf, ctx->ssl);
+
+	if (ctx->conn->flags & CO_FL_SSL_WAIT_HS) {
+		ret = SSL_do_handshake(ctx->ssl);
+		if (ret != 1) {
+			ret = SSL_get_error(ctx->ssl, ret);
+			if (ret == SSL_ERROR_WANT_READ || ret == SSL_ERROR_WANT_WRITE)
+				goto out;
+
+			TRACE_DEVEL("SSL handshake error",
+						QUIC_EV_CONN_SSLDATA, ctx->conn, pkt, cf, ctx->ssl);
+			goto err;
+		}
+		TRACE_DEVEL("SSL handshake OK", QUIC_EV_CONN_SSLDATA, ctx->conn);
+		ctx->conn->flags &= ~CO_FL_SSL_WAIT_HS;
+	}
+
+	ret = SSL_process_quic_post_handshake(ctx->ssl);
+	if (ret != 1) {
+		TRACE_DEVEL("SSL post handshake error",
+		            QUIC_EV_CONN_SSLDATA, ctx->conn, pkt, cf, ctx->ssl);
+		goto err;
+	}
+
+	TRACE_DEVEL("SSL post handshake succeeded",
+	            QUIC_EV_CONN_HDSHK, ctx->conn, &ctx->state);
+ out:
+	TRACE_LEAVE(QUIC_EV_CONN_SSLDATA, ctx->conn);
+	return 1;
+
+ err:
+	TRACE_DEVEL("leaving in error", QUIC_EV_CONN_SSLDATA, ctx->conn);
+	return 0;
+}
+
+/*
  * Parse all the frames of <qpkt> QUIC packet for QUIC connection with <ctx>
  * as I/O handler context and <qel> as encryption level.
  * Returns 1 if succeeded, 0 if failed.
@@ -1320,23 +1379,17 @@ static int qc_parse_pkt_frms(struct quic_rx_packet *pkt, struct quic_conn_ctx *c
 
 				cf.offset_node.key = frm.crypto.offset;
 				cf.len = frm.crypto.len;
-				if (SSL_provide_quic_data(ctx->ssl, SSL_quic_read_level(ctx->ssl),
-										  frm.crypto.data, frm.crypto.len) != 1) {
-					TRACE_DEVEL("SSL_provide_quic_data() error",
-								QUIC_EV_CONN_PRSHPKT, ctx->conn, pkt, &cf, ctx->ssl);
-				}
-				else {
-					TRACE_PROTO("in order CRYPTO data ",
-					            QUIC_EV_CONN_PRSHPKT, ctx->conn,, &cf, ctx->ssl);
-					qel->rx.crypto.offset += frm.crypto.len;
-				}
+				if (!qc_provide_cdata(qel, ctx,
+				                      frm.crypto.data, frm.crypto.len,
+				                      pkt, &cf))
+					goto err;
 			}
 			/* ack-eliciting frame. */
 			pkt->flags |= QUIC_FL_RX_PACKET_ACK_ELICITING;
 			break;
 		case QUIC_FT_PADDING:
 			if (pos != end) {
-				TRACE_DEVEL("wrong frame", QUIC_EV_CONN_PRSHPKT, pkt);
+				TRACE_DEVEL("wrong frame", QUIC_EV_CONN_PRSHPKT, ctx->conn, pkt);
 				goto err;
 			}
 			break;
@@ -1646,11 +1699,12 @@ static inline void qc_rm_hp_pkts(struct quic_enc_level *el, struct quic_conn_ctx
  * Process all the CRYPTO frame at <el> encryption level.
  * Return 1 if succeeded, 0 if not.
  */
-static inline void qc_treat_rx_crypto_frms(struct quic_enc_level *el,
-                                           struct quic_conn_ctx *ctx)
+static inline int qc_treat_rx_crypto_frms(struct quic_enc_level *el,
+                                          struct quic_conn_ctx *ctx)
 {
 	struct eb64_node *node;
 
+	TRACE_ENTER(QUIC_EV_CONN_RXCDATA, ctx->conn);
 	node = eb64_first(&el->rx.crypto.frms);
 	while (node) {
 		struct quic_rx_crypto_frm *cf;
@@ -1660,21 +1714,21 @@ static inline void qc_treat_rx_crypto_frms(struct quic_enc_level *el,
 			break;
 
 		HEXDUMP(cf->data, cf->len, "CRYPTO frame:\n");
-		if (SSL_provide_quic_data(ctx->ssl, SSL_quic_read_level(ctx->ssl),
-								  cf->data, cf->len) != 1) {
-			TRACE_PROTO("SSL_provide_quic_data() error",
-						QUIC_EV_CONN_ELRXPKTS, ctx->conn,, cf, ctx->ssl);
-		}
-		else {
-			TRACE_PROTO("in order CRYPTO data ",
-						QUIC_EV_CONN_ELRXPKTS, ctx->conn,, cf, ctx->ssl);
-			el->rx.crypto.offset += cf->len;
-		}
+		if (!qc_provide_cdata(el, ctx, cf->data, cf->len, cf->pkt, cf))
+			goto err;
+
 		node = eb64_next(node);
 		quic_rx_packet_refdec(cf->pkt);
 		eb64_delete(&cf->offset_node);
 		pool_free(pool_head_quic_rx_crypto_frm, cf);
 	}
+
+	TRACE_LEAVE(QUIC_EV_CONN_RXCDATA, ctx->conn);
+	return 1;
+
+ err:
+	TRACE_DEVEL("leaving in error", QUIC_EV_CONN_RXCDATA, ctx->conn);
+	return 0;
 }
 
 /*
@@ -1730,7 +1784,8 @@ static inline int qc_treat_rx_pkts(struct quic_enc_level *el, struct quic_conn_c
 		free_quic_rx_packet(pkt);
 	}
 
-	qc_treat_rx_crypto_frms(el, ctx);
+	if (!qc_treat_rx_crypto_frms(el, ctx))
+		goto err;
 
 	TRACE_LEAVE(QUIC_EV_CONN_ELRXPKTS, ctx->conn);
 	return 1;
@@ -1751,7 +1806,6 @@ static int qc_do_hdshk(struct quic_conn_ctx *ctx)
 	enum quic_tls_enc_level tel, next_tel;
 	struct quic_enc_level *enc_level, *next_enc_level;
 	struct quic_tls_ctx *tls_ctx;
-	int ret;
 
 	TRACE_ENTER(QUIC_EV_CONN_HDSHK, ctx->conn, &ctx->state);
 
@@ -1793,31 +1847,9 @@ static int qc_do_hdshk(struct quic_conn_ctx *ctx)
 		goto next_level;
 	}
 
-	ret = SSL_do_handshake(ctx->ssl);
-	if (ret != 1) {
-		ret = SSL_get_error(ctx->ssl, ret);
-		if (ret == SSL_ERROR_WANT_READ || ret == SSL_ERROR_WANT_WRITE)
-			goto out;
-
-		TRACE_DEVEL("SSL handshake error", QUIC_EV_CONN_HDSHK, ctx->conn, &ctx->state, &ret);
-		goto err;
-	}
-
-	TRACE_DEVEL("SSL handshake OK", QUIC_EV_CONN_HDSHK, ctx->conn, &ctx->state);
-
-	if (ctx->state == QUIC_HS_ST_SERVER_HANDSHAKE ||
-	    ctx->state == QUIC_HS_ST_CLIENT_HANDSHAKE)
-		ctx->conn->flags &= ~CO_FL_SSL_WAIT_HS;
-
-	ret = SSL_process_quic_post_handshake(ctx->ssl);
-	if (ret != 1) {
-		TRACE_DEVEL("SSL post handshake error",
-		            QUIC_EV_CONN_HDSHK, ctx->conn, &ctx->state);
-		goto err;
-	}
-
-	TRACE_DEVEL("SSL post handshake succeeded",
-	            QUIC_EV_CONN_HDSHK, ctx->conn, &ctx->state);
+	/* If the handshake has not been completed -> out! */
+	if (ctx->conn->flags & CO_FL_SSL_WAIT_HS)
+		goto out;
 
 	if (!quic_build_post_handshake_frames(quic_conn) ||
 	    !qc_prep_phdshk_pkts(quic_conn) ||

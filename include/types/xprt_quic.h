@@ -62,6 +62,8 @@
 #define           QUIC_EV_CONN_TRMHP     (1ULL << 19)
 #define           QUIC_EV_CONN_ELRMHP    (1ULL << 20)
 #define           QUIC_EV_CONN_ELRXPKTS  (1ULL << 21)
+#define           QUIC_EV_CONN_SSLDATA   (1ULL << 22)
+#define           QUIC_EV_CONN_RXCDATA   (1ULL << 23)
 
 #define           QUIC_EV_CONN_ENEW      (1ULL << 32)
 #define           QUIC_EV_CONN_EISEC     (1ULL << 33)
