@@ -323,7 +323,7 @@ static void quic_trace(enum trace_level level, uint64_t mask, const struct trace
 			if (state)
 				chunk_appendf(&trace_buf, " state=%s", quic_hdshk_state_str(*state));
 			if (err)
-				chunk_appendf(&trace_buf, " err=%ld", *err);
+				chunk_appendf(&trace_buf, " err=0x%lx", *err);
 		}
 
 		if (mask & (QUIC_EV_CONN_TRMHP|QUIC_EV_CONN_ELRMHP)) {
@@ -1798,6 +1798,7 @@ static inline int qc_treat_rx_pkts(struct quic_enc_level *el, struct quic_conn_c
  */
 static int qc_do_hdshk(struct quic_conn_ctx *ctx)
 {
+	int err;
 	struct quic_conn *quic_conn;
 	enum quic_tls_enc_level tel, next_tel;
 	struct quic_enc_level *enc_level, *next_enc_level;
@@ -1844,8 +1845,6 @@ static int qc_do_hdshk(struct quic_conn_ctx *ctx)
 	}
 
 	if (ctx->conn->flags & CO_FL_SSL_WAIT_HS) {
-		int err;
-
 		err = SSL_do_handshake(ctx->ssl);
 		if (err != 1) {
 			err = SSL_get_error(ctx->ssl, err);
@@ -1856,16 +1855,23 @@ static int qc_do_hdshk(struct quic_conn_ctx *ctx)
 						QUIC_EV_CONN_HDSHK, ctx->conn, &ctx->state, &err);
 			goto err;
 		}
+
 		TRACE_PROTO("SSL handshake OK", QUIC_EV_CONN_HDSHK, ctx->conn, &ctx->state);
 		ctx->conn->flags &= ~CO_FL_SSL_WAIT_HS;
-	}
-	else  if (SSL_process_quic_post_handshake(ctx->ssl) != 1) {
-		TRACE_DEVEL("SSL post handshake error",
-		            QUIC_EV_CONN_HDSHK, ctx->conn, &ctx->state);
-		goto err;
+	} else {
+		err = SSL_process_quic_post_handshake(ctx->ssl);
+		if (err != 1) {
+			err = SSL_get_error(ctx->ssl, err);
+			if (err == SSL_ERROR_WANT_READ || err == SSL_ERROR_WANT_WRITE)
+				goto out;
+
+			TRACE_DEVEL("SSL post handshake error",
+						QUIC_EV_CONN_HDSHK, ctx->conn, &ctx->state, &err);
+			goto err;
+		}
 
 		TRACE_PROTO("SSL post handshake succeeded",
-					QUIC_EV_CONN_HDSHK, ctx->conn, &ctx->state);
+		            QUIC_EV_CONN_HDSHK, ctx->conn, &ctx->state);
 	}
 
 	/* If the handshake has not been completed -> out! */
