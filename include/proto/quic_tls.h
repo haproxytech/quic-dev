@@ -174,6 +174,45 @@ static inline char *quic_hdshk_state_str(const enum quic_handshake_state state)
 }
 
 /*
+ * Return a human readable string from <err> SSL error (returned from
+ * SSL_get_error())
+ */
+static inline const char *ssl_error_str(int err)
+{
+	switch (err) {
+	case SSL_ERROR_NONE:
+		return "NONE";
+	case SSL_ERROR_SSL:
+		return "SSL";
+	case SSL_ERROR_WANT_READ:
+		return "WANT_READ";
+	case SSL_ERROR_WANT_WRITE:
+		return "WANT_WRITE";
+	case SSL_ERROR_WANT_X509_LOOKUP:
+		return "X509_LOOKUP";
+	case SSL_ERROR_SYSCALL:
+		return "SYSCALL";
+	case SSL_ERROR_ZERO_RETURN:
+		return "ZERO_RETURN";
+	case SSL_ERROR_WANT_CONNECT:
+		return "WANT_CONNECT";
+	case SSL_ERROR_WANT_ACCEPT:
+		return "WANT_ACCEPT";
+#ifndef OPENSSL_IS_BORINGSSL
+	case SSL_ERROR_WANT_ASYNC:
+		return "WANT_ASYNC";
+	case SSL_ERROR_WANT_ASYNC_JOB:
+		return "WANT_ASYNC_JOB";
+	case SSL_ERROR_WANT_CLIENT_HELLO_CB:
+		return "WANT_CLIENT_HELLO_CB";
+#endif
+	default:
+		return "UNKNWON";
+	}
+}
+
+
+/*
  * Return a character identifying the encryption level from <level> QUIC TLS
  * encryption level (for debug purpose).
  * Initial -> 'I', Early Data -> 'E', Handshake -> 'H', Application -> 'A' and
