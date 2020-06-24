@@ -1856,18 +1856,18 @@ static int qc_do_hdshk(struct quic_conn_ctx *ctx)
 						QUIC_EV_CONN_HDSHK, ctx->conn, &ctx->state, &err);
 			goto err;
 		}
-		TRACE_DEVEL("SSL handshake OK", QUIC_EV_CONN_HDSHK, ctx->conn);
+		TRACE_PROTO("SSL handshake OK", QUIC_EV_CONN_HDSHK, ctx->conn, &ctx->state);
 		ctx->conn->flags &= ~CO_FL_SSL_WAIT_HS;
 	}
-
-	if (SSL_process_quic_post_handshake(ctx->ssl) != 1) {
+	else  if (SSL_process_quic_post_handshake(ctx->ssl) != 1) {
 		TRACE_DEVEL("SSL post handshake error",
 		            QUIC_EV_CONN_HDSHK, ctx->conn, &ctx->state);
 		goto err;
+
+		TRACE_PROTO("SSL post handshake succeeded",
+					QUIC_EV_CONN_HDSHK, ctx->conn, &ctx->state);
 	}
 
-	TRACE_DEVEL("SSL post handshake succeeded",
-	            QUIC_EV_CONN_HDSHK, ctx->conn, &ctx->state);
 	/* If the handshake has not been completed -> out! */
 	if (ctx->conn->flags & CO_FL_SSL_WAIT_HS)
 		goto out;
