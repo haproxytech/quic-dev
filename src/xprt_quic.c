@@ -3483,9 +3483,15 @@ static ssize_t qc_do_build_phdshk_apkt(struct q_buf *wbuf,
 	const unsigned char *beg, *end;
 	unsigned char *pos;
 	struct quic_frame *frm, *sfrm;
+	size_t fake_len, max_cdata_len;
 
 	beg = pos = q_buf_getpos(wbuf);
 	end = q_buf_end(wbuf);
+	max_cdata_len = QUIC_CRYPTO_IN_FLIGHT_MAX - conn->ifcdata;
+	if (!LIST_ISEMPTY(&qel->tx.crypto.frms) && !max_cdata_len) {
+		TRACE_DEVEL("ifcdada limit reached", QUIC_EV_CONN_CHPKT, conn->conn);
+		return 0;
+	}
 	/* Packet number length */
 	*pn_len = quic_packet_number_length(pn, qel->pktns->rx.largest_acked_pn);
 	/* Check there is enough room to build this packet (without payload). */
@@ -3500,6 +3506,25 @@ static ssize_t qc_do_build_phdshk_apkt(struct q_buf *wbuf,
 	*buf_pn = pos;
 	/* Packet number encoding. */
 	quic_packet_number_encode(&pos, end, pn, *pn_len);
+
+	fake_len = 0;
+	if (!LIST_ISEMPTY(&qel->tx.crypto.frms) &&
+	    !qc_build_cfrms(pkt, end - pos, &fake_len, max_cdata_len, qel, conn))
+		return -1;
+
+	/* Crypto frame */
+	if (!LIST_ISEMPTY(&pkt->frms)) {
+		struct quic_frame frm = { .type = QUIC_FT_CRYPTO, };
+		struct quic_crypto *crypto = &frm.crypto;
+		struct quic_tx_frm *cf;
+
+		list_for_each_entry(cf, &pkt->frms, list) {
+			crypto->offset = cf->crypto.offset;
+			crypto->len = cf->crypto.len;
+			crypto->qel = qel;
+			qc_build_frm(&pos, end, &frm, conn);
+		}
+	}
 
 	/* Encode a maximum of frames. */
 	list_for_each_entry_safe(frm, sfrm, &conn->tx.frms_to_send, list) {
@@ -3551,8 +3576,9 @@ static ssize_t qc_build_phdshk_apkt(struct q_buf *wbuf, struct quic_conn *qc)
 	pn = qel->pktns->tx.next_pn + 1;
 
 	pkt_len = qc_do_build_phdshk_apkt(wbuf, pkt, pn, &pn_len, &buf_pn, qel, qc);
-	if (pkt_len < 0) {
+	if (pkt_len <= 0) {
 		QDPRINTF("%s returns %zd\n", __func__, pkt_len);
+		free_quic_tx_packet(pkt);
 		return pkt_len;
 	}
 
