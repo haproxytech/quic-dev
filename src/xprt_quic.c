@@ -685,7 +685,10 @@ int ha_quic_flush_flight(SSL *ssl)
 
 int ha_quic_send_alert(SSL *ssl, enum ssl_encryption_level_t level, uint8_t alert)
 {
-	QDPRINTF("%s\n", __func__);
+	struct connection *conn = SSL_get_ex_data(ssl, ssl_app_data_index);
+
+	TRACE_ENTER(QUIC_EV_CONN_SSLALERT, conn);
+	TRACE_LEAVE(QUIC_EV_CONN_SSLALERT, conn);
 	return 1;
 }
 
