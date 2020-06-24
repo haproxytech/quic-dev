@@ -985,10 +985,12 @@ static uint64_t decode_packet_number(uint64_t largest_pn,
 
 
 	candidate_pn = (expected_pn & ~pn_mask) | truncated_pn;
-	if (candidate_pn + pn_hwin <= expected_pn)
+	/* Note that <pn_win> > <pn_hwin>. */
+	if (candidate_pn < QUIC_MAX_PACKET_NUM - pn_win &&
+	    candidate_pn + pn_hwin <= expected_pn)
 	  return candidate_pn + pn_win;
 
-	if (candidate_pn > expected_pn + pn_hwin && candidate_pn > pn_win)
+	if (candidate_pn > expected_pn + pn_hwin && candidate_pn >= pn_win)
 	  return candidate_pn - pn_win;
 
 	return candidate_pn;
