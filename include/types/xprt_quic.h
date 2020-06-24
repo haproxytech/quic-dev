@@ -358,7 +358,7 @@ struct quic_conn {
 	struct quic_cid scid;
 	struct eb_root cids;
 
-	struct quic_enc_level enc_levels[QUIC_TLS_ENC_LEVEL_MAX];
+	struct quic_enc_level els[QUIC_TLS_ENC_LEVEL_MAX];
 
 	struct quic_transport_params rx_tps;
 
