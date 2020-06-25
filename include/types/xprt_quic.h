@@ -69,6 +69,7 @@
 #define           QUIC_EV_CONN_ADDDATA   (1ULL << 25)
 #define           QUIC_EV_CONN_FFLIGHT   (1ULL << 26)
 #define           QUIC_EV_CONN_SSLALERT  (1ULL << 27)
+#define           QUIC_EV_CONN_CPAPKT    (1ULL << 28)
 
 #define           QUIC_EV_CONN_ENEW      (1ULL << 32)
 #define           QUIC_EV_CONN_EISEC     (1ULL << 33)

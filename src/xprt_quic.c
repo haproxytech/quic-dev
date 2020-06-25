@@ -97,6 +97,7 @@ static const struct trace_event quic_trace_events[] = {
 	{ .mask = QUIC_EV_CONN_ADDDATA,  .name = "add_hdshk_data",   .desc = "TLS stack ->add_handshake_data() call"},
 	{ .mask = QUIC_EV_CONN_FFLIGHT,  .name = "flush_flight",     .desc = "TLS stack ->flush_flight() call"},
 	{ .mask = QUIC_EV_CONN_SSLALERT, .name = "send_alert",       .desc = "TLS stack ->send_alert() call"},
+	{ .mask = QUIC_EV_CONN_CPAPKT,   .name = "phdshk_cpakt",     .desc = "clear post handhshake app. packet preparation" },
 
 	{ .mask = QUIC_EV_CONN_ENEW,     .name = "new_conn_err",     .desc = "error on new QUIC connection" },
 	{ .mask = QUIC_EV_CONN_EISEC,    .name = "init_secs_err",    .desc = "error on initial secrets derivation" },
@@ -1922,7 +1923,10 @@ static struct task *quic_conn_io_cb(struct task *t, void *context, unsigned shor
 	else {
 		struct quic_conn *qc = ctx->conn->quic_conn;
 
+		/* XXX TO DO: may fail!!! XXX */
 		qc_treat_rx_pkts(&qc->els[QUIC_TLS_ENC_LEVEL_APP], ctx);
+	    qc_prep_phdshk_pkts(qc);
+	    qc_send_ppkts(ctx);
 	}
 
 	return NULL;
@@ -3506,21 +3510,23 @@ static ssize_t qc_do_build_phdshk_apkt(struct q_buf *wbuf,
 	const unsigned char *beg, *end;
 	unsigned char *pos;
 	struct quic_frame *frm, *sfrm;
-	size_t fake_len, max_cdata_len;
+	struct buffer *ack_buf;
+	size_t fake_len, max_cdata_len, ack_frm_len;
 
+	TRACE_ENTER(QUIC_EV_CONN_CPAPKT, conn->conn);
 	beg = pos = q_buf_getpos(wbuf);
 	end = q_buf_end(wbuf);
 	max_cdata_len = QUIC_CRYPTO_IN_FLIGHT_MAX - conn->ifcdata;
 	if (!LIST_ISEMPTY(&qel->tx.crypto.frms) && !max_cdata_len) {
-		TRACE_DEVEL("ifcdada limit reached", QUIC_EV_CONN_CHPKT, conn->conn);
-		return 0;
+		TRACE_DEVEL("ifcdada limit reached", QUIC_EV_CONN_CPAPKT, conn->conn);
+		goto out;
 	}
 	/* Packet number length */
 	*pn_len = quic_packet_number_length(pn, qel->pktns->rx.largest_acked_pn);
 	/* Check there is enough room to build this packet (without payload). */
 	if (end - pos < QUIC_SHORT_PACKET_MINLEN + sizeof_quic_cid(&conn->dcid) +
 	    *pn_len + QUIC_TLS_TAG_LEN)
-		return -1;
+		goto err;
 
 	/* Reserve enough room at the end of the packet for the AEAD TAG. */
 	end -= QUIC_TLS_TAG_LEN;
@@ -3530,10 +3536,27 @@ static ssize_t qc_do_build_phdshk_apkt(struct q_buf *wbuf,
 	/* Packet number encoding. */
 	quic_packet_number_encode(&pos, end, pn, *pn_len);
 
-	fake_len = 0;
+	/* Build an ACK frame if required. */
+	ack_frm_len = 0;
+	ack_buf = get_trash_chunk();
+	if ((qel->pktns->flags & QUIC_FL_PKTNS_ACK_REQUIRED) &&
+	    !LIST_ISEMPTY(&qel->pktns->rx.ack_ranges.list)) {
+		ack_frm_len = quic_do_build_ack_frame(ack_buf, &qel->pktns->rx.ack_ranges, conn);
+		if (!ack_frm_len)
+			goto err;
+
+		qel->pktns->flags &= ~QUIC_FL_PKTNS_ACK_REQUIRED;
+	}
+
+	if (ack_frm_len) {
+		memcpy(pos, b_orig(ack_buf), ack_frm_len);
+		pos += ack_frm_len;
+	}
+
+	fake_len = ack_frm_len;
 	if (!LIST_ISEMPTY(&qel->tx.crypto.frms) &&
 	    !qc_build_cfrms(pkt, end - pos, &fake_len, max_cdata_len, qel, conn))
-		return -1;
+		goto err;
 
 	/* Crypto frame */
 	if (!LIST_ISEMPTY(&pkt->frms)) {
@@ -3555,8 +3578,7 @@ static ssize_t qc_do_build_phdshk_apkt(struct q_buf *wbuf,
 
 		ppos = pos;
 		if (!qc_build_frm(&ppos, end, frm, conn)) {
-			QDPRINTF("%s: Could not build frame %s\n",
-			         __func__, quic_frame_type_string(frm->type));
+			TRACE_DEVEL("Frames not built", QUIC_EV_CONN_CPAPKT, conn->conn);
 			break;
 		}
 
@@ -3565,7 +3587,13 @@ static ssize_t qc_do_build_phdshk_apkt(struct q_buf *wbuf,
 		pos = ppos;
 	}
 
+ out:
+	TRACE_LEAVE(QUIC_EV_CONN_CPAPKT, conn->conn, (int *)(pos - beg));
 	return pos - beg;
+
+ err:
+	TRACE_DEVEL("leaving in error (buffer full)", QUIC_EV_CONN_CPAPKT, conn->conn);
+	return -1;
 }
 
 /*
@@ -3596,8 +3624,9 @@ static ssize_t qc_build_phdshk_apkt(struct q_buf *wbuf, struct quic_conn *qc)
 	quic_tx_packet_init(pkt);
 	beg = q_buf_getpos(wbuf);
 	qel = &qc->els[QUIC_TLS_ENC_LEVEL_APP];
+	pn_len = 0;
+	buf_pn = NULL;
 	pn = qel->pktns->tx.next_pn + 1;
-
 	pkt_len = qc_do_build_phdshk_apkt(wbuf, pkt, pn, &pn_len, &buf_pn, qel, qc);
 	if (pkt_len <= 0) {
 		QDPRINTF("%s returns %zd\n", __func__, pkt_len);
@@ -3643,11 +3672,21 @@ static ssize_t qc_build_phdshk_apkt(struct q_buf *wbuf, struct quic_conn *qc)
 static int qc_prep_phdshk_pkts(struct quic_conn *qc)
 {
 	struct q_buf *wbuf;
+	struct quic_enc_level *qel;
 
 	TRACE_ENTER(QUIC_EV_CONN_PAPKTS, qc->conn);
 	wbuf = q_wbuf(qc);
-	while (q_buf_empty(wbuf) && !LIST_ISEMPTY(&qc->tx.frms_to_send)) {
+	qel = &qc->els[QUIC_TLS_ENC_LEVEL_APP];
+	while (q_buf_empty(wbuf)) {
 		ssize_t ret;
+
+		if (!(qel->pktns->flags & QUIC_FL_PKTNS_ACK_REQUIRED) &&
+		    (LIST_ISEMPTY(&qel->tx.crypto.frms) ||
+		     qc->ifcdata >= QUIC_CRYPTO_IN_FLIGHT_MAX)) {
+			TRACE_DEVEL("nothing more to do",
+			            QUIC_EV_CONN_PAPKTS, qc->conn);
+			break;
+		}
 
 		ret = qc_build_phdshk_apkt(wbuf, qc);
 		switch (ret) {
