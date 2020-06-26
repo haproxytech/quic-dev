@@ -1613,6 +1613,9 @@ int quic_update_ack_ranges_list(struct quic_ack_ranges *ack_ranges, int64_t pn)
 
 	if (LIST_ISEMPTY(l)) {
 		new_sack = pool_alloc(pool_head_quic_ack_range);
+		if (!new_sack)
+			return 0;
+
 		new_sack->first = new_sack->last = pn;
 		LIST_ADD(l, &new_sack->list);
 		++*sz;
@@ -1626,6 +1629,9 @@ int quic_update_ack_ranges_list(struct quic_ack_ranges *ack_ranges, int64_t pn)
 
 		if (pn > curr->last + 1) {
 			new_sack = pool_alloc(pool_head_quic_ack_range);
+			if (!new_sack)
+				return 0;
+
 			new_sack->first = new_sack->last = pn;
 			if (prev) {
 				/* Insert <new_sack> between <prev> and <curr> */
@@ -1658,6 +1664,9 @@ int quic_update_ack_ranges_list(struct quic_ack_ranges *ack_ranges, int64_t pn)
 		}
 		else if (&next->list == l) {
 			new_sack = pool_alloc(pool_head_quic_ack_range);
+			if (!new_sack)
+				return 0;
+
 			new_sack->first = new_sack->last = pn;
 			LIST_ADDQ(l, &new_sack->list);
 			++*sz;
@@ -1783,7 +1792,12 @@ static inline int qc_treat_rx_pkts(struct quic_enc_level *el, struct quic_conn_c
 					el->pktns->rx.largest_pn = pkt->pn;
 
 				/* Update the list of ranges to acknowledge. */
-				quic_update_ack_ranges_list(&el->pktns->rx.ack_ranges, pkt->pn);
+				if (!quic_update_ack_ranges_list(&el->pktns->rx.ack_ranges, pkt->pn)) {
+					TRACE_DEVEL("Could not update ack range list",
+					            QUIC_EV_CONN_ELRXPKTS, ctx->conn);
+					goto err;
+				}
+
 			}
 		}
 		node = eb64_next(node);
