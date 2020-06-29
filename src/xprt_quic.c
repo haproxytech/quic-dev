@@ -1679,6 +1679,8 @@ int quic_update_ack_ranges_list(struct quic_ack_ranges *ack_ranges, int64_t pn)
 			 * increment by 1 the encoded number of ranges in this list.
 			 */
 			*enc_sz += quic_int_getsize(pn) + 1 + quic_incint_size_diff(*sz);
+			/* Deduce the previous largest number acked. */
+			*enc_sz -= quic_int_getsize(curr->last);
 			if (prev) {
 				/* Insert <new_sack> after <prev>, before <curr>. */
 				new_sack->list.n = &curr->list;
@@ -1701,9 +1703,8 @@ int quic_update_ack_ranges_list(struct quic_ack_ranges *ack_ranges, int64_t pn)
 			break;
 		}
 		else if (curr->last + 1 == pn) {
-			/* Increment the encoded size of ->last and (->last - ->first) by 1. */
-			*enc_sz += quic_incint_size_diff(curr->last) +
-				quic_incint_size_diff(curr->last - curr->first);
+			/* Increment the encoded size of <curr> diff by 1. */
+			*enc_sz += quic_incint_size_diff(curr->last - curr->first);
 			/* Decrement the encoded size of the previous gap by 1 */
 			if (prev)
 				*enc_sz -= quic_decint_size_diff(sack_gap(prev, curr));
@@ -1713,19 +1714,13 @@ int quic_update_ack_ranges_list(struct quic_ack_ranges *ack_ranges, int64_t pn)
 		else if (curr->first == pn + 1) {
 			if (&next->list != l && pn == next->last + 1) {
 				/* Two ranges <curr> and <next> are merged.
-				 * Dedude the encoded size of <curr> except the encoded size
-				 * of curr->last which must stay in place.
-				 */
-				*enc_sz -= quic_int_getsize(curr->last - curr->first) +
-					quic_int_getsize(curr->first);
+				 * Dedude the encoded size of <curr> diff. */
+				*enc_sz -= quic_int_getsize(curr->last - curr->first);
 				/* Deduce the encoded size of the gap between <curr> and <next>. */
 				*enc_sz -= quic_int_getsize(sack_gap(curr, next));
-				/* Deduce the encode size of <next> except the encoded size
-				 * of next->first which must stay in place.
-				 */
-				*enc_sz -= quic_int_getsize(next->last) +
-					quic_int_getsize(next->last - next->first);
-				/* Add the new encoded size difference between curr->last and
+				/* Deduce the encode size of <next> diff. */
+				*enc_sz -= quic_int_getsize(next->last - next->first);
+				/* Add the new encoded size diff between curr->last and
 				 * next->first.
 				 */
 				*enc_sz += quic_int_getsize(curr->last - next->first);
@@ -1739,9 +1734,8 @@ int quic_update_ack_ranges_list(struct quic_ack_ranges *ack_ranges, int64_t pn)
 				--*sz;
 			}
 			else {
-				/* Increment the encoded size of ->first and (->last - ->first) by 1 */
-				*enc_sz += quic_incint_size_diff(curr->first) +
-					quic_incint_size_diff(curr->last - curr->first);
+				/* Increment the encoded size of <curr> diff by 1. */
+				*enc_sz += quic_incint_size_diff(curr->last - curr->first);
 				/* Decrement the encoded size of the next gap by 1. */
 				if (&next->list != l)
 					*enc_sz -= quic_decint_size_diff(sack_gap(curr, next));
@@ -1755,12 +1749,10 @@ int quic_update_ack_ranges_list(struct quic_ack_ranges *ack_ranges, int64_t pn)
 				return 0;
 
 			new_sack->first = new_sack->last = pn;
-			/* Add the size of this new encoded range and possibly
-			 * increment by 1 the encoded number of ranges in this list
-			 * and add the encoded size of the gap between <curr> and <new_sack>.
+			/* We only have to add the encoded size of the gap between <curr>
+			 * and <new_sack> and <new_sack> diff (0).
 			 */
-			*enc_sz += quic_int_getsize(pn) + 1 + quic_incint_size_diff(*sz) +
-				quic_int_getsize(sack_gap(curr, new_sack));
+			*enc_sz += quic_int_getsize(sack_gap(curr, new_sack)) + 1;
 			LIST_ADDQ(l, &new_sack->list);
 			++*sz;
 			break;
