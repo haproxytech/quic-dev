@@ -17,6 +17,8 @@
 #include <stdlib.h>
 #include <openssl/ssl.h>
 
+#include <common/buf.h>
+
 #include <types/quic_tls.h>
 
 void quic_tls_keys_hexdump(struct buffer *buf, struct quic_tls_secrets *secs);
