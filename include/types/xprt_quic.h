@@ -190,6 +190,8 @@ struct quic_ack_ranges {
 	struct list list;
 	/* The number of ACK ranges is this lists */
 	size_t sz;
+	/* The number of bytes required to encode this ACK ranges lists. */
+	size_t enc_sz;
 };
 
 /* Flag the packet number space as requiring an ACK frame to be sent. */

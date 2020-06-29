@@ -276,6 +276,43 @@ static inline size_t quic_int_getsize(uint64_t val)
 }
 
 /*
+ * Return the difference between the encoded length of <val> and the encoded
+ * length of <val+1>.
+ */
+static inline size_t quic_incint_size_diff(uint64_t val)
+{
+	switch (val) {
+	case QUIC_VARINT_1_BYTE_MAX:
+		return 1;
+	case QUIC_VARINT_2_BYTE_MAX:
+		return 2;
+	case QUIC_VARINT_4_BYTE_MAX:
+		return 4;
+	default:
+		return 0;
+	}
+}
+
+/*
+ * Return the difference between the encoded length of <val> and the encoded
+ * length of <val-1>.
+ */
+static inline size_t quic_decint_size_diff(uint64_t val)
+{
+	switch (val) {
+	case QUIC_VARINT_1_BYTE_MAX + 1:
+		return 1;
+	case QUIC_VARINT_2_BYTE_MAX + 1:
+		return 2;
+	case QUIC_VARINT_4_BYTE_MAX + 1:
+		return 4;
+	default:
+		return 0;
+	}
+}
+
+
+/*
  * Returns the maximum value of a QUIC variable-length integer with <sz> as size */
 static inline size_t quic_max_int(size_t sz)
 {
@@ -894,6 +931,7 @@ static inline void quic_pktns_init(struct quic_pktns *pktns)
 	pktns->rx.nb_ack_eliciting = 0;
 	LIST_INIT(&pktns->rx.ack_ranges.list);
 	pktns->rx.ack_ranges.sz = 0;
+	pktns->rx.ack_ranges.enc_sz = 0;
 }
 
 /* CRYPTO data buffer handling functions. */
