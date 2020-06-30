@@ -3383,7 +3383,7 @@ static inline int qc_build_cfrms(struct quic_tx_packet *pkt,
  */
 static ssize_t qc_do_build_hdshk_pkt(struct q_buf *wbuf,
                                      struct quic_tx_packet *pkt, int pkt_type,
-                                     uint64_t pn, size_t *pn_len,
+                                     int64_t pn, size_t *pn_len,
                                      unsigned char **buf_pn,
                                      struct quic_enc_level *qel,
                                      struct quic_conn *conn)
@@ -3602,7 +3602,7 @@ static ssize_t qc_build_hdshk_pkt(struct q_buf *buf, struct quic_conn *qc, int p
  */
 static ssize_t qc_do_build_phdshk_apkt(struct q_buf *wbuf,
                                        struct quic_tx_packet *pkt,
-                                       uint64_t pn, size_t *pn_len,
+                                       int64_t pn, size_t *pn_len,
                                        unsigned char **buf_pn, struct quic_enc_level *qel,
                                        struct quic_conn *conn)
 {
@@ -3706,7 +3706,7 @@ static ssize_t qc_build_phdshk_apkt(struct q_buf *wbuf, struct quic_conn *qc)
 	/* A pointer to the packet number fiel in <buf> */
 	unsigned char *buf_pn;
 	unsigned char *beg, *end, *payload;
-	uint64_t pn;
+	int64_t pn;
 	size_t pn_len, aad_len, payload_len;
 	ssize_t pkt_len;
 	struct quic_tls_ctx *tls_ctx;

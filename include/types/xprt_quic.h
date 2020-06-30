@@ -237,7 +237,7 @@ struct quic_rx_packet {
 	struct quic_cid scid;
 	size_t pn_offset;
 	/* Packet number */
-	uint64_t pn;
+	int64_t pn;
 	/* Packet number length */
 	uint32_t pnl;
 	uint64_t token_len;
