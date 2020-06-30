@@ -648,15 +648,15 @@ int ha_quic_add_handshake_data(SSL *ssl, enum ssl_encryption_level_t level,
                                const uint8_t *data, size_t len)
 {
 	struct connection *conn;
-	enum quic_tls_enc_level tls_enc_level;
+	enum quic_tls_enc_level tel;
 	struct quic_enc_level *qel;
 
 	conn = SSL_get_ex_data(ssl, ssl_app_data_index);
 	TRACE_ENTER(QUIC_EV_CONN_ADDDATA, conn);
-	tls_enc_level = ssl_to_quic_enc_level(level);
-	qel = &conn->quic_conn->els[tls_enc_level];
+	tel = ssl_to_quic_enc_level(level);
+	qel = &conn->quic_conn->els[tel];
 
-	if (tls_enc_level == -1) {
+	if (tel == -1) {
 		TRACE_PROTO("Wrong encryption level", QUIC_EV_CONN_ADDDATA, conn);
 		goto err;
 	}
@@ -1911,7 +1911,7 @@ static int qc_do_hdshk(struct quic_conn_ctx *ctx)
 	int ssl_err;
 	struct quic_conn *quic_conn;
 	enum quic_tls_enc_level tel, next_tel;
-	struct quic_enc_level *enc_level, *next_enc_level;
+	struct quic_enc_level *qel, *next_qel;
 	struct quic_tls_ctx *tls_ctx;
 
 	TRACE_ENTER(QUIC_EV_CONN_HDSHK, ctx->conn, &ctx->state);
@@ -1921,21 +1921,21 @@ static int qc_do_hdshk(struct quic_conn_ctx *ctx)
 	if (!quic_get_tls_enc_levels(&tel, &next_tel, ctx->state))
 		goto err;
 
-	enc_level = &quic_conn->els[tel];
-	next_enc_level = &quic_conn->els[next_tel];
+	qel = &quic_conn->els[tel];
+	next_qel = &quic_conn->els[next_tel];
 
  next_level:
-	tls_ctx = &enc_level->tls_ctx;
+	tls_ctx = &qel->tls_ctx;
 
 	/* If the header protection key for this level has been derived,
 	 * remove the packet header protections.
 	 */
-	if (!LIST_ISEMPTY(&enc_level->rx.pqpkts) &&
+	if (!LIST_ISEMPTY(&qel->rx.pqpkts) &&
 	    (tls_ctx->rx.flags & QUIC_FL_TLS_SECRETS_SET))
-		qc_rm_hp_pkts(enc_level, ctx);
+		qc_rm_hp_pkts(qel, ctx);
 
-	if (!eb_is_empty(&enc_level->rx.pkts) &&
-		!qc_treat_rx_pkts(enc_level, ctx))
+	if (!eb_is_empty(&qel->rx.pkts) &&
+		!qc_treat_rx_pkts(qel, ctx))
 		goto err;
 
 	if (!qc_prep_hdshk_pkts(ctx))
@@ -1947,9 +1947,9 @@ static int qc_do_hdshk(struct quic_conn_ctx *ctx)
 	/*
 	 * Check if there is something to do for the next level.
 	 */
-	if ((next_enc_level->tls_ctx.rx.flags & QUIC_FL_TLS_SECRETS_SET) &&
-	    (!LIST_ISEMPTY(&next_enc_level->rx.pqpkts) || !eb_is_empty(&next_enc_level->rx.pkts))) {
-		enc_level = next_enc_level;
+	if ((next_qel->tls_ctx.rx.flags & QUIC_FL_TLS_SECRETS_SET) &&
+	    (!LIST_ISEMPTY(&next_qel->rx.pqpkts) || !eb_is_empty(&next_qel->rx.pkts))) {
+		qel = next_qel;
 		if (ctx->state == QUIC_HS_ST_CLIENT_INITIAL)
 			ctx->state = QUIC_HS_ST_CLIENT_HANDSHAKE;
 		goto next_level;
