@@ -3789,6 +3789,8 @@ static int qc_prep_phdshk_pkts(struct quic_conn *qc)
 
 		ret = qc_build_phdshk_apkt(wbuf, qc);
 		switch (ret) {
+		case -1:
+			wbuf = q_next_wbuf(qc);
 		case -2:
 			return 0;
 		default:
