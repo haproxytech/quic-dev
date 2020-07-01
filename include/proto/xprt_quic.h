@@ -488,8 +488,9 @@ static inline void quic_packet_number_encode(unsigned char **buf, const unsigned
 		write_n16(*buf, pn);
 		break;
 	case 3:
-		pn = htonl(pn);
-		memcpy(*buf, &pn, pn_len);
+		(*buf)[0] = pn >> 16;
+		(*buf)[1] = pn >> 8;
+		(*buf)[2] = pn;
 		break;
 	case 4:
 		write_n32(*buf, pn);
