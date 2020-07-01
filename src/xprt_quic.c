@@ -1605,6 +1605,38 @@ static inline size_t sack_gap(struct quic_ack_range *p,
 	return p->first - q->last - 2;
 }
 
+
+/*
+ * Remove the last elements of <ack_ranges> list of ack range updating its
+ * encoded size until it goes below <limit>.
+ * Returns 1 if succeded, 0 if not (no more element to remove).
+ */
+static int quic_rm_last_ack_ranges(struct quic_ack_ranges *qars, size_t limit)
+{
+	struct list *l = &qars->list;
+	struct quic_ack_range *last, *prev_last;
+
+	last = LIST_PREV(l, struct quic_ack_range *, list);
+	while (qars->enc_sz > limit) {
+		if (l->n == l)
+			return 0;
+
+		prev_last = LIST_PREV(&last->list, struct quic_ack_range *, list);
+		if (prev_last == last)
+			return 0;
+
+		qars->enc_sz -= quic_int_getsize(last->last - last->first);
+		qars->enc_sz -= quic_int_getsize(sack_gap(prev_last, last));
+		qars->enc_sz -= quic_decint_size_diff(qars->sz);
+		--qars->sz;
+		LIST_DEL(&last->list);
+		pool_free(pool_head_quic_ack_range, last);
+		last = prev_last;
+	}
+
+	return 1;
+}
+
 /*
  * Update <l> list of ACK ranges with <pn> new packet number.
  * Note that this function computes the number of bytes required to encode
