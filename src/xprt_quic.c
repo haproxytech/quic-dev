@@ -3435,6 +3435,7 @@ static ssize_t qc_do_build_hdshk_pkt(struct q_buf *wbuf,
 	struct quic_frame ack_frm = { .type = QUIC_FT_ACK, };
 	struct quic_crypto *crypto = &frm.crypto;
 	size_t ack_frm_len;
+	int64_t largest_acked_pn;
 
 	TRACE_ENTER(QUIC_EV_CONN_CHPKT, conn->conn);
 	beg = pos = q_buf_getpos(wbuf);
@@ -3455,8 +3456,9 @@ static ssize_t qc_do_build_hdshk_pkt(struct q_buf *wbuf,
 
 	/* Reserve enough room at the end of the packet for the AEAD TAG. */
 	end -= QUIC_TLS_TAG_LEN;
+	largest_acked_pn = qel->pktns->rx.largest_acked_pn;
 	/* packet number length */
-	*pn_len = quic_packet_number_length(pn, qel->pktns->rx.largest_acked_pn);
+	*pn_len = quic_packet_number_length(pn, largest_acked_pn);
 
 	quic_build_packet_long_header(&pos, end, pkt_type, *pn_len, conn);
 
@@ -3501,7 +3503,7 @@ static ssize_t qc_do_build_hdshk_pkt(struct q_buf *wbuf,
 	*buf_pn = pos;
 
 	/* Packet number encoding. */
-	quic_packet_number_encode(&pos, end, pn, *pn_len);
+	quic_packet_number_encode(&pos, end, pn - largest_acked_pn - 1, *pn_len);
 
 	if (ack_frm_len)
 		qc_build_frm(&pos, end, &ack_frm, conn);
@@ -3645,6 +3647,7 @@ static ssize_t qc_do_build_phdshk_apkt(struct q_buf *wbuf,
 	struct quic_frame *frm, *sfrm;
 	struct quic_frame ack_frm = { .type = QUIC_FT_ACK, };
 	size_t fake_len, max_cdata_len, ack_frm_len;
+	int64_t largest_acked_pn;
 
 	TRACE_ENTER(QUIC_EV_CONN_CPAPKT, conn->conn);
 	beg = pos = q_buf_getpos(wbuf);
@@ -3654,8 +3657,9 @@ static ssize_t qc_do_build_phdshk_apkt(struct q_buf *wbuf,
 		TRACE_DEVEL("ifcdada limit reached", QUIC_EV_CONN_CPAPKT, conn->conn);
 		goto out;
 	}
+	largest_acked_pn = qel->pktns->rx.largest_acked_pn;
 	/* Packet number length */
-	*pn_len = quic_packet_number_length(pn, qel->pktns->rx.largest_acked_pn);
+	*pn_len = quic_packet_number_length(pn, largest_acked_pn);
 	/* Check there is enough room to build this packet (without payload). */
 	if (end - pos < QUIC_SHORT_PACKET_MINLEN + sizeof_quic_cid(&conn->dcid) +
 	    *pn_len + QUIC_TLS_TAG_LEN)
@@ -3667,7 +3671,7 @@ static ssize_t qc_do_build_phdshk_apkt(struct q_buf *wbuf,
 	/* Packet number field. */
 	*buf_pn = pos;
 	/* Packet number encoding. */
-	quic_packet_number_encode(&pos, end, pn, *pn_len);
+	quic_packet_number_encode(&pos, end, pn - largest_acked_pn - 1, *pn_len);
 
 	/* Build an ACK frame if required. */
 	ack_frm_len = 0;
