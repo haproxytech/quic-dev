@@ -3311,23 +3311,21 @@ static int quic_apply_header_protection(unsigned char *buf, unsigned char *pn, s
 }
 
 /*
- * Build a QUIC ACK frame into <buf> buffer from <qars> list of ack ranges.
- * <qars> MUST not be empty.
- * Return 0 if failed, or the strictly positive length of the ACK frame if not.
+ * Reduce the encoded size of <ack_frm> ACK frame removing the last
+ * ACK ranges if needed to a value below <limit> in bytes.
+ * Return 1 if succeeded, 0 if not.
  */
-static inline ssize_t quic_do_build_ack_frame(struct buffer *buf,
-                                              struct quic_ack_ranges *qars,
-                                              struct quic_conn *conn)
+static int quic_ack_frm_reduce_sz(struct quic_frame *ack_frm, size_t limit)
 {
-	struct quic_frame ack_frm = { .type = QUIC_FT_ACK, };
-	unsigned char *pos = (unsigned char *)b_orig(buf);
+	size_t room, ack_delay_sz;
 
-	ack_frm.tx_ack.ack_delay = 0;
-	ack_frm.tx_ack.ack_ranges = qars;
-	if (!qc_build_frm(&pos, pos + buf->size, &ack_frm, conn))
+	ack_delay_sz = quic_int_getsize(ack_frm->tx_ack.ack_delay);
+	/* A frame is made of 1 byte for the frame type. */
+	room = limit - ack_delay_sz - 1;
+	if (!quic_rm_last_ack_ranges(ack_frm->tx_ack.ack_ranges, room))
 		return 0;
 
-	return pos - (unsigned char *)b_orig(buf);
+	return 1 + ack_delay_sz + ack_frm->tx_ack.ack_ranges->enc_sz;
 }
 
 /*
@@ -3434,9 +3432,9 @@ static ssize_t qc_do_build_hdshk_pkt(struct q_buf *wbuf,
 	 */
 	size_t len, token_fields_len, max_cdata_len, padding_len;
 	struct quic_frame frm = { .type = QUIC_FT_CRYPTO, };
+	struct quic_frame ack_frm = { .type = QUIC_FT_ACK, };
 	struct quic_crypto *crypto = &frm.crypto;
-	ssize_t ack_frm_len;
-	struct buffer *ack_buf;
+	size_t ack_frm_len;
 
 	TRACE_ENTER(QUIC_EV_CONN_CHPKT, conn->conn);
 	beg = pos = q_buf_getpos(wbuf);
@@ -3468,10 +3466,11 @@ static ssize_t qc_do_build_hdshk_pkt(struct q_buf *wbuf,
 
 	/* Build an ACK frame if required. */
 	ack_frm_len = 0;
-	ack_buf = get_trash_chunk();
 	if ((qel->pktns->flags & QUIC_FL_PKTNS_ACK_REQUIRED) &&
 	    !LIST_ISEMPTY(&qel->pktns->rx.ack_ranges.list)) {
-		ack_frm_len = quic_do_build_ack_frame(ack_buf, &qel->pktns->rx.ack_ranges, conn);
+		ack_frm.tx_ack.ack_delay = 0;
+		ack_frm.tx_ack.ack_ranges = &qel->pktns->rx.ack_ranges;
+		ack_frm_len = quic_ack_frm_reduce_sz(&ack_frm, end - pos);
 		if (!ack_frm_len)
 			goto err;
 
@@ -3504,10 +3503,8 @@ static ssize_t qc_do_build_hdshk_pkt(struct q_buf *wbuf,
 	/* Packet number encoding. */
 	quic_packet_number_encode(&pos, end, pn, *pn_len);
 
-	if (ack_frm_len) {
-		memcpy(pos, b_orig(ack_buf), ack_frm_len);
-		pos += ack_frm_len;
-	}
+	if (ack_frm_len)
+		qc_build_frm(&pos, end, &ack_frm, conn);
 
 	/* Crypto frame */
 	if (!LIST_ISEMPTY(&pkt->frms)) {
@@ -3646,7 +3643,7 @@ static ssize_t qc_do_build_phdshk_apkt(struct q_buf *wbuf,
 	const unsigned char *beg, *end;
 	unsigned char *pos;
 	struct quic_frame *frm, *sfrm;
-	struct buffer *ack_buf;
+	struct quic_frame ack_frm = { .type = QUIC_FT_ACK, };
 	size_t fake_len, max_cdata_len, ack_frm_len;
 
 	TRACE_ENTER(QUIC_EV_CONN_CPAPKT, conn->conn);
@@ -3674,25 +3671,27 @@ static ssize_t qc_do_build_phdshk_apkt(struct q_buf *wbuf,
 
 	/* Build an ACK frame if required. */
 	ack_frm_len = 0;
-	ack_buf = get_trash_chunk();
 	if ((qel->pktns->flags & QUIC_FL_PKTNS_ACK_REQUIRED) &&
 	    !LIST_ISEMPTY(&qel->pktns->rx.ack_ranges.list)) {
-		ack_frm_len = quic_do_build_ack_frame(ack_buf, &qel->pktns->rx.ack_ranges, conn);
+		ack_frm.tx_ack.ack_delay = 0;
+		ack_frm.tx_ack.ack_ranges = &qel->pktns->rx.ack_ranges;
+		ack_frm_len = quic_ack_frm_reduce_sz(&ack_frm, end - pos);
 		if (!ack_frm_len)
 			goto err;
 
 		qel->pktns->flags &= ~QUIC_FL_PKTNS_ACK_REQUIRED;
 	}
 
-	if (ack_frm_len) {
-		memcpy(pos, b_orig(ack_buf), ack_frm_len);
-		pos += ack_frm_len;
-	}
+	if (ack_frm_len)
+		qc_build_frm(&pos, end, &ack_frm, conn);
 
 	fake_len = ack_frm_len;
 	if (!LIST_ISEMPTY(&qel->tx.crypto.frms) &&
-	    !qc_build_cfrms(pkt, end - pos, &fake_len, max_cdata_len, qel, conn))
+	    !qc_build_cfrms(pkt, end - pos, &fake_len, max_cdata_len, qel, conn)) {
+		TRACE_DEVEL("some CRYPTO frames could not be built",
+		            QUIC_EV_CONN_CPAPKT, conn->conn);
 		goto err;
+	}
 
 	/* Crypto frame */
 	if (!LIST_ISEMPTY(&pkt->frms)) {
