@@ -1621,7 +1621,7 @@ static inline size_t sack_gap(struct quic_ack_range *p,
  *                 diff1       gap12       diff2
  *
  * To encode the previous list of ranges we must encode integers as follows:
- *          enc(last1),enc(diff1),enc(gap12),enc(last2),enc(diff2)
+ *          enc(last1),enc(diff1),enc(gap12),enc(diff2)
  *  with diff1 = last1 - first1
  *       diff2 = last2 - first2
  *       gap12 = first1 - last2 - 2
