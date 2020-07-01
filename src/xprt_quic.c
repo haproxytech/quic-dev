@@ -1705,9 +1705,14 @@ int quic_update_ack_ranges_list(struct quic_ack_ranges *ack_ranges, int64_t pn)
 		else if (curr->last + 1 == pn) {
 			/* Increment the encoded size of <curr> diff by 1. */
 			*enc_sz += quic_incint_size_diff(curr->last - curr->first);
-			/* Decrement the encoded size of the previous gap by 1 */
-			if (prev)
+			if (prev) {
+				/* Decrement the encoded size of the previous gap by 1. */
 				*enc_sz -= quic_decint_size_diff(sack_gap(prev, curr));
+			}
+			else {
+				/* Increment the encode size of the largest acked packet number. */
+				*enc_sz += quic_incint_size_diff(curr->last);
+			}
 			curr->last = pn;
 			break;
 		}
