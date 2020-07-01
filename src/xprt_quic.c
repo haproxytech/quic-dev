@@ -1763,7 +1763,7 @@ int quic_update_ack_ranges_list(struct quic_ack_ranges *ack_ranges, int64_t pn)
 				*enc_sz += quic_int_getsize(curr->last - next->first);
 				next->last = curr->last;
 				LIST_DEL(&curr->list);
-				free(curr);
+				pool_free(pool_head_quic_ack_range, curr);
 				/* Possibly decrement the encoded size of this list
 				 * which is decremented by 1
 				 */
