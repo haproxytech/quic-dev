@@ -123,19 +123,20 @@
 
 /*
  * Tranport level error codes.
- * (https://tools.ietf.org/pdf/draft-ietf-quic-transport-22.pdf#252)
  */
 #define NO_ERROR                     0x00
 #define INTERNAL_ERROR               0x01
-#define SERVER_BUSY                  0x02
+#define CONNECTION_REFUSED_ERROR     0x02
 #define FLOW_CONTROL_ERROR           0x03
 #define STREAM_LIMIT_ERROR           0x04
 #define STREAM_STATE_ERROR           0x05
 #define FINAL_SIZE_ERROR             0x06
 #define FRAME_ENCODING_ERROR         0x07
 #define TRANSPORT_PARAMETER_ERROR    0x08
+#define CONNECTION_ID_LIMIT_ERROR    0x09
 #define PROTOCOL_VIOLATION           0x0a
-#define INVALID_MIGRATION            0x0c
+#define INVALID_TOKEN                0x0b
+#define APPLICATION_ERROR            0x0c
 #define CRYPTO_BUFFER_EXCEEDED       0x0d
 
 /* XXX TODO: check/complete this remaining part (256 crypto reserved errors). */
