@@ -680,10 +680,8 @@ int ha_quic_add_handshake_data(SSL *ssl, enum ssl_encryption_level_t level,
 int ha_quic_flush_flight(SSL *ssl)
 {
 	struct connection *conn = SSL_get_ex_data(ssl, ssl_app_data_index);
-	struct quic_conn_ctx *ctx = conn->xprt_ctx;
 
 	TRACE_ENTER(QUIC_EV_CONN_FFLIGHT, conn);
-	tasklet_wakeup(ctx->wait_event.tasklet);
 	TRACE_LEAVE(QUIC_EV_CONN_FFLIGHT, conn);
 
 	return 1;
@@ -1323,7 +1321,10 @@ static inline int qc_provide_cdata(struct quic_enc_level *el,
                                    struct quic_rx_packet *pkt,
                                    struct quic_rx_crypto_frm *cf)
 {
+	int ssl_err;
+
 	TRACE_ENTER(QUIC_EV_CONN_SSLDATA, ctx->conn);
+	ssl_err = SSL_ERROR_NONE;
 	if (SSL_provide_quic_data(ctx->ssl, el->level, data, len) != 1) {
 		TRACE_PROTO("SSL_provide_quic_data() error",
 					QUIC_EV_CONN_SSLDATA, ctx->conn, pkt, cf, ctx->ssl);
@@ -1333,6 +1334,44 @@ static inline int qc_provide_cdata(struct quic_enc_level *el,
 	el->rx.crypto.offset += len;
 	TRACE_PROTO("in order CRYPTO data",
 	            QUIC_EV_CONN_SSLDATA, ctx->conn,, cf, ctx->ssl);
+
+	if (ctx->conn->flags & CO_FL_SSL_WAIT_HS) {
+		ssl_err = SSL_do_handshake(ctx->ssl);
+		if (ssl_err != 1) {
+			ssl_err = SSL_get_error(ctx->ssl, ssl_err);
+			if (ssl_err == SSL_ERROR_WANT_READ || ssl_err == SSL_ERROR_WANT_WRITE) {
+				TRACE_PROTO("SSL handshake",
+				            QUIC_EV_CONN_HDSHK, ctx->conn, &ctx->state, &ssl_err);
+				goto out;
+			}
+
+			TRACE_DEVEL("SSL handshake error",
+						QUIC_EV_CONN_HDSHK, ctx->conn, &ctx->state, &ssl_err);
+			goto err;
+		}
+
+		TRACE_PROTO("SSL handshake OK", QUIC_EV_CONN_HDSHK, ctx->conn, &ctx->state);
+		ctx->conn->flags &= ~CO_FL_SSL_WAIT_HS;
+	} else {
+		ssl_err = SSL_process_quic_post_handshake(ctx->ssl);
+		if (ssl_err != 1) {
+			ssl_err = SSL_get_error(ctx->ssl, ssl_err);
+			if (ssl_err == SSL_ERROR_WANT_READ || ssl_err == SSL_ERROR_WANT_WRITE) {
+				TRACE_DEVEL("SSL post handshake",
+				            QUIC_EV_CONN_HDSHK, ctx->conn, &ctx->state, &ssl_err);
+				goto out;
+			}
+
+			TRACE_DEVEL("SSL post handshake error",
+						QUIC_EV_CONN_HDSHK, ctx->conn, &ctx->state, &ssl_err);
+			goto err;
+		}
+
+		TRACE_PROTO("SSL post handshake succeeded",
+		            QUIC_EV_CONN_HDSHK, ctx->conn, &ctx->state);
+	}
+
+ out:
 	TRACE_LEAVE(QUIC_EV_CONN_SSLDATA, ctx->conn);
 	return 1;
 
@@ -1992,42 +2031,6 @@ static int qc_do_hdshk(struct quic_conn_ctx *ctx)
 		goto next_level;
 	}
 
-	if (ctx->conn->flags & CO_FL_SSL_WAIT_HS) {
-		ssl_err = SSL_do_handshake(ctx->ssl);
-		if (ssl_err != 1) {
-			ssl_err = SSL_get_error(ctx->ssl, ssl_err);
-			if (ssl_err == SSL_ERROR_WANT_READ || ssl_err == SSL_ERROR_WANT_WRITE) {
-				TRACE_PROTO("SSL handshake",
-				            QUIC_EV_CONN_HDSHK, ctx->conn, &ctx->state, &ssl_err);
-				goto out;
-			}
-
-			TRACE_DEVEL("SSL handshake error",
-						QUIC_EV_CONN_HDSHK, ctx->conn, &ctx->state);
-			goto err;
-		}
-
-		TRACE_PROTO("SSL handshake OK", QUIC_EV_CONN_HDSHK, ctx->conn, &ctx->state);
-		ctx->conn->flags &= ~CO_FL_SSL_WAIT_HS;
-	} else {
-		ssl_err = SSL_process_quic_post_handshake(ctx->ssl);
-		if (ssl_err != 1) {
-			ssl_err = SSL_get_error(ctx->ssl, ssl_err);
-			if (ssl_err == SSL_ERROR_WANT_READ || ssl_err == SSL_ERROR_WANT_WRITE) {
-				TRACE_DEVEL("SSL post handshake",
-				            QUIC_EV_CONN_HDSHK, ctx->conn, &ctx->state, &ssl_err);
-				goto out;
-			}
-
-			TRACE_DEVEL("SSL post handshake error",
-						QUIC_EV_CONN_HDSHK, ctx->conn, &ctx->state);
-			goto err;
-		}
-
-		TRACE_PROTO("SSL post handshake succeeded",
-		            QUIC_EV_CONN_HDSHK, ctx->conn, &ctx->state);
-	}
-
 	/* If the handshake has not been completed -> out! */
 	if (ctx->conn->flags & CO_FL_SSL_WAIT_HS)
 		goto out;
@@ -2425,7 +2428,9 @@ static int qc_conn_init(struct connection *conn, void **xprt_ctx)
 		struct server *srv = __objt_server(conn->target);
 		unsigned char dcid[QUIC_CID_LEN];
 		struct quic_conn *quic_conn;
+		int ssl_err;
 
+		ssl_err = SSL_ERROR_NONE;
 		if (RAND_bytes(dcid, sizeof dcid) != 1)
 			goto err;
 
@@ -2464,6 +2469,19 @@ static int qc_conn_init(struct connection *conn, void **xprt_ctx)
 		}
 		SSL_set_quic_transport_params(ctx->ssl, quic_conn->enc_params, quic_conn->enc_params_len);
 		SSL_set_connect_state(ctx->ssl);
+		ssl_err = SSL_do_handshake(ctx->ssl);
+		if (ssl_err != 1) {
+			ssl_err = SSL_get_error(ctx->ssl, ssl_err);
+			if (ssl_err == SSL_ERROR_WANT_READ || ssl_err == SSL_ERROR_WANT_WRITE) {
+				TRACE_PROTO("SSL handshake",
+				            QUIC_EV_CONN_HDSHK, ctx->conn, &ctx->state, &ssl_err);
+			}
+			else {
+				TRACE_DEVEL("SSL handshake error",
+							QUIC_EV_CONN_HDSHK, ctx->conn, &ctx->state, &ssl_err);
+				goto err;
+			}
+		}
 	}
 	else if (objt_listener(conn->target)) {
 		/* Listener */
