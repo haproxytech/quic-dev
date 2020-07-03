@@ -28,8 +28,7 @@ unsigned char initial_salt[20] = {
 	0xbe, 0xf9, 0xf5, 0x02,
 };
 
-/*
- * Dump the RX/TX secrets of <ct> QUIC TLS context. */
+/* Dump the RX/TX secrets of <secs> QUIC TLS secrets. */
 void quic_tls_keys_hexdump(struct buffer *buf, struct quic_tls_secrets *secs)
 {
 	int i;
@@ -37,7 +36,7 @@ void quic_tls_keys_hexdump(struct buffer *buf, struct quic_tls_secrets *secs)
 	size_t aead_ivlen = (size_t)EVP_CIPHER_iv_length(secs->aead);
 	size_t hp_len = (size_t)EVP_CIPHER_key_length(secs->hp);
 
-	chunk_appendf(buf, " key=");
+	chunk_appendf(buf, "\n          key=");
 	for (i = 0; i < aead_keylen; i++)
 		chunk_appendf(buf, "%02x", secs->key[i]);
 	chunk_appendf(buf, "\n          iv=");
@@ -46,6 +45,17 @@ void quic_tls_keys_hexdump(struct buffer *buf, struct quic_tls_secrets *secs)
 	chunk_appendf(buf, "\n          hp=");
 	for (i = 0; i < hp_len; i++)
 		chunk_appendf(buf, "%02x", secs->hp_key[i]);
+}
+
+/* Dump <secret> TLS secret. */
+void quic_tls_secret_hexdump(struct buffer *buf,
+                             const unsigned char *secret, size_t secret_len)
+{
+	int i;
+
+	chunk_appendf(buf, " secret=");
+	for (i = 0; i < secret_len; i++)
+		chunk_appendf(buf, "%02x", secret[i]);
 }
 
 #if defined(OPENSSL_IS_BORINGSSL)

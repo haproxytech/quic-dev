@@ -263,42 +263,59 @@ static void quic_trace(enum trace_level level, uint64_t mask, const struct trace
 		if ((mask & QUIC_EV_CONN_ISEC) && qc) {
 			/* Initial read & write secrets. */
 			enum quic_tls_enc_level level = QUIC_TLS_ENC_LEVEL_INITIAL;
+			const unsigned char *rx_sec = a2;
+			const unsigned char *tx_sec = a3;
 
 			secs = &qc->els[level].tls_ctx.rx;
 			if (secs->flags & QUIC_FL_TLS_SECRETS_SET) {
 				chunk_appendf(&trace_buf, "\n  RX el=%c", quic_enc_level_char(level));
+				if (rx_sec)
+					quic_tls_secret_hexdump(&trace_buf, rx_sec, 32);
 				quic_tls_keys_hexdump(&trace_buf, secs);
 			}
 			secs = &qc->els[level].tls_ctx.tx;
 			if (secs->flags & QUIC_FL_TLS_SECRETS_SET) {
 				chunk_appendf(&trace_buf, "\n  TX el=%c", quic_enc_level_char(level));
+				if (tx_sec)
+					quic_tls_secret_hexdump(&trace_buf, tx_sec, 32);
 				quic_tls_keys_hexdump(&trace_buf, secs);
 			}
 		}
 		if (mask & (QUIC_EV_CONN_RSEC|QUIC_EV_CONN_RWSEC)) {
-			//const long int level = (long int)a2;
 			const enum ssl_encryption_level_t *level = a2;
+			const unsigned char *secret = a3;
+			const size_t *secret_len = a4;
+
 			if (level) {
 				enum quic_tls_enc_level lvl = ssl_to_quic_enc_level(*level);
 
-				secs = &qc->els[lvl].tls_ctx.rx;
-				if (secs->flags & QUIC_FL_TLS_SECRETS_SET) {
+				if (secret && secret_len) {
 					chunk_appendf(&trace_buf, "\n  RX el=%c", quic_enc_level_char(lvl));
-					quic_tls_keys_hexdump(&trace_buf, secs);
+					quic_tls_secret_hexdump(&trace_buf, secret, *secret_len);
 				}
+				secs = &qc->els[lvl].tls_ctx.rx;
+				if (secs->flags & QUIC_FL_TLS_SECRETS_SET)
+					quic_tls_keys_hexdump(&trace_buf, secs);
 			}
 		}
+
 		if (mask & (QUIC_EV_CONN_WSEC|QUIC_EV_CONN_RWSEC)) {
 			const enum ssl_encryption_level_t *level = a2;
+			const unsigned char *secret = a3;
+			const size_t *secret_len = a4;
+
 			if (level) {
 				enum quic_tls_enc_level lvl = ssl_to_quic_enc_level(*level);
 
-				secs = &qc->els[lvl].tls_ctx.tx;
-				if (secs->flags & QUIC_FL_TLS_SECRETS_SET) {
+				if (secret && secret_len) {
 					chunk_appendf(&trace_buf, "\n  TX el=%c", quic_enc_level_char(lvl));
-					quic_tls_keys_hexdump(&trace_buf, secs);
+					quic_tls_secret_hexdump(&trace_buf, secret, *secret_len);
 				}
+				secs = &qc->els[lvl].tls_ctx.tx;
+				if (secs->flags & QUIC_FL_TLS_SECRETS_SET)
+					quic_tls_keys_hexdump(&trace_buf, secs);
 			}
+
 		}
 		if (mask & QUIC_EV_CONN_CHPKT) {
 			const long int len = (long int)a2;
@@ -514,7 +531,7 @@ int ha_set_rsec(SSL *ssl, enum ssl_encryption_level_t level,
 	}
 
 	tls_ctx->rx.flags |= QUIC_FL_TLS_SECRETS_SET;
-	TRACE_LEAVE(QUIC_EV_CONN_RSEC, conn, &level);
+	TRACE_LEAVE(QUIC_EV_CONN_RSEC, conn, &level, secret, &secret_len);
 
 	return 1;
 
@@ -549,8 +566,9 @@ int ha_set_wsec(SSL *ssl, enum ssl_encryption_level_t level,
 		TRACE_DEVEL("TX key derivation failed", QUIC_EV_CONN_WSEC, conn);
 		goto err;
 	}
+
 	tls_ctx->tx.flags |= QUIC_FL_TLS_SECRETS_SET;
-	TRACE_LEAVE(QUIC_EV_CONN_WSEC, conn, &level);
+	TRACE_LEAVE(QUIC_EV_CONN_WSEC, conn, &level, secret, &secret_len);
 
 	return 1;
 
@@ -2377,7 +2395,7 @@ static int qc_new_isecs(struct connection *conn,
 		goto err;
 
 	tx_ctx->flags |= QUIC_FL_TLS_SECRETS_SET;
-	TRACE_LEAVE(QUIC_EV_CONN_ISEC, conn);
+	TRACE_LEAVE(QUIC_EV_CONN_ISEC, conn, rx_init_sec, tx_init_sec);
 
 	return 1;
 
