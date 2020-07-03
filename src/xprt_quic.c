@@ -1863,8 +1863,15 @@ static inline void qc_rm_hp_pkts(struct quic_enc_level *el, struct quic_conn_ctx
 {
 	struct quic_tls_ctx *tls_ctx;
 	struct quic_rx_packet *pqpkt, *qqpkt;
+	struct quic_enc_level *app_qel;
 
 	TRACE_ENTER(QUIC_EV_CONN_ELRMHP, ctx->conn);
+	app_qel = &ctx->conn->quic_conn->els[QUIC_TLS_ENC_LEVEL_APP];
+	if (el == app_qel && (ctx->conn->flags & CO_FL_SSL_WAIT_HS)) {
+		TRACE_PROTO("hp not removed (handshake not completed)",
+		            QUIC_EV_CONN_ELRMHP, ctx->conn);
+		goto out;
+	}
 	tls_ctx = &el->tls_ctx;
 	list_for_each_entry_safe(pqpkt, qqpkt, &el->rx.pqpkts, list) {
 		if (!qc_do_rm_hp(pqpkt, tls_ctx, el->pktns->rx.largest_pn,
@@ -2870,11 +2877,16 @@ static inline int qc_try_rm_hp(struct quic_rx_packet *qpkt,
 		goto err;
 	}
 
-	tel = qc_pkt_long(qpkt) ?
-		quic_packet_type_enc_level(qpkt->type) : QUIC_TLS_ENC_LEVEL_APP;
+	tel = quic_packet_type_enc_level(qpkt->type);
+	if (tel == QUIC_TLS_ENC_LEVEL_NONE) {
+		TRACE_DEVEL("Wrong enc. level", QUIC_EV_CONN_TRMHP, ctx->conn);
+		goto err;
+	}
+
 	qel = &ctx->conn->quic_conn->els[tel];
 
-	if (qel->tls_ctx.rx.flags & QUIC_FL_TLS_SECRETS_SET) {
+	if ((qel->tls_ctx.rx.flags & QUIC_FL_TLS_SECRETS_SET) &&
+	    (tel != QUIC_TLS_ENC_LEVEL_APP || !(ctx->conn->flags & CO_FL_SSL_WAIT_HS))) {
 		/*
 		 * Note that the following function enables us to unprotect the packet
 		 * number and its length subsequently used to decrypt the entire
