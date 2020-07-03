@@ -289,10 +289,9 @@ static void quic_trace(enum trace_level level, uint64_t mask, const struct trace
 			if (level) {
 				enum quic_tls_enc_level lvl = ssl_to_quic_enc_level(*level);
 
-				if (secret && secret_len) {
-					chunk_appendf(&trace_buf, "\n  RX el=%c", quic_enc_level_char(lvl));
+				chunk_appendf(&trace_buf, "\n  RX el=%c", quic_enc_level_char(lvl));
+				if (secret && secret_len)
 					quic_tls_secret_hexdump(&trace_buf, secret, *secret_len);
-				}
 				secs = &qc->els[lvl].tls_ctx.rx;
 				if (secs->flags & QUIC_FL_TLS_SECRETS_SET)
 					quic_tls_keys_hexdump(&trace_buf, secs);
@@ -307,10 +306,9 @@ static void quic_trace(enum trace_level level, uint64_t mask, const struct trace
 			if (level) {
 				enum quic_tls_enc_level lvl = ssl_to_quic_enc_level(*level);
 
-				if (secret && secret_len) {
-					chunk_appendf(&trace_buf, "\n  TX el=%c", quic_enc_level_char(lvl));
+				chunk_appendf(&trace_buf, "\n  TX el=%c", quic_enc_level_char(lvl));
+				if (secret && secret_len)
 					quic_tls_secret_hexdump(&trace_buf, secret, *secret_len);
-				}
 				secs = &qc->els[lvl].tls_ctx.tx;
 				if (secs->flags & QUIC_FL_TLS_SECRETS_SET)
 					quic_tls_keys_hexdump(&trace_buf, secs);
@@ -484,7 +482,7 @@ int ha_quic_set_encryption_secrets(SSL *ssl, enum ssl_encryption_level_t level,
 		if (!quic_transport_params_decode(tp, 1, buf, buf + buflen))
 			return 0;
 	}
-	TRACE_LEAVE(QUIC_EV_CONN_RWSEC, conn);
+	TRACE_LEAVE(QUIC_EV_CONN_RWSEC, conn, &level);
 
 	return 1;
 }
