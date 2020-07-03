@@ -267,7 +267,7 @@ static inline char quic_packet_type_enc_level_char(int packet_type)
  * Returns -1 if there is no TLS encryption level for <packet_type>
  * packet type.
  */
-static inline enum quic_tls_enc_level quic_packet_type_enc_level(int packet_type)
+static inline enum quic_tls_enc_level quic_packet_type_enc_level(enum quic_pkt_type packet_type)
 {
 	switch (packet_type) {
 	case QUIC_PACKET_TYPE_INITIAL:
@@ -276,8 +276,12 @@ static inline enum quic_tls_enc_level quic_packet_type_enc_level(int packet_type
 		return QUIC_TLS_ENC_LEVEL_EARLY_DATA;
 	case QUIC_PACKET_TYPE_HANDSHAKE:
 		return QUIC_TLS_ENC_LEVEL_HANDSHAKE;
+	case QUIC_PACKET_TYPE_RETRY:
+		return QUIC_TLS_ENC_LEVEL_NONE;
+	case QUIC_PACKET_TYPE_SHORT:
+		return QUIC_TLS_ENC_LEVEL_APP;
 	default:
-		return -1;
+		return QUIC_TLS_ENC_LEVEL_NONE;
 	}
 }
 
