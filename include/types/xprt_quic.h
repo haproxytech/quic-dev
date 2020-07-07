@@ -202,14 +202,14 @@ struct quic_pktns {
 	struct {
 		/* Next packet number to use for transmissions. */
 		int64_t next_pn;
+		/* Largest acked sent packet. */
+		int64_t largest_acked_pn;
 		/* The packet which has been sent. */
 		struct eb_root pkts;
 	} tx;
 	struct {
 		/* Largest packet number */
 		int64_t largest_pn;
-		/* Largest acked packet number */
-		int64_t largest_acked_pn;
 		/* Number of ack-eliciting packets. */
 		uint64_t nb_ack_eliciting;
 		struct quic_ack_ranges ack_ranges;

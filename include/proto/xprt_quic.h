@@ -926,8 +926,8 @@ static inline void quic_pktns_init(struct quic_pktns *pktns)
 {
 	pktns->tx.next_pn = -1;
 	pktns->tx.pkts = EB_ROOT_UNIQUE;
+	pktns->tx.largest_acked_pn = -1;
 
-	pktns->rx.largest_acked_pn = -1;
 	pktns->rx.largest_pn = -1;
 	pktns->rx.nb_ack_eliciting = 0;
 	LIST_INIT(&pktns->rx.ack_ranges.list);

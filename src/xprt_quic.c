@@ -1315,8 +1315,8 @@ static inline int qc_parse_ack_frm(struct quic_frame *frm, struct quic_conn_ctx 
 		TRACE_PROTO("ack range", QUIC_EV_CONN_PRSAFRM, ctx->conn,, &largest, &smallest);
 	} while (1);
 
-	if (ack->largest_ack > qel->pktns->rx.largest_acked_pn)
-		qel->pktns->rx.largest_acked_pn = ack->largest_ack;
+	if (ack->largest_ack > qel->pktns->tx.largest_acked_pn)
+		qel->pktns->tx.largest_acked_pn = ack->largest_ack;
 
 	return 1;
 
@@ -3502,7 +3502,7 @@ static ssize_t qc_do_build_hdshk_pkt(struct q_buf *wbuf,
 
 	/* Reserve enough room at the end of the packet for the AEAD TAG. */
 	end -= QUIC_TLS_TAG_LEN;
-	largest_acked_pn = qel->pktns->rx.largest_acked_pn;
+	largest_acked_pn = qel->pktns->tx.largest_acked_pn;
 	/* packet number length */
 	*pn_len = quic_packet_number_length(pn, largest_acked_pn);
 
@@ -3703,7 +3703,7 @@ static ssize_t qc_do_build_phdshk_apkt(struct q_buf *wbuf,
 		TRACE_DEVEL("ifcdada limit reached", QUIC_EV_CONN_CPAPKT, conn->conn);
 		goto out;
 	}
-	largest_acked_pn = qel->pktns->rx.largest_acked_pn;
+	largest_acked_pn = qel->pktns->tx.largest_acked_pn;
 	/* Packet number length */
 	*pn_len = quic_packet_number_length(pn, largest_acked_pn);
 	/* Check there is enough room to build this packet (without payload). */
