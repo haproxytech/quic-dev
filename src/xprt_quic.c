@@ -1526,6 +1526,9 @@ static int qc_prep_hdshk_pkts(struct quic_conn_ctx *ctx)
 		     qc->ifcdata >= QUIC_CRYPTO_IN_FLIGHT_MAX)) {
 			TRACE_DEVEL("nothing more to do",
 			            QUIC_EV_CONN_PHPKTS, ctx->conn);
+			/* Consume the buffer if we were supposed to reuse it. */
+			if (reuse_wbuf)
+					wbuf = q_next_wbuf(qc);
 			break;
 		}
 
