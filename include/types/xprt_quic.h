@@ -268,6 +268,8 @@ struct quic_rx_crypto_frm {
 
 /* Structure to store enough information about TX QUIC packets. */
 struct quic_tx_packet {
+	/* List entry point. */
+	struct list list;
 	struct eb64_node pn_node;
 	/* The number of bytes of CRYPTO data in this packet. */
 	size_t cdata_len;
@@ -315,6 +317,8 @@ struct q_buf {
 	const unsigned char *end;
 	/* The number of data bytes in this buffer. */
 	size_t data;
+	/* The list of packets attached to this buffer which have not been already sent. */
+	struct list pkts;
 };
 
 struct quic_enc_level {

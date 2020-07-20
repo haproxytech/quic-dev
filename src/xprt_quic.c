@@ -1593,6 +1593,8 @@ static int qc_send_ppkts(struct quic_conn_ctx *ctx)
 
 	qc = ctx->conn->quic_conn;
 	for (rbuf = q_rbuf(qc); !q_buf_empty(rbuf) ; rbuf = q_next_rbuf(qc)) {
+		struct quic_tx_packet *p, *q;
+
 		tmpbuf.area = (char *)rbuf->area;
 		tmpbuf.size = tmpbuf.data = rbuf->data;
 
@@ -1602,6 +1604,9 @@ static int qc_send_ppkts(struct quic_conn_ctx *ctx)
 
 	    /* Reset this buffer to make it available for the next packet to prepare. */
 	    q_buf_reset(rbuf);
+		/* Remove from <rbuf> the packets which have just been sent. */
+		list_for_each_entry_safe(p, q, &rbuf->pkts, list)
+			LIST_DEL(&p->list);
 	}
 
 	return 1;
@@ -2242,6 +2247,7 @@ static inline struct q_buf **quic_conn_tx_bufs_alloc(size_t nb, size_t sz)
 		(*p)->pos = (*p)->area;
 		(*p)->end = (*p)->area + sz;
 		(*p)->data = 0;
+		LIST_INIT(&(*p)->pkts);
 		p++;
 	}
 
@@ -3671,6 +3677,8 @@ static ssize_t qc_build_hdshk_pkt(struct q_buf *buf, struct quic_conn *qc, int p
 	buf->data += end - beg;
 	/* Update the counter of the in flight CRYPTO data. */
 	qc->ifcdata += pkt->cdata_len;
+	/* Attach this packet to <buf>. */
+	LIST_ADDQ(&buf->pkts, &pkt->list);
 	TRACE_LEAVE(QUIC_EV_CONN_HPKT, qc->conn, pkt);
 
 	return end - beg;
@@ -3846,6 +3854,8 @@ static ssize_t qc_build_phdshk_apkt(struct q_buf *wbuf, struct quic_conn *qc)
 	eb64_insert(&qel->pktns->tx.pkts, &pkt->pn_node);
 	/* Increment the number of bytes in <buf> buffer by the length of this packet. */
 	wbuf->data += end - beg;
+	/* Attach this packet to <buf>. */
+	LIST_ADDQ(&wbuf->pkts, &pkt->list);
 
 	TRACE_LEAVE(QUIC_EV_CONN_PAPKT, qc->conn);
 
