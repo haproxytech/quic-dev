@@ -3555,7 +3555,7 @@ static ssize_t qc_do_build_hdshk_pkt(struct q_buf *wbuf,
 	quic_packet_number_encode(&pos, end, pn - largest_acked_pn - 1, *pn_len);
 
 	if (ack_frm_len)
-		qc_build_frm(&pos, end, &ack_frm, conn);
+		qc_build_frm(&pos, end, &ack_frm, pkt, conn);
 
 	/* Crypto frame */
 	if (!LIST_ISEMPTY(&pkt->frms)) {
@@ -3565,7 +3565,7 @@ static ssize_t qc_do_build_hdshk_pkt(struct q_buf *wbuf,
 			crypto->offset = cf->crypto.offset;
 			crypto->len = cf->crypto.len;
 			crypto->qel = qel;
-			qc_build_frm(&pos, end, &frm, conn);
+			qc_build_frm(&pos, end, &frm, pkt, conn);
 		}
 	}
 
@@ -3573,7 +3573,7 @@ static ssize_t qc_do_build_hdshk_pkt(struct q_buf *wbuf,
 	if (padding_len) {
 		frm.type = QUIC_FT_PADDING;
 		frm.padding.len = padding_len;
-		if (!qc_build_frm(&pos, end, &frm, conn))
+		if (!qc_build_frm(&pos, end, &frm, pkt, conn))
 			goto err;
 	}
 
@@ -3736,7 +3736,7 @@ static ssize_t qc_do_build_phdshk_apkt(struct q_buf *wbuf,
 	}
 
 	if (ack_frm_len)
-		qc_build_frm(&pos, end, &ack_frm, conn);
+		qc_build_frm(&pos, end, &ack_frm, pkt, conn);
 
 	fake_len = ack_frm_len;
 	if (!LIST_ISEMPTY(&qel->tx.crypto.frms) &&
@@ -3756,7 +3756,7 @@ static ssize_t qc_do_build_phdshk_apkt(struct q_buf *wbuf,
 			crypto->offset = cf->crypto.offset;
 			crypto->len = cf->crypto.len;
 			crypto->qel = qel;
-			qc_build_frm(&pos, end, &frm, conn);
+			qc_build_frm(&pos, end, &frm, pkt, conn);
 		}
 	}
 
@@ -3765,7 +3765,7 @@ static ssize_t qc_do_build_phdshk_apkt(struct q_buf *wbuf,
 		unsigned char *ppos;
 
 		ppos = pos;
-		if (!qc_build_frm(&ppos, end, frm, conn)) {
+		if (!qc_build_frm(&ppos, end, frm, pkt, conn)) {
 			TRACE_DEVEL("Frames not built", QUIC_EV_CONN_CPAPKT, conn->conn);
 			break;
 		}

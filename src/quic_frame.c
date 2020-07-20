@@ -897,39 +897,44 @@ static int quic_parse_handshake_done_frame(struct quic_frame *frm,
 	return 1;
 }
 
-int (*quic_build_frame_funcs[])(unsigned char **, const unsigned char *,
-                                struct quic_frame *, struct quic_conn *conn) = {
-	[QUIC_FT_PADDING]      = quic_build_padding_frame,
-	[QUIC_FT_PING]         = quic_build_ping_frame,
-	[QUIC_FT_ACK]          = quic_build_ack_frame,
-	[QUIC_FT_ACK_ECN]      = quic_build_ack_ecn_frame,
-	[QUIC_FT_RESET_STREAM] = quic_build_reset_stream_frame,
-	[QUIC_FT_STOP_SENDING] = quic_build_stop_sending_frame,
-	[QUIC_FT_CRYPTO]       = quic_build_crypto_frame,
-	[QUIC_FT_NEW_TOKEN]    = quic_build_new_token_frame,
-	[QUIC_FT_STREAM_8]     = quic_build_stream_frame,
-	[QUIC_FT_STREAM_9]     = quic_build_stream_frame,
-	[QUIC_FT_STREAM_A]     = quic_build_stream_frame,
-	[QUIC_FT_STREAM_B]     = quic_build_stream_frame,
-	[QUIC_FT_STREAM_C]     = quic_build_stream_frame,
-	[QUIC_FT_STREAM_D]     = quic_build_stream_frame,
-	[QUIC_FT_STREAM_E]     = quic_build_stream_frame,
-	[QUIC_FT_STREAM_F]     = quic_build_stream_frame,
-	[QUIC_FT_MAX_DATA]     = quic_build_max_data_frame,
-	[QUIC_FT_MAX_STREAM_DATA]      = quic_build_max_stream_data_frame,
-	[QUIC_FT_MAX_STREAMS_BIDI]     = quic_build_max_streams_bidi_frame,
-	[QUIC_FT_MAX_STREAMS_UNI]      = quic_build_max_streams_uni_frame,
-	[QUIC_FT_DATA_BLOCKED]         = quic_build_data_blocked_frame,
-	[QUIC_FT_STREAM_DATA_BLOCKED]  = quic_build_stream_data_blocked_frame,
-	[QUIC_FT_STREAMS_BLOCKED_BIDI] = quic_build_streams_blocked_bidi_frame,
-	[QUIC_FT_STREAMS_BLOCKED_UNI]  = quic_build_streams_blocked_uni_frame,
-	[QUIC_FT_NEW_CONNECTION_ID]    = quic_build_new_connection_id_frame,
-	[QUIC_FT_RETIRE_CONNECTION_ID] = quic_build_retire_connection_id_frame,
-	[QUIC_FT_PATH_CHALLENGE]       = quic_build_path_challenge_frame,
-	[QUIC_FT_PATH_RESPONSE]        = quic_build_path_response_frame,
-	[QUIC_FT_CONNECTION_CLOSE]     = quic_build_connection_close_frame,
-	[QUIC_FT_CONNECTION_CLOSE_APP] = quic_build_connection_close_app_frame,
-	[QUIC_FT_HANDSHAKE_DONE]       = quic_build_handshake_done_frame,
+struct quic_frame_builder {
+	int (*func)(unsigned char **buf, const unsigned char *end,
+                 struct quic_frame *frm, struct quic_conn *conn);
+	unsigned char flags;
+};
+
+struct quic_frame_builder quic_frame_builders[] = {
+	[QUIC_FT_PADDING]              = { .func = quic_build_padding_frame,              .flags = QUIC_FL_TX_PACKET_PADDING, },
+	[QUIC_FT_PING]                 = { .func = quic_build_ping_frame,                 .flags = QUIC_FL_TX_PACKET_ACK_ELICITING, },
+	[QUIC_FT_ACK]                  = { .func = quic_build_ack_frame,                  .flags = 0, },
+	[QUIC_FT_ACK_ECN]              = { .func = quic_build_ack_ecn_frame,              .flags = 0, },
+	[QUIC_FT_RESET_STREAM]         = { .func = quic_build_reset_stream_frame,         .flags = QUIC_FL_TX_PACKET_ACK_ELICITING, },
+	[QUIC_FT_STOP_SENDING]         = { .func = quic_build_stop_sending_frame,         .flags = QUIC_FL_TX_PACKET_ACK_ELICITING, },
+	[QUIC_FT_CRYPTO]               = { .func = quic_build_crypto_frame,               .flags = QUIC_FL_TX_PACKET_ACK_ELICITING, },
+	[QUIC_FT_NEW_TOKEN]            = { .func = quic_build_new_token_frame,            .flags = QUIC_FL_TX_PACKET_ACK_ELICITING, },
+	[QUIC_FT_STREAM_8]             = { .func = quic_build_stream_frame,               .flags = QUIC_FL_TX_PACKET_ACK_ELICITING, },
+	[QUIC_FT_STREAM_9]             = { .func = quic_build_stream_frame,               .flags = QUIC_FL_TX_PACKET_ACK_ELICITING, },
+	[QUIC_FT_STREAM_A]             = { .func = quic_build_stream_frame,               .flags = QUIC_FL_TX_PACKET_ACK_ELICITING, },
+	[QUIC_FT_STREAM_B]             = { .func = quic_build_stream_frame,               .flags = QUIC_FL_TX_PACKET_ACK_ELICITING, },
+	[QUIC_FT_STREAM_C]             = { .func = quic_build_stream_frame,               .flags = QUIC_FL_TX_PACKET_ACK_ELICITING, },
+	[QUIC_FT_STREAM_D]             = { .func = quic_build_stream_frame,               .flags = QUIC_FL_TX_PACKET_ACK_ELICITING, },
+	[QUIC_FT_STREAM_E]             = { .func = quic_build_stream_frame,               .flags = QUIC_FL_TX_PACKET_ACK_ELICITING, },
+	[QUIC_FT_STREAM_F]             = { .func = quic_build_stream_frame,               .flags = QUIC_FL_TX_PACKET_ACK_ELICITING, },
+	[QUIC_FT_MAX_DATA]             = { .func = quic_build_max_data_frame,             .flags = QUIC_FL_TX_PACKET_ACK_ELICITING, },
+	[QUIC_FT_MAX_STREAM_DATA]      = { .func = quic_build_max_stream_data_frame,      .flags = QUIC_FL_TX_PACKET_ACK_ELICITING, },
+	[QUIC_FT_MAX_STREAMS_BIDI]     = { .func = quic_build_max_streams_bidi_frame,     .flags = QUIC_FL_TX_PACKET_ACK_ELICITING, },
+	[QUIC_FT_MAX_STREAMS_UNI]      = { .func = quic_build_max_streams_uni_frame,      .flags = QUIC_FL_TX_PACKET_ACK_ELICITING, },
+	[QUIC_FT_DATA_BLOCKED]         = { .func = quic_build_data_blocked_frame,         .flags = QUIC_FL_TX_PACKET_ACK_ELICITING, },
+	[QUIC_FT_STREAM_DATA_BLOCKED]  = { .func = quic_build_stream_data_blocked_frame,  .flags = QUIC_FL_TX_PACKET_ACK_ELICITING, },
+	[QUIC_FT_STREAMS_BLOCKED_BIDI] = { .func = quic_build_streams_blocked_bidi_frame, .flags = QUIC_FL_TX_PACKET_ACK_ELICITING, },
+	[QUIC_FT_STREAMS_BLOCKED_UNI]  = { .func = quic_build_streams_blocked_uni_frame,  .flags = QUIC_FL_TX_PACKET_ACK_ELICITING, },
+	[QUIC_FT_NEW_CONNECTION_ID]    = { .func = quic_build_new_connection_id_frame,    .flags = QUIC_FL_TX_PACKET_ACK_ELICITING, },
+	[QUIC_FT_RETIRE_CONNECTION_ID] = { .func = quic_build_retire_connection_id_frame, .flags = QUIC_FL_TX_PACKET_ACK_ELICITING, },
+	[QUIC_FT_PATH_CHALLENGE]       = { .func = quic_build_path_challenge_frame,       .flags = QUIC_FL_TX_PACKET_ACK_ELICITING, },
+	[QUIC_FT_PATH_RESPONSE]        = { .func = quic_build_path_response_frame,        .flags = QUIC_FL_TX_PACKET_ACK_ELICITING, },
+	[QUIC_FT_CONNECTION_CLOSE]     = { .func = quic_build_connection_close_frame,     .flags = 0, },
+	[QUIC_FT_CONNECTION_CLOSE_APP] = { .func = quic_build_connection_close_app_frame, .flags = 0, },
+	[QUIC_FT_HANDSHAKE_DONE]       = { .func = quic_build_handshake_done_frame,       .flags = QUIC_FL_TX_PACKET_ACK_ELICITING, },
 };
 
 struct quic_frame_parser {
@@ -1013,7 +1018,8 @@ int qc_parse_frm(struct quic_frame *frm, struct quic_rx_packet *pkt,
  * Returns 1 if succeded (enough room in <buf> to encode the frame), 0 if not.
  */
 int qc_build_frm(unsigned char **buf, const unsigned char *end,
-                 struct quic_frame *frm, struct quic_conn *conn)
+                 struct quic_frame *frm, struct quic_tx_packet *pkt,
+                 struct quic_conn *conn)
 {
 	if (end <= *buf) {
 		TRACE_DEVEL("not enough room", QUIC_EV_CONN_BFRM, conn->conn, frm);
@@ -1022,10 +1028,12 @@ int qc_build_frm(unsigned char **buf, const unsigned char *end,
 
 	TRACE_PROTO("frame", QUIC_EV_CONN_BFRM, conn->conn, frm);
 	*(*buf)++ = frm->type;
-	if (!quic_build_frame_funcs[frm->type](buf, end, frm, conn)) {
+	if (!quic_frame_builders[frm->type].func(buf, end, frm, conn)) {
 		TRACE_DEVEL("frame building error", QUIC_EV_CONN_BFRM, conn->conn, frm);
 		return 0;
 	}
+
+	pkt->flags |= quic_frame_builders[frm->type].flags;
 
 	return 1;
 }

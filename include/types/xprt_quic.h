@@ -259,6 +259,13 @@ struct quic_rx_crypto_frm {
 	struct quic_rx_packet *pkt;
 };
 
+/* Flag a sent packet as being an ack-eliciting packet. */
+#define QUIC_FL_TX_PACKET_ACK_ELICITING (1UL << 0)
+/* Flag a sent packet as containing a PADDING frame. */
+#define QUIC_FL_TX_PACKET_PADDING       (1UL << 1)
+/* Flag a sent packet as being in flight. */
+#define QUIC_FL_TX_PACKET_IN_FLIGHT     (QUIC_FL_TX_PACKET_ACK_ELICITING | QUIC_FL_TX_PACKET_PADDING)
+
 /* Structure to store enough information about TX QUIC packets. */
 struct quic_tx_packet {
 	struct eb64_node pn_node;
@@ -266,6 +273,8 @@ struct quic_tx_packet {
 	size_t cdata_len;
 	/* The list of frames of this packet. */
 	struct list frms;
+	/* Flags. */
+	unsigned int flags;
 };
 
 /* Structure to stora enough information about the TX frames. */
