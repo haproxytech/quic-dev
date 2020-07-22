@@ -325,6 +325,21 @@ static inline int __tv_ms_le2(const struct timeval *tv1, const struct timeval *t
 
 
 /*
+ * Returns the time in us elapsed between tv1 and tv2, assuming that tv1<=tv2.
+ * Must not be used when either argument is eternity.
+ */
+#define tv_us_elapsed __tv_us_elapsed
+unsigned long _tv_us_elapsed(const struct timeval *tv1, const struct timeval *tv2);
+static inline unsigned long __tv_us_elapsed(const struct timeval *tv1, const struct timeval *tv2)
+{
+	unsigned long ret;
+
+	ret  = ((signed long)(tv2->tv_sec  - tv1->tv_sec))  * 1000000;
+	ret += ((signed long)(tv2->tv_usec - tv1->tv_usec));
+	return ret;
+}
+
+/*
  * Returns the time in ms elapsed between tv1 and tv2, assuming that tv1<=tv2.
  * Must not be used when either argument is eternity.
  */
