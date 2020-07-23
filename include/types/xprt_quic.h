@@ -30,6 +30,7 @@
 #include <types/quic.h>
 #include <types/quic_frame.h>
 #include <types/quic_tls.h>
+#include <types/quic_loss.h>
 
 #include <eb64tree.h>
 #include <ebmbtree.h>
@@ -289,6 +290,8 @@ struct quic_tx_packet {
 	size_t cdata_len;
 	/* The list of frames of this packet. */
 	struct list frms;
+	/* The time this packet was sent (usec). */
+	uint64_t time_sent;
 	/* Flags. */
 	unsigned int flags;
 };
@@ -420,6 +423,7 @@ struct quic_conn {
 	} tx;
 	/* In flight CRYPTO data counter. */
 	size_t ifcdata;
+	struct quic_loss loss;
 };
 
 #endif /* _TYPES_XPRT_QUIC_H */

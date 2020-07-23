@@ -23,6 +23,7 @@
 #define _PROTO_XPRT_QUIC_H
 
 #include <stdint.h>
+#include <time.h>
 
 #include <common/buf.h>
 #include <common/chunk.h>
@@ -48,6 +49,16 @@ void hexdump(const void *buf, size_t buflen, const char *title_fmt, ...);
 extern struct pool_head *pool_head_quic_connection_id;
 
 int ssl_quic_initial_ctx(struct bind_conf *bind_conf);
+
+/* Returns the current time in microseconds. */
+static inline uint64_t usec_now(void)
+{
+	struct timespec ts;
+
+	clock_gettime(CLOCK_MONOTONIC, &ts);
+
+	return (uint64_t)ts.tv_sec * 1000000ULL + (uint64_t)ts.tv_nsec / 1000ULL;
+}
 
 /*
  * Returns the required length in bytes to encode <cid> QUIC connection ID.

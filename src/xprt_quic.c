@@ -1615,8 +1615,10 @@ static int qc_send_ppkts(struct quic_conn_ctx *ctx)
 	    /* Reset this buffer to make it available for the next packet to prepare. */
 	    q_buf_reset(rbuf);
 		/* Remove from <rbuf> the packets which have just been sent. */
-		list_for_each_entry_safe(p, q, &rbuf->pkts, list)
+		list_for_each_entry_safe(p, q, &rbuf->pkts, list) {
+			p->time_sent = usec_now();
 			LIST_DEL(&p->list);
+		}
 	}
 
 	return 1;
@@ -2359,6 +2361,7 @@ static int qc_new_conn_init(struct quic_conn *conn,
 	conn->tx.wbuf = conn->tx.rbuf = 0;
 
 	conn->ifcdata = 0;
+	quic_loss_init(&conn->loss);
 	TRACE_LEAVE(QUIC_EV_CONN_INIT, conn->conn);
 
 	return 1;
