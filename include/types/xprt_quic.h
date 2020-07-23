@@ -70,6 +70,7 @@
 #define           QUIC_EV_CONN_FFLIGHT   (1ULL << 26)
 #define           QUIC_EV_CONN_SSLALERT  (1ULL << 27)
 #define           QUIC_EV_CONN_CPAPKT    (1ULL << 28)
+#define           QUIC_EV_CONN_RTTUPDT   (1ULL << 29)
 
 #define           QUIC_EV_CONN_ENEW      (1ULL << 32)
 #define           QUIC_EV_CONN_EISEC     (1ULL << 33)
@@ -80,6 +81,19 @@
 #define           QUIC_EV_CONN_ECHPKT    (1ULL << 38)
 #define           QUIC_EV_CONN_EHPKT     (1ULL << 39)
 #define           QUIC_EV_CONN_EPAPKT    (1ULL << 40)
+
+/* Similar to kernel min()/max() definitions. */
+#define min(a, b) ({      \
+    typeof(a) _a = (a);   \
+    typeof(b) _b = (b);   \
+    (void) (&_a == &_b);  \
+    _a < _b ? _a : _b; })
+
+#define max(a, b) ({      \
+    typeof(a) _a = (a);   \
+    typeof(b) _b = (b);   \
+    (void) (&_a == &_b);  \
+    _a > _b ? _a : _b; })
 
 extern struct trace_source trace_quic;
 extern struct pool_head *pool_head_quic_rx_packet;
