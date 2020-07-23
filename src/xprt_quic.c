@@ -37,6 +37,7 @@
 #include <proto/pipe.h>
 #include <proto/proxy.h>
 #include <proto/quic_frame.h>
+#include <proto/quic_loss.h>
 #include <proto/quic_tls.h>
 #include <proto/ssl_sock.h>
 #include <proto/stream_interface.h>
@@ -421,6 +422,15 @@ static void quic_trace(enum trace_level level, uint64_t mask, const struct trace
 				chunk_appendf(&trace_buf, " %lu", *val1);
 			if (val2)
 				chunk_appendf(&trace_buf, "..%lu", *val2);
+		}
+
+		if (mask & QUIC_EV_CONN_RTTUPDT) {
+			const struct quic_loss *ql = a2;
+
+			if (a2)
+				chunk_appendf(&trace_buf,
+				              " srtt=%luus rttvar=%luus min_rtt=%luus",
+				              ql->srtt >> 3, ql->rtt_var >> 2, ql->rtt_min);
 		}
 	}
 	if (mask & QUIC_EV_CONN_LPKT) {
