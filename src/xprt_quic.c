@@ -1315,7 +1315,7 @@ static inline int qc_parse_ack_frm(struct quic_frame *frm, struct quic_conn_ctx 
 		TRACE_PROTO("ack range", QUIC_EV_CONN_PRSAFRM, ctx->conn,, &largest, &smallest);
 	} while (1);
 
-	if (ack->largest_ack > qel->pktns->tx.largest_acked_pn)
+	if ((int64_t)ack->largest_ack > qel->pktns->tx.largest_acked_pn)
 		qel->pktns->tx.largest_acked_pn = ack->largest_ack;
 
 	return 1;
@@ -3558,7 +3558,7 @@ static ssize_t qc_do_build_hdshk_pkt(struct q_buf *wbuf,
 	*buf_pn = pos;
 
 	/* Packet number encoding. */
-	quic_packet_number_encode(&pos, end, pn - largest_acked_pn - 1, *pn_len);
+	quic_packet_number_encode(&pos, end, pn, *pn_len);
 
 	if (ack_frm_len)
 		qc_build_frm(&pos, end, &ack_frm, pkt, conn);
@@ -3728,7 +3728,7 @@ static ssize_t qc_do_build_phdshk_apkt(struct q_buf *wbuf,
 	/* Packet number field. */
 	*buf_pn = pos;
 	/* Packet number encoding. */
-	quic_packet_number_encode(&pos, end, pn - largest_acked_pn - 1, *pn_len);
+	quic_packet_number_encode(&pos, end, pn, *pn_len);
 
 	/* Build an ACK frame if required. */
 	ack_frm_len = 0;
