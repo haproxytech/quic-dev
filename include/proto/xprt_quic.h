@@ -929,6 +929,18 @@ static inline int quic_transport_params_decode(struct quic_transport_params *p, 
 	return 1;
 }
 
+static inline int quic_transport_params_store(struct quic_conn *conn, int server,
+                                              const unsigned char *buf, const unsigned char *end)
+{
+	if (!quic_transport_params_decode(&conn->rx_tps, server, buf, end))
+		return 0;
+
+	if (conn->rx_tps.max_ack_delay)
+		conn->max_ack_delay_us = conn->rx_tps.max_ack_delay * 1000UL;
+
+	return 1;
+}
+
 /*
  * Initialize a QUIC packet number space.
  * Never fails.

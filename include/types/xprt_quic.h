@@ -424,6 +424,7 @@ struct quic_conn {
 	/* In flight CRYPTO data counter. */
 	size_t ifcdata;
 	struct quic_loss loss;
+	uint64_t max_ack_delay_us;
 };
 
 #endif /* _TYPES_XPRT_QUIC_H */

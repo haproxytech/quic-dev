@@ -481,7 +481,6 @@ int ha_quic_set_encryption_secrets(SSL *ssl, enum ssl_encryption_level_t level,
 
 	tls_ctx->tx.flags |= QUIC_FL_TLS_SECRETS_SET;
 	if (objt_server(conn->target) && level == ssl_encryption_application) {
-		struct quic_transport_params *tp = &conn->quic_conn->rx_tps;
 		const unsigned char *buf;
 		size_t buflen;
 
@@ -489,7 +488,7 @@ int ha_quic_set_encryption_secrets(SSL *ssl, enum ssl_encryption_level_t level,
 		if (!buflen)
 			return 0;
 
-		if (!quic_transport_params_decode(tp, 1, buf, buf + buflen))
+		if (!quic_transport_params_store(conn->quic_conn, 1, buf, buf + buflen))
 			return 0;
 	}
 	TRACE_LEAVE(QUIC_EV_CONN_RWSEC, conn, &level);
@@ -526,7 +525,6 @@ int ha_set_rsec(SSL *ssl, enum ssl_encryption_level_t level,
 	}
 
 	if (objt_server(conn->target) && level == ssl_encryption_application) {
-		struct quic_transport_params *tp = &conn->quic_conn->rx_tps;
 		const unsigned char *buf;
 		size_t buflen;
 
@@ -534,8 +532,8 @@ int ha_set_rsec(SSL *ssl, enum ssl_encryption_level_t level,
 		if (!buflen)
 			goto err;
 
-		if (!quic_transport_params_decode(tp, 1, buf, buf + buflen))
-			goto err;
+		if (!quic_transport_params_store(conn->quic_conn, 1, buf, buf + buflen))
+			return 0;
 	}
 
 	tls_ctx->rx.flags |= QUIC_FL_TLS_SECRETS_SET;
