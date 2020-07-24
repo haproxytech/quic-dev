@@ -539,7 +539,7 @@ int ha_set_rsec(SSL *ssl, enum ssl_encryption_level_t level,
 			goto err;
 
 		if (!quic_transport_params_store(conn->quic_conn, 1, buf, buf + buflen))
-			return 0;
+			goto err;
 	}
 
 	tls_ctx->rx.flags |= QUIC_FL_TLS_SECRETS_SET;
