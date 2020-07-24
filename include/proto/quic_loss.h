@@ -46,6 +46,7 @@ static inline void quic_loss_srtt_update(struct quic_loss *ql,
                                          unsigned long rtt, unsigned long ack_delay,
                                          struct quic_conn *conn)
 {
+	TRACE_PROTO("Loss info update", QUIC_EV_CONN_RTTUPDT, conn->conn, &rtt, &ack_delay);
 	if (!ql->srtt) {
 		/* No previous measurement. */
 		ql->srtt = rtt << 3;
@@ -68,7 +69,7 @@ static inline void quic_loss_srtt_update(struct quic_loss *ql,
 		/* 8*srtt = 7*srtt + rtt */
 		ql->srtt += rtt - (ql->srtt >> 3);
 	}
-	TRACE_PROTO("Loss info update", QUIC_EV_CONN_RTTUPDT, conn->conn, ql);
+	TRACE_PROTO("Loss info update", QUIC_EV_CONN_RTTUPDT, conn->conn,,, ql);
 }
 
 #endif /* _PROTO_QUIC_LOSS_H */

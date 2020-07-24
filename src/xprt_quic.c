@@ -425,9 +425,15 @@ static void quic_trace(enum trace_level level, uint64_t mask, const struct trace
 		}
 
 		if (mask & QUIC_EV_CONN_RTTUPDT) {
-			const struct quic_loss *ql = a2;
+			const uint64_t *rtt_sample = a2;
+			const uint64_t *ack_delay = a3;
+			const struct quic_loss *ql = a4;
 
-			if (a2)
+			if (rtt_sample)
+				chunk_appendf(&trace_buf, " rtt_sample=%luus", *rtt_sample);
+			if (ack_delay)
+				chunk_appendf(&trace_buf, " ack_delay=%luus", *ack_delay);
+			if (ql)
 				chunk_appendf(&trace_buf,
 				              " srtt=%luus rttvar=%luus min_rtt=%luus",
 				              ql->srtt >> 3, ql->rtt_var >> 2, ql->rtt_min);
@@ -1175,18 +1181,24 @@ static inline void qc_treat_acked_tx_frm(struct quic_tx_frm *frm,
  * Returns the last node reached to be used for the next range.
  * May be NULL if <largest> node could not be found.
  */
-static inline struct eb64_node *qc_ackrng_pkts(struct eb_root *pkts,
+static inline struct eb64_node *qc_ackrng_pkts(struct eb_root *pkts, unsigned int *pkt_flags,
+                                               struct eb64_node *largest_node,
                                                uint64_t largest, uint64_t smallest,
                                                struct quic_conn_ctx *ctx)
 {
 	struct eb64_node *node;
 	struct quic_tx_packet *pkt;
 
-	node = eb64_lookup(pkts, largest);
+	if (largest_node)
+		node = largest_node;
+	else
+		node = eb64_lookup(pkts, largest);
+
 	while (node && node->key >= smallest) {
 		struct quic_tx_frm *frm, *frmbak;
 
 		pkt = eb64_entry(&node->node, struct quic_tx_packet, pn_node);
+		*pkt_flags |= pkt->flags;
 		QDPRINTF("Removing packet #%llu\n", pkt->pn_node.key);
 		TRACE_PROTO("Removing packet #", QUIC_EV_CONN_PRSAFRM, ctx->conn,, &pkt->pn_node.key);
 		list_for_each_entry_safe(frm, frmbak, &pkt->frms, list)
@@ -1230,14 +1242,15 @@ static inline void qc_treat_nacked_tx_frm(struct quic_tx_frm *frm,
  * to the same gap.
  */
 static inline void
-qc_ackrng_with_gap(struct eb_root *pkts, struct list *frms,
+qc_ackrng_with_gap(struct eb_root *pkts, unsigned int *pkt_flags, struct list *frms,
+                   struct eb64_node *largest_node,
                    uint64_t largest, uint64_t smallest, uint64_t next_largest,
                    struct quic_enc_level *qel, struct quic_conn_ctx *ctx)
 {
 	struct eb64_node *node;
 	struct quic_tx_packet *pkt;
 
-	node = qc_ackrng_pkts(pkts, largest, smallest, ctx);
+	node = qc_ackrng_pkts(pkts, pkt_flags, largest_node, largest, smallest, ctx);
 	if (!node)
 		return;
 
@@ -1259,17 +1272,24 @@ qc_ackrng_with_gap(struct eb_root *pkts, struct list *frms,
 
 /*
  * Parse ACK frame into <frm> from a buffer at <buf> address with <end> being at
- * one byte past the end of this buffer.
+ * one byte past the end of this buffer. Also update <rtt_sample> if needed, i.e.
+ * if the largest acked packet was newly acked and if there was at leas one newly
+ * acked ack-eliciting packet.
  * Return 1, if succeeded, 0 if not.
  */
 static inline int qc_parse_ack_frm(struct quic_frame *frm, struct quic_conn_ctx *ctx,
                                    struct quic_enc_level *qel,
+                                   uint64_t *rtt_sample,
                                    const unsigned char **pos, const unsigned char *end)
 {
 	struct quic_ack *ack = &frm->ack;
 	uint64_t smallest, largest;
 	struct eb_root *pkts;
+	struct eb64_node *largest_node;
 	struct list *frms;
+	uint64_t time_sent;
+	int may_sample_rtt = 0;
+	unsigned int pkt_flags;
 
 	if (ack->largest_ack > qel->pktns->tx.next_pn) {
 		TRACE_DEVEL("ACK for not sent packet", QUIC_EV_CONN_PRSAFRM,
@@ -1286,13 +1306,31 @@ static inline int qc_parse_ack_frm(struct quic_frame *frm, struct quic_conn_ctx 
 	largest = ack->largest_ack;
 	smallest = largest - ack->first_ack_range;
 	pkts = &qel->pktns->tx.pkts;
+	pkt_flags = 0;
+	largest_node = NULL;
+	time_sent = 0;
 	frms = &qel->tx.crypto.frms;
-	TRACE_PROTO("ack range", QUIC_EV_CONN_PRSAFRM, ctx->conn,, &largest, &smallest);
+
+	if ((int64_t)ack->largest_ack > qel->pktns->tx.largest_acked_pn) {
+		largest_node = eb64_lookup(pkts, largest);
+		if (!largest_node) {
+			TRACE_DEVEL("Largest acked packet not found",
+			            QUIC_EV_CONN_PRSAFRM, ctx->conn);
+			goto err;
+		}
+
+		may_sample_rtt = 1;
+		time_sent = eb64_entry(&largest_node->node,
+		                       struct quic_tx_packet, pn_node)->time_sent;
+	}
+
+	TRACE_PROTO("ack range", QUIC_EV_CONN_PRSAFRM,
+	            ctx->conn,, &largest, &smallest);
 	do {
 		uint64_t gap, ack_range, next_largest;
 
 		if (!ack->ack_range_num--) {
-			qc_ackrng_pkts(pkts, largest, smallest, ctx);
+			qc_ackrng_pkts(pkts, &pkt_flags, largest_node, largest, smallest, ctx);
 			break;
 		}
 
@@ -1315,16 +1353,25 @@ static inline int qc_parse_ack_frm(struct quic_frame *frm, struct quic_conn_ctx 
 			goto err;
 		}
 
-		qc_ackrng_with_gap(pkts, frms,  largest, smallest, next_largest, qel, ctx);
+		qc_ackrng_with_gap(pkts, &pkt_flags, frms, largest_node,
+		                   largest, smallest, next_largest, qel, ctx);
+		/* Do not use this node anymore. */
+		largest_node = NULL;
 		/* Next range */
 		largest = next_largest;
 		smallest = largest - ack_range;
 
-		TRACE_PROTO("ack range", QUIC_EV_CONN_PRSAFRM, ctx->conn,, &largest, &smallest);
+		TRACE_PROTO("ack range", QUIC_EV_CONN_PRSAFRM,
+		            ctx->conn,, &largest, &smallest);
 	} while (1);
 
-	if ((int64_t)ack->largest_ack > qel->pktns->tx.largest_acked_pn)
+	if (may_sample_rtt && (pkt_flags & QUIC_FL_TX_PACKET_ACK_ELICITING)) {
+		uint64_t now;
+
+		now = usec_now();
+		*rtt_sample = now - time_sent;
 		qel->pktns->tx.largest_acked_pn = ack->largest_ack;
+	}
 
 	return 1;
 
@@ -1414,6 +1461,7 @@ static int qc_parse_pkt_frms(struct quic_rx_packet *pkt, struct quic_conn_ctx *c
 {
 	struct quic_frame frm;
 	const unsigned char *pos, *end;
+	struct quic_conn *conn = ctx->conn->quic_conn;
 
 	TRACE_ENTER(QUIC_EV_CONN_PRSHPKT, ctx->conn);
 	/* Skip the AAD */
@@ -1421,7 +1469,7 @@ static int qc_parse_pkt_frms(struct quic_rx_packet *pkt, struct quic_conn_ctx *c
 	end = pkt->data + pkt->len;
 
 	while (pos < end) {
-		if (!qc_parse_frm(&frm, pkt, &pos, end, ctx->conn->quic_conn))
+		if (!qc_parse_frm(&frm, pkt, &pos, end, conn))
 			goto err;
 
 		switch (frm.type) {
@@ -1464,11 +1512,23 @@ static int qc_parse_pkt_frms(struct quic_rx_packet *pkt, struct quic_conn_ctx *c
 			}
 			break;
 		case QUIC_FT_ACK:
-			if (!qc_parse_ack_frm(&frm, ctx, qel, &pos, end))
+		{
+			uint64_t rtt_sample;
+
+			rtt_sample = 0;
+			if (!qc_parse_ack_frm(&frm, ctx, qel, &rtt_sample, &pos, end))
 				goto err;
 
+			if (rtt_sample) {
+				uint64_t ack_delay;
+
+				ack_delay = !quic_application_pktns(qel->pktns, conn) ? 0 :
+					min(quic_ack_delay_us(&frm.ack, conn), conn->max_ack_delay_us);
+				quic_loss_srtt_update(&conn->loss, rtt_sample, ack_delay, conn);
+			}
 			tasklet_wakeup(ctx->wait_event.tasklet);
 			break;
+		}
 		case QUIC_FT_PING:
 			pkt->flags |= QUIC_FL_RX_PACKET_ACK_ELICITING;
 			break;

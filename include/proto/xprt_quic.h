@@ -510,6 +510,13 @@ static inline void quic_packet_number_encode(unsigned char **buf, const unsigned
 	*buf += pn_len;
 }
 
+/* Returns the <ack_delay> field value from <ack_frm> ACK frame. */
+static inline uint64_t quic_ack_delay_us(struct quic_ack *ack_frm,
+                                         struct quic_conn *conn)
+{
+	return ack_frm->ack_delay << conn->rx_tps.ack_delay_exponent;
+}
+
 static inline void quic_dflt_transport_params_cpy(struct quic_transport_params *dst)
 {
 	dst->max_packet_size    = quid_dflt_transport_params.max_packet_size;
@@ -956,6 +963,14 @@ static inline void quic_pktns_init(struct quic_pktns *pktns)
 	LIST_INIT(&pktns->rx.ack_ranges.list);
 	pktns->rx.ack_ranges.sz = 0;
 	pktns->rx.ack_ranges.enc_sz = 0;
+}
+
+/* Return 1 if <pktns> matches with the Application packet number space of <conn> connection
+ * which is common to the 0-RTT and 1-RTT encryption levels, 0 if not (handshake packets).
+ */
+static inline int quic_application_pktns(struct quic_pktns *pktns, struct quic_conn *conn)
+{
+	return pktns == &conn->pktns[QUIC_TLS_PKTNS_01RTT];
 }
 
 /* CRYPTO data buffer handling functions. */
