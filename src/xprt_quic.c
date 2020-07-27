@@ -662,7 +662,7 @@ static int quic_crypto_data_cpy(struct quic_enc_level *qel,
 		frm->type = QUIC_FT_CRYPTO;
 		frm->crypto.offset = cf_offset;
 		frm->crypto.len = cf_len;
-		LIST_ADDQ(&qel->tx.crypto.frms, &frm->list);
+		LIST_ADDQ(&qel->tx.frms, &frm->list);
 	}
 
 	return len == 0;
@@ -1226,7 +1226,7 @@ static inline void qc_treat_nacked_tx_frm(struct quic_tx_frm *frm,
 		break;
 	}
 	LIST_DEL(&frm->list);
-	LIST_ADD(&qel->tx.crypto.frms, &frm->list);
+	LIST_ADD(&qel->tx.frms, &frm->list);
 }
 
 /*
@@ -1585,7 +1585,7 @@ static int qc_prep_hdshk_pkts(struct quic_conn_ctx *ctx)
 		 * CRYPTO data limit reached.
 		 */
 		if (!(qel->pktns->flags & QUIC_FL_PKTNS_ACK_REQUIRED) &&
-		    (LIST_ISEMPTY(&qel->tx.crypto.frms) ||
+		    (LIST_ISEMPTY(&qel->tx.frms) ||
 		     qc->ifcdata >= QUIC_CRYPTO_IN_FLIGHT_MAX)) {
 			TRACE_DEVEL("nothing more to do",
 			            QUIC_EV_CONN_PHPKTS, ctx->conn);
@@ -1611,11 +1611,11 @@ static int qc_prep_hdshk_pkts(struct quic_conn_ctx *ctx)
 			/* Special case for Initial packets: when they have all
 			 * been sent, select the next level.
 			 */
-			if (LIST_ISEMPTY(&qel->tx.crypto.frms) &&
+			if (LIST_ISEMPTY(&qel->tx.frms) &&
 			    tel == QUIC_TLS_ENC_LEVEL_INITIAL) {
 				tel = next_tel;
 				qel = &qc->els[tel];
-				if (LIST_ISEMPTY(&qel->tx.crypto.frms)) {
+				if (LIST_ISEMPTY(&qel->tx.frms)) {
 					/* If there is no more data for the next level, let's
 					 * consume a buffer. This is the case for a client
 					 * which sends only one Initial packet, then wait
@@ -2254,7 +2254,7 @@ static int quic_conn_enc_level_init(struct quic_conn *qc,
 
 	qel->tx.crypto.sz = 0;
 	qel->tx.crypto.offset = 0;
-	LIST_INIT(&qel->tx.crypto.frms);
+	LIST_INIT(&qel->tx.frms);
 
 	return 1;
 
@@ -3469,7 +3469,7 @@ static inline int qc_build_cfrms(struct quic_tx_packet *pkt,
 {
 	struct quic_tx_frm *cf, *cfbak;
 
-	list_for_each_entry_safe(cf, cfbak, &qel->tx.crypto.frms, list) {
+	list_for_each_entry_safe(cf, cfbak, &qel->tx.frms, list) {
 		/* header length, data length, frame length. */
 		size_t hlen, dlen, cflen;
 
@@ -3567,7 +3567,7 @@ static ssize_t qc_do_build_hdshk_pkt(struct q_buf *wbuf,
 	beg = pos = q_buf_getpos(wbuf);
 	end = q_buf_end(wbuf);
 	max_cdata_len = QUIC_CRYPTO_IN_FLIGHT_MAX - conn->ifcdata;
-	if (!LIST_ISEMPTY(&qel->tx.crypto.frms) && !max_cdata_len) {
+	if (!LIST_ISEMPTY(&qel->tx.frms) && !max_cdata_len) {
 		TRACE_DEVEL("ifcdada limit reached", QUIC_EV_CONN_CHPKT, conn->conn);
 		goto out;
 	}
@@ -3607,7 +3607,7 @@ static ssize_t qc_do_build_hdshk_pkt(struct q_buf *wbuf,
 
 	/* Length field value without the CRYPTO frames data length. */
 	len = ack_frm_len + *pn_len;
-	if (!LIST_ISEMPTY(&qel->tx.crypto.frms) &&
+	if (!LIST_ISEMPTY(&qel->tx.frms) &&
 	    !qc_build_cfrms(pkt, end - pos, &len, max_cdata_len, qel, conn))
 		goto err;
 
@@ -3787,7 +3787,7 @@ static ssize_t qc_do_build_phdshk_apkt(struct q_buf *wbuf,
 	beg = pos = q_buf_getpos(wbuf);
 	end = q_buf_end(wbuf);
 	max_cdata_len = QUIC_CRYPTO_IN_FLIGHT_MAX - conn->ifcdata;
-	if (!LIST_ISEMPTY(&qel->tx.crypto.frms) && !max_cdata_len) {
+	if (!LIST_ISEMPTY(&qel->tx.frms) && !max_cdata_len) {
 		TRACE_DEVEL("ifcdada limit reached", QUIC_EV_CONN_CPAPKT, conn->conn);
 		goto out;
 	}
@@ -3824,7 +3824,7 @@ static ssize_t qc_do_build_phdshk_apkt(struct q_buf *wbuf,
 		qc_build_frm(&pos, end, &ack_frm, pkt, conn);
 
 	fake_len = ack_frm_len;
-	if (!LIST_ISEMPTY(&qel->tx.crypto.frms) &&
+	if (!LIST_ISEMPTY(&qel->tx.frms) &&
 	    !qc_build_cfrms(pkt, end - pos, &fake_len, max_cdata_len, qel, conn)) {
 		TRACE_DEVEL("some CRYPTO frames could not be built",
 		            QUIC_EV_CONN_CPAPKT, conn->conn);
@@ -3961,7 +3961,7 @@ static int qc_prep_phdshk_pkts(struct quic_conn *qc)
 		ssize_t ret;
 
 		if (!(qel->pktns->flags & QUIC_FL_PKTNS_ACK_REQUIRED) &&
-		    (LIST_ISEMPTY(&qel->tx.crypto.frms) ||
+		    (LIST_ISEMPTY(&qel->tx.frms) ||
 		     qc->ifcdata >= QUIC_CRYPTO_IN_FLIGHT_MAX)) {
 			TRACE_DEVEL("nothing more to do",
 			            QUIC_EV_CONN_PAPKTS, qc->conn);

@@ -366,8 +366,8 @@ struct quic_enc_level {
 			size_t sz;
 			/* The offset of the CRYPT0 data stream. */
 			uint64_t offset;
-			struct list frms;
 		} crypto;
+		struct list frms;
 	} tx;
 	struct quic_pktns *pktns;
 };
