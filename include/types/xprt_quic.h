@@ -221,6 +221,7 @@ struct quic_pktns {
 		int64_t largest_acked_pn;
 		/* The packet which has been sent. */
 		struct eb_root pkts;
+		uint64_t time_of_last_eliciting;
 	} tx;
 	struct {
 		/* Largest packet number */
@@ -285,6 +286,7 @@ struct quic_rx_crypto_frm {
 struct quic_tx_packet {
 	/* List entry point. */
 	struct list list;
+	size_t len;
 	struct eb64_node pn_node;
 	/* The number of bytes of CRYPTO data in this packet. */
 	size_t cdata_len;
@@ -292,6 +294,8 @@ struct quic_tx_packet {
 	struct list frms;
 	/* The time this packet was sent (usec). */
 	uint64_t time_sent;
+	/* Packet number spakce. */
+	struct quic_pktns *pktns;
 	/* Flags. */
 	unsigned int flags;
 };

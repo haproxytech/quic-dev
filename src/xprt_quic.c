@@ -1662,6 +1662,7 @@ static int qc_send_ppkts(struct quic_conn_ctx *ctx)
 	qc = ctx->conn->quic_conn;
 	for (rbuf = q_rbuf(qc); !q_buf_empty(rbuf) ; rbuf = q_next_rbuf(qc)) {
 		struct quic_tx_packet *p, *q;
+		uint64_t time_sent;
 
 		tmpbuf.area = (char *)rbuf->area;
 		tmpbuf.size = tmpbuf.data = rbuf->data;
@@ -1670,11 +1671,15 @@ static int qc_send_ppkts(struct quic_conn_ctx *ctx)
 	                           &tmpbuf, tmpbuf.data, 0) <= 0)
 		    break;
 
+	    time_sent = usec_now();
 	    /* Reset this buffer to make it available for the next packet to prepare. */
 	    q_buf_reset(rbuf);
 		/* Remove from <rbuf> the packets which have just been sent. */
 		list_for_each_entry_safe(p, q, &rbuf->pkts, list) {
-			p->time_sent = usec_now();
+			p->time_sent = time_sent;
+			if (p->flags & QUIC_FL_TX_PACKET_ACK_ELICITING)
+				p->pktns->tx.time_of_last_eliciting = time_sent;
+			/* XXX TO DO increase congestion control in_flight counter. */
 			LIST_DEL(&p->list);
 		}
 	}
@@ -3666,6 +3671,7 @@ static ssize_t qc_do_build_hdshk_pkt(struct q_buf *wbuf,
 static inline void quic_tx_packet_init(struct quic_tx_packet *pkt)
 {
 	pkt->cdata_len = 0;
+	pkt->len = 0;
 	LIST_INIT(&pkt->frms);
 }
 
@@ -3728,6 +3734,7 @@ static ssize_t qc_build_hdshk_pkt(struct q_buf *buf, struct quic_conn *qc, int p
 		goto err;
 
 	end += QUIC_TLS_TAG_LEN;
+	pkt_len += QUIC_TLS_TAG_LEN;
 	if (!quic_apply_header_protection(beg, buf_pn, pn_len,
 	                                  tls_ctx->tx.hp, tls_ctx->tx.hp_key)) {
 		TRACE_DEVEL("Could not apply the header protection", QUIC_EV_CONN_HPKT, qc->conn);
@@ -3743,16 +3750,20 @@ static ssize_t qc_build_hdshk_pkt(struct q_buf *buf, struct quic_conn *qc, int p
 	++qel->pktns->tx.next_pn;
 	/* Attach the built packet to its tree. */
 	pkt->pn_node.key = qel->pktns->tx.next_pn;
+	/* Packet length for in-flight packet only. */
+	if (pkt->flags & QUIC_FL_TX_PACKET_IN_FLIGHT)
+		pkt->len = pkt_len;
+	pkt->pktns = qel->pktns;
 	eb64_insert(&qel->pktns->tx.pkts, &pkt->pn_node);
 	/* Increment the number of bytes in <buf> buffer by the length of this packet. */
-	buf->data += end - beg;
+	buf->data += pkt->len;
 	/* Update the counter of the in flight CRYPTO data. */
 	qc->ifcdata += pkt->cdata_len;
 	/* Attach this packet to <buf>. */
 	LIST_ADDQ(&buf->pkts, &pkt->list);
 	TRACE_LEAVE(QUIC_EV_CONN_HPKT, qc->conn, pkt);
 
-	return end - beg;
+	return pkt_len;
 
  err:
 	free_quic_tx_packet(pkt);
@@ -3911,6 +3922,7 @@ static ssize_t qc_build_phdshk_apkt(struct q_buf *wbuf, struct quic_conn *qc)
 		return -2;
 
 	end += QUIC_TLS_TAG_LEN;
+	pkt_len += QUIC_TLS_TAG_LEN;
 	if (!quic_apply_header_protection(beg, buf_pn, pn_len,
 	                                  tls_ctx->tx.hp, tls_ctx->tx.hp_key)) {
 		QDPRINTF("%s: could not apply header protection\n", __func__);
@@ -3923,14 +3935,18 @@ static ssize_t qc_build_phdshk_apkt(struct q_buf *wbuf, struct quic_conn *qc)
 	/* Attach the built packet to its tree. */
 	pkt->pn_node.key = qel->pktns->tx.next_pn;
 	eb64_insert(&qel->pktns->tx.pkts, &pkt->pn_node);
+	/* Packet length for in-flight packet only. */
+	if (pkt->flags & QUIC_FL_TX_PACKET_IN_FLIGHT)
+		pkt->len = pkt_len;
+	pkt->pktns = qel->pktns;
 	/* Increment the number of bytes in <buf> buffer by the length of this packet. */
-	wbuf->data += end - beg;
+	wbuf->data += pkt->len;
 	/* Attach this packet to <buf>. */
 	LIST_ADDQ(&wbuf->pkts, &pkt->list);
 
 	TRACE_LEAVE(QUIC_EV_CONN_PAPKT, qc->conn);
 
-	return end - beg;
+	return pkt_len;
 }
 
 /*
