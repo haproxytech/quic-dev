@@ -1286,7 +1286,6 @@ static inline int qc_parse_ack_frm(struct quic_frame *frm, struct quic_conn_ctx 
 	uint64_t smallest, largest;
 	struct eb_root *pkts;
 	struct eb64_node *largest_node;
-	struct list *frms;
 	uint64_t time_sent;
 	int may_sample_rtt = 0;
 	unsigned int pkt_flags;
@@ -1309,7 +1308,6 @@ static inline int qc_parse_ack_frm(struct quic_frame *frm, struct quic_conn_ctx 
 	pkt_flags = 0;
 	largest_node = NULL;
 	time_sent = 0;
-	frms = &qel->tx.crypto.frms;
 
 	if ((int64_t)ack->largest_ack > qel->pktns->tx.largest_acked_pn) {
 		largest_node = eb64_lookup(pkts, largest);
@@ -1327,7 +1325,7 @@ static inline int qc_parse_ack_frm(struct quic_frame *frm, struct quic_conn_ctx 
 	TRACE_PROTO("ack range", QUIC_EV_CONN_PRSAFRM,
 	            ctx->conn,, &largest, &smallest);
 	do {
-		uint64_t gap, ack_range, next_largest;
+		uint64_t gap, ack_range;
 
 		if (!ack->ack_range_num--) {
 			qc_ackrng_pkts(pkts, &pkt_flags, largest_node, largest, smallest, ctx);
@@ -1343,22 +1341,19 @@ static inline int qc_parse_ack_frm(struct quic_frame *frm, struct quic_conn_ctx 
 			goto err;
 		}
 
-		next_largest = smallest - gap - 2;
+		largest = smallest - gap - 2;
 		if (!quic_dec_int(&ack_range, pos, end))
 			goto err;
 
-		if (next_largest < ack_range) {
+		if (largest < ack_range) {
 			TRACE_DEVEL("wrong ack range value", QUIC_EV_CONN_PRSAFRM,
-						ctx->conn,, &next_largest, &ack_range);
+						ctx->conn,, &largest, &ack_range);
 			goto err;
 		}
 
-		qc_ackrng_with_gap(pkts, &pkt_flags, frms, largest_node,
-		                   largest, smallest, next_largest, qel, ctx);
 		/* Do not use this node anymore. */
 		largest_node = NULL;
 		/* Next range */
-		largest = next_largest;
 		smallest = largest - ack_range;
 
 		TRACE_PROTO("ack range", QUIC_EV_CONN_PRSAFRM,
