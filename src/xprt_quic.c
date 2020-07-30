@@ -2186,7 +2186,7 @@ static int quic_conn_remove_xprt(struct connection *conn, void *xprt_ctx, void *
 /*
  * Allocate a new QUIC connection and return it if succeeded, NULL if not.
  */
-static struct quic_conn *quic_new_conn(uint32_t version)
+static struct quic_conn *new_quic_conn(uint32_t version)
 {
 	struct quic_conn *quic_conn;
 
@@ -2537,7 +2537,7 @@ static int qc_conn_init(struct connection *conn, void **xprt_ctx)
 		if (RAND_bytes(dcid, sizeof dcid) != 1)
 			goto err;
 
-		conn->quic_conn = quic_new_conn(QUIC_PROTOCOL_VERSION_DRAFT_28);
+		conn->quic_conn = new_quic_conn(QUIC_PROTOCOL_VERSION_DRAFT_28);
 		if (!conn->quic_conn)
 			goto err;
 
@@ -2795,7 +2795,7 @@ static void __quic_conn_deinit(void)
  * QUIC connection of <l> listener.
  * Returns 1 if succeeded, 0 if not.
  */
-static int quic_new_cli_conn(struct quic_conn *quic_conn,
+static int new_quic_cli_conn(struct quic_conn *quic_conn,
                              struct listener *l, struct sockaddr_storage *saddr)
 {
 	struct connection *cli_conn;
@@ -3222,11 +3222,11 @@ static ssize_t qc_lstnr_pkt_rcv(unsigned char **buf, const unsigned char *end,
 				goto err;
 			}
 
-			conn =  quic_new_conn(qpkt->version);
+			conn =  new_quic_conn(qpkt->version);
 			if (!conn)
 				goto err;
 
-			if (!quic_new_cli_conn(conn, l, saddr)) {
+			if (!new_quic_cli_conn(conn, l, saddr)) {
 				free(conn);
 				goto err;
 			}
