@@ -1191,8 +1191,12 @@ static inline struct eb64_node *qc_ackrng_pkts(struct eb_root *pkts, unsigned in
 
 	if (largest_node)
 		node = largest_node;
-	else
+	else {
 		node = eb64_lookup(pkts, largest);
+		while (!node && largest > smallest) {
+			node = eb64_lookup(pkts, --largest);
+		}
+	}
 
 	while (node && node->key >= smallest) {
 		struct quic_tx_frm *frm, *frmbak;
