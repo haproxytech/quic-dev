@@ -47,6 +47,7 @@ static inline void quic_loss_srtt_update(struct quic_loss *ql,
                                          struct quic_conn *conn)
 {
 	TRACE_PROTO("Loss info update", QUIC_EV_CONN_RTTUPDT, conn->conn, &rtt, &ack_delay);
+	ql->latest_rtt = rtt;
 	if (!ql->srtt) {
 		/* No previous measurement. */
 		ql->srtt = rtt << 3;

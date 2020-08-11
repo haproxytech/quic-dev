@@ -27,6 +27,8 @@
 #define QUIC_LOSS_INITIAL_RTT 500000UL /* 500ms */
 
 struct quic_loss {
+	/* The most recent RTT measurement. */
+	unsigned long latest_rtt;
 	/* Smoothed RTT << 4*/
 	unsigned long srtt;
 	/* RTT variation << 2 */
