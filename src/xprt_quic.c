@@ -99,6 +99,7 @@ static const struct trace_event quic_trace_events[] = {
 	{ .mask = QUIC_EV_CONN_FFLIGHT,  .name = "flush_flight",     .desc = "TLS stack ->flush_flight() call"},
 	{ .mask = QUIC_EV_CONN_SSLALERT, .name = "send_alert",       .desc = "TLS stack ->send_alert() call"},
 	{ .mask = QUIC_EV_CONN_CPAPKT,   .name = "phdshk_cpakt",     .desc = "clear post handhshake app. packet preparation" },
+	{ .mask = QUIC_EV_CONN_RTTUPDT,  .name = "rtt_updt",         .desc = "RTT sampling" },
 
 	{ .mask = QUIC_EV_CONN_ENEW,     .name = "new_conn_err",     .desc = "error on new QUIC connection" },
 	{ .mask = QUIC_EV_CONN_EISEC,    .name = "init_secs_err",    .desc = "error on initial secrets derivation" },
