@@ -34,6 +34,9 @@
 #include <types/quic_frame.h>
 #include <types/xprt_quic.h>
 
+#include <proto/quic_cc.h>
+#include <proto/quic_loss.h>
+
 #include <openssl/rand.h>
 
 #ifdef QDEBUG
@@ -963,6 +966,24 @@ static inline void quic_pktns_init(struct quic_pktns *pktns)
 	LIST_INIT(&pktns->rx.ack_ranges.list);
 	pktns->rx.ack_ranges.sz = 0;
 	pktns->rx.ack_ranges.enc_sz = 0;
+}
+
+/*
+ * Initialize <p> QUIC network path depending on <ipv4> boolean
+ * which is true for an IPv4 path, if not false for an IPv6 path.
+ */
+static inline void quic_path_init(struct quic_path *path, int ipv4,
+                                  struct quic_cc_algo *algo, struct quic_conn *qc)
+{
+	size_t max_dgram_sz;
+
+	max_dgram_sz = ipv4 ? QUIC_INITIAL_IPV4_MTU : QUIC_INITIAL_IPV6_MTU;
+	quic_cc_init(&path->cc, algo, qc);
+	quic_loss_init(&path->loss);
+	path->mtu = max_dgram_sz;
+	path->cwnd = min(10 * max_dgram_sz, max(max_dgram_sz << 1, 14720UL));
+	path->min_cwnd = max_dgram_sz << 1;
+	path->in_flight = 0;
 }
 
 /* Return 1 if <pktns> matches with the Application packet number space of <conn> connection

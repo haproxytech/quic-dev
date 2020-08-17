@@ -28,6 +28,7 @@
 #include <common/mini-clist.h>
 
 #include <types/quic.h>
+#include <types/quic_cc.h>
 #include <types/quic_frame.h>
 #include <types/quic_tls.h>
 #include <types/quic_loss.h>
@@ -372,6 +373,22 @@ struct quic_enc_level {
 	struct quic_pktns *pktns;
 };
 
+struct quic_path {
+	/* Control congestion. */
+	struct quic_cc cc;
+	/* Packet loss detection information. */
+	struct quic_loss loss;
+
+	/* MTU. */
+	size_t mtu;
+	/* Congestion window. */
+	size_t cwnd;
+	/* Minimum congestion window. */
+	size_t min_cwnd;
+	/* Outstanding data (in bytes). */
+	uint64_t in_flight;
+};
+
 /* The number of buffers for outgoing packets (must be a power of two). */
 #define QUIC_CONN_TX_BUFS_NB 8
 #define QUIC_CONN_TX_BUF_SZ  QUIC_PACKET_MAXLEN
@@ -427,8 +444,9 @@ struct quic_conn {
 	} tx;
 	/* In flight CRYPTO data counter. */
 	size_t ifcdata;
-	struct quic_loss loss;
 	uint64_t max_ack_delay_us;
+	struct quic_path paths[1];
+	struct quic_path *path;
 };
 
 #endif /* _TYPES_XPRT_QUIC_H */

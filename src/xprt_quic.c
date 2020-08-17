@@ -2354,7 +2354,7 @@ static void quic_conn_free(struct quic_conn *conn)
  * <scid> is the source connection ID with <scid_len> as length.
  * Returns 1 if succeeded, 0 if not.
  */
-static int qc_new_conn_init(struct quic_conn *conn,
+static int qc_new_conn_init(struct quic_conn *conn, int ipv4,
                             struct eb_root *quic_initial_clients,
                             struct eb_root *quic_clients,
                             unsigned char *dcid, size_t dcid_len,
@@ -2424,7 +2424,10 @@ static int qc_new_conn_init(struct quic_conn *conn,
 	conn->tx.wbuf = conn->tx.rbuf = 0;
 
 	conn->ifcdata = 0;
-	quic_loss_init(&conn->loss);
+
+	/* XXX TO DO: Only one path at this time. */
+	conn->path = &conn->paths[0];
+	quic_path_init(conn->path, ipv4, default_quic_cc_algo, conn);
 	TRACE_LEAVE(QUIC_EV_CONN_INIT, conn->conn);
 
 	return 1;
@@ -2536,7 +2539,7 @@ static int qc_conn_init(struct connection *conn, void **xprt_ctx)
 		struct server *srv = __objt_server(conn->target);
 		unsigned char dcid[QUIC_CID_LEN];
 		struct quic_conn *quic_conn;
-		int ssl_err;
+		int ssl_err, ipv4;
 
 		ssl_err = SSL_ERROR_NONE;
 		if (RAND_bytes(dcid, sizeof dcid) != 1)
@@ -2548,7 +2551,8 @@ static int qc_conn_init(struct connection *conn, void **xprt_ctx)
 
 		quic_conn = conn->quic_conn;
 		quic_conn->conn = conn;
-		if (!qc_new_conn_init(quic_conn, NULL, &srv->cids,
+		ipv4 = conn->dst->ss_family == AF_INET;
+		if (!qc_new_conn_init(quic_conn, ipv4, NULL, &srv->cids,
 		                      dcid, sizeof dcid, NULL, 0))
 			goto err;
 
@@ -3221,6 +3225,7 @@ static ssize_t qc_lstnr_pkt_rcv(unsigned char **buf, const unsigned char *end,
 		node = ebmb_lookup(cids, qpkt->dcid.data, cid_lookup_len);
 		if (!node) {
 			struct quic_cid *odcid;
+			int ipv4;
 
 			if (qpkt->type != QUIC_PACKET_TYPE_INITIAL) {
 				QDPRINTF("Connection not found.\n");
@@ -3236,7 +3241,8 @@ static ssize_t qc_lstnr_pkt_rcv(unsigned char **buf, const unsigned char *end,
 				goto err;
 			}
 
-			if (!qc_new_conn_init(conn, &l->icids, &l->cids,
+			ipv4 = saddr->ss_family == AF_INET;
+			if (!qc_new_conn_init(conn, ipv4, &l->icids, &l->cids,
 			                      qpkt->dcid.data, cid_lookup_len,
 			                      qpkt->scid.data, qpkt->scid.len))
 				goto err;
