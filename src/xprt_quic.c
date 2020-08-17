@@ -1290,7 +1290,6 @@ static inline void qc_treat_newly_acked_pkts(struct quic_conn_ctx *ctx,
 	struct quic_tx_packet *pkt, *tmp;
 	struct quic_cc_event ev = { .type = QUIC_CC_EVT_ACK, };
 
-	fprintf(stderr, "%s ctx: %p qc: %p\n", __func__, ctx, ctx->conn->quic_conn);
 	list_for_each_entry_safe(pkt, tmp, newly_acked_pkts, list) {
 		ev.ack.acked = pkt->len;
 		ev.ack.time_sent = pkt->time_sent;
