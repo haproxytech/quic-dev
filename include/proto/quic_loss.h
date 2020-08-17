@@ -73,4 +73,27 @@ static inline void quic_loss_srtt_update(struct quic_loss *ql,
 	TRACE_PROTO("Loss info update", QUIC_EV_CONN_RTTUPDT, conn->conn,,, ql);
 }
 
+/*
+ * Return 1 if a persitent congestion is observed for a list of
+ * lost packets sent during <period> period depending on <ql> loss information,
+ * <now_us> the current time and <max_ack_delay_us> the maximum ACK delay of the connection
+ * experiencing a packet loss. Return 0 on the contrary.
+ */
+static inline int quic_loss_persistent_congestion(struct quic_loss *ql,
+                                                  uint64_t period,
+                                                  uint64_t now_us,
+                                                  uint64_t max_ack_delay_us)
+{
+	uint64_t congestion_period;
+
+	if (!period)
+		return 0;
+
+	congestion_period = (ql->srtt >> 3) +
+		max(ql->rtt_var, QUIC_TIMER_GRANULARITY_US) + max_ack_delay_us;
+	congestion_period *= QUIC_LOSS_PACKET_THRESHOLD;
+
+	return period >= congestion_period;
+}
+
 #endif /* _PROTO_QUIC_LOSS_H */

@@ -24,7 +24,11 @@
 
 #define QUIC_PROTOCOL_VERSION_DRAFT_28   0xff00001c /* draft-28 */
 
-#define QUIC_PACKET_MAXLEN      1252 /* (bytes) for IPv4, 1232 for IPv6 */
+#define QUIC_INITIAL_IPV4_MTU      1252 /* (bytes) */
+#define QUIC_INITIAL_IPV6_MTU      1232
+/* XXX TO DO XXX */
+/* Maximum packet length during handshake */
+#define QUIC_PACKET_MAXLEN     QUIC_INITIAL_IPV4_MTU
 
 /* The minimum length of Initial packets. */
 #define QUIC_INITIAL_PACKET_MINLEN 1200
@@ -143,5 +147,18 @@ enum quic_pkt_type {
 
 /* XXX TODO: check/complete this remaining part (256 crypto reserved errors). */
 #define CRYPTO_ERROR                0x100
+
+/* Similar to kernel min()/max() definitions. */
+#define min(a, b) ({      \
+    typeof(a) _a = (a);   \
+    typeof(b) _b = (b);   \
+    (void) (&_a == &_b);  \
+    _a < _b ? _a : _b; })
+
+#define max(a, b) ({      \
+    typeof(a) _a = (a);   \
+    typeof(b) _b = (b);   \
+    (void) (&_a == &_b);  \
+    _a > _b ? _a : _b; })
 
 #endif /* _TYPES_QUIC_H */

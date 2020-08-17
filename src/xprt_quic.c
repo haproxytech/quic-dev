@@ -36,6 +36,7 @@
 #include <proto/log.h>
 #include <proto/pipe.h>
 #include <proto/proxy.h>
+#include <proto/quic_cc.h>
 #include <proto/quic_frame.h>
 #include <proto/quic_loss.h>
 #include <proto/quic_tls.h>
@@ -438,6 +439,15 @@ static void quic_trace(enum trace_level level, uint64_t mask, const struct trace
 				chunk_appendf(&trace_buf,
 				              " srtt=%luus rttvar=%luus min_rtt=%luus",
 				              ql->srtt >> 3, ql->rtt_var >> 2, ql->rtt_min);
+		}
+		if (mask & QUIC_EV_CONN_CC) {
+			const struct quic_cc_event *ev = a2;
+			const struct quic_cc *cc = a3;
+
+			if (a2)
+				quic_cc_event_trace(&trace_buf, ev);
+			if (a3)
+				quic_cc_state_trace(&trace_buf, cc);
 		}
 	}
 	if (mask & QUIC_EV_CONN_LPKT) {
@@ -1183,6 +1193,7 @@ static inline void qc_treat_acked_tx_frm(struct quic_tx_frm *frm,
  * May be NULL if <largest> node could not be found.
  */
 static inline struct eb64_node *qc_ackrng_pkts(struct eb_root *pkts, unsigned int *pkt_flags,
+                                               struct list *newly_acked_pkts,
                                                struct eb64_node *largest_node,
                                                uint64_t largest, uint64_t smallest,
                                                struct quic_conn_ctx *ctx)
@@ -1204,13 +1215,13 @@ static inline struct eb64_node *qc_ackrng_pkts(struct eb_root *pkts, unsigned in
 
 		pkt = eb64_entry(&node->node, struct quic_tx_packet, pn_node);
 		*pkt_flags |= pkt->flags;
+		LIST_ADD(newly_acked_pkts, &pkt->list);
 		QDPRINTF("Removing packet #%llu\n", pkt->pn_node.key);
 		TRACE_PROTO("Removing packet #", QUIC_EV_CONN_PRSAFRM, ctx->conn,, &pkt->pn_node.key);
 		list_for_each_entry_safe(frm, frmbak, &pkt->frms, list)
 			qc_treat_acked_tx_frm(frm, ctx);
 		node = eb64_prev(node);
 		eb64_delete(&pkt->pn_node);
-		pool_free(pool_head_quic_tx_packet, pkt);
 	}
 
 	return node;
@@ -1234,44 +1245,136 @@ static inline void qc_treat_nacked_tx_frm(struct quic_tx_frm *frm,
 	LIST_ADD(&qel->tx.frms, &frm->list);
 }
 
-/*
- * Remove <largest> down to <smallest> node entries from <frms> root of acket
- * CRYPTO frames deallocating them and accumulate the CRYPTO frames belonging to
- * the same gap <smallest> -> <next_largest> non inclusive in a unique frame to
- * be retransmitted if any.
- * It is possible that this frame does not exist if the ranges have been already
- * parsed (but not acknowledged).
- * Note that <largest> >= <smallest> > <next_largest>.
- * Also updates <ifcdata> in flight crypto data counter.
- * Returns a frame which results of the aggregation of the lost frames belonging
- * to the same gap.
- */
-static inline void
-qc_ackrng_with_gap(struct eb_root *pkts, unsigned int *pkt_flags, struct list *frms,
-                   struct eb64_node *largest_node,
-                   uint64_t largest, uint64_t smallest, uint64_t next_largest,
-                   struct quic_enc_level *qel, struct quic_conn_ctx *ctx)
-{
-	struct eb64_node *node;
-	struct quic_tx_packet *pkt;
 
-	node = qc_ackrng_pkts(pkts, pkt_flags, largest_node, largest, smallest, ctx);
-	if (!node)
+/* Free the TX packets of <pkts> list */
+static inline void free_quic_tx_pkts(struct list *pkts)
+{
+	struct quic_tx_packet *pkt, *tmp;
+
+	list_for_each_entry_safe(pkt, tmp, pkts, list)
+		pool_free(pool_head_quic_tx_packet, pkt);
+}
+
+/* Send a packet loss event nofification to the congestion controller
+ * attached to <qc> connection with <lost_bytes> the number of lost bytes,
+ * <oldest_lost>, <newest_lost> the oldest lost packet and newest lost packet
+ * at <now_us> current time.
+ * Always succeeds.
+ */
+static inline void qc_cc_loss_event(struct quic_conn *qc,
+                                    uint64_t lost_bytes,
+                                    uint64_t newest_time_sent,
+                                    uint64_t period,
+                                    uint64_t now_us)
+{
+	struct quic_cc_event ev = {
+		.type = QUIC_CC_EVT_LOSS,
+		.loss.now_us           = now_us,
+		.loss.max_ack_delay_us = qc->max_ack_delay_us,
+		.loss.lost_bytes       = lost_bytes,
+		.loss.newest_time_sent = newest_time_sent,
+		.loss.period           = period,
+	};
+
+	quic_cc_event(&qc->path->cc, &ev);
+}
+
+/* Send a packet ack event nofication for each newly acked packet of
+ * <newly_acked_pkts> list and free them.
+ * Always succeeds.
+ */
+static inline void qc_treat_newly_acked_pkts(struct quic_conn_ctx *ctx,
+                                             struct list *newly_acked_pkts)
+{
+	struct quic_conn *qc = ctx->conn->quic_conn;
+	struct quic_tx_packet *pkt, *tmp;
+	struct quic_cc_event ev = { .type = QUIC_CC_EVT_ACK, };
+
+	fprintf(stderr, "%s ctx: %p qc: %p\n", __func__, ctx, ctx->conn->quic_conn);
+	list_for_each_entry_safe(pkt, tmp, newly_acked_pkts, list) {
+		ev.ack.acked = pkt->len;
+		ev.ack.time_sent = pkt->time_sent;
+		quic_cc_event(&qc->path->cc, &ev);
+		pool_free(pool_head_quic_tx_packet, pkt);
+	}
+
+}
+
+/* Look for packet loss from sent packets for <qel> encryption level of a
+ * connection with <ctx> as I/O handler context and set the <loss_time> value
+ * of the packet number space if any unacked and not deemed lost packet are
+ * detected.
+ * Should be called after having received an ACK frame with newly acknowledged
+ * packets or when the the loss detection timer has expired.
+ * Always succeeds.
+ */
+static void qc_packet_loss_lookup(struct quic_enc_level *qel,
+                                  struct quic_conn_ctx *ctx)
+{
+	struct quic_pktns *pktns;
+	struct eb_root *pkts;
+	struct eb64_node *node;
+	struct quic_loss *ql;
+	uint64_t now_us, loss_delay, loss_send_time;
+	uint64_t lost_bytes;
+	struct quic_tx_packet *oldest_lost, *newest_lost;
+
+	pktns = qel->pktns;
+	pkts = &pktns->tx.pkts;
+	pktns->tx.loss_time = (uint64_t)-1;
+	if (eb_is_empty(pkts))
 		return;
 
-	/* Aggregate the consecutive CRYPTO frames belonging to the same gap. */
-	while (node && node->key > next_largest) {
-		struct quic_tx_frm *frm, *frmbak;
+	now_us = usec_now();
+	ql = &ctx->conn->quic_conn->path->loss;
+	loss_delay = max(ql->latest_rtt, ql->srtt >> 3);
+	loss_delay += loss_delay >> 3;
+	loss_delay = max(loss_delay, QUIC_TIMER_GRANULARITY_US);
+	loss_send_time = now_us - loss_delay;
+
+	oldest_lost = newest_lost = NULL;
+	lost_bytes = 0;
+	node = eb64_first(pkts);
+	while (node) {
+		struct quic_tx_packet *pkt;
+		int64_t largest_acked_pn;
 
 		pkt = eb64_entry(&node->node, struct quic_tx_packet, pn_node);
-		QDPRINTF("to resend packet #%llu\n", pkt->pn_node.key);
-		TRACE_PROTO("to resend packet #",
-		            QUIC_EV_CONN_PRSAFRM, ctx->conn,, &pkt->pn_node.key);
-		list_for_each_entry_safe(frm, frmbak, &pkt->frms, list)
-			qc_treat_nacked_tx_frm(frm, qel, ctx);
-		node = eb64_prev(node);
-		eb64_delete(&pkt->pn_node);
-		pool_free(pool_head_quic_tx_packet, pkt);
+		largest_acked_pn = pktns->tx.largest_acked_pn;
+		node = eb64_next(node);
+		if ((int64_t)pkt->pn_node.key > largest_acked_pn)
+			break;
+
+		if (pkt->time_sent <= loss_send_time ||
+			(int64_t)largest_acked_pn >= pkt->pn_node.key + QUIC_LOSS_PACKET_THRESHOLD) {
+			struct quic_tx_frm *frm, *frmbak;
+
+			/* Treat the frames of this lost packet. */
+			list_for_each_entry_safe(frm, frmbak, &pkt->frms, list)
+				qc_treat_nacked_tx_frm(frm, qel, ctx);
+			/* Increment the packet loss byte counter. */
+			lost_bytes += pkt->len;
+			eb64_delete(&pkt->pn_node);
+			if (!oldest_lost) {
+				oldest_lost = newest_lost = pkt;
+			}
+			else {
+				if (newest_lost != oldest_lost)
+					pool_free(pool_head_quic_tx_packet, newest_lost);
+				newest_lost = pkt;
+			}
+		}
+		else {
+			pktns->tx.loss_time = min(pktns->tx.loss_time, pkt->time_sent + loss_delay);
+		}
+	}
+
+	if (lost_bytes) {
+		/* Sent a packet loss event to the congestion controller. */
+		qc_cc_loss_event(ctx->conn->quic_conn, lost_bytes, newest_lost->time_sent,
+		                 newest_lost->time_sent - oldest_lost->time_sent, now_us);
+		pool_free(pool_head_quic_tx_packet, oldest_lost);
+		pool_free(pool_head_quic_tx_packet, newest_lost);
 	}
 }
 
@@ -1292,8 +1395,9 @@ static inline int qc_parse_ack_frm(struct quic_frame *frm, struct quic_conn_ctx 
 	struct eb_root *pkts;
 	struct eb64_node *largest_node;
 	uint64_t time_sent;
-	int may_sample_rtt = 0;
+	int may_sample_rtt;
 	unsigned int pkt_flags;
+	struct list newly_acked_pkts = LIST_HEAD_INIT(newly_acked_pkts);
 
 	if (ack->largest_ack > qel->pktns->tx.next_pn) {
 		TRACE_DEVEL("ACK for not sent packet", QUIC_EV_CONN_PRSAFRM,
@@ -1313,6 +1417,7 @@ static inline int qc_parse_ack_frm(struct quic_frame *frm, struct quic_conn_ctx 
 	pkt_flags = 0;
 	largest_node = NULL;
 	time_sent = 0;
+	may_sample_rtt = 0;
 
 	if ((int64_t)ack->largest_ack > qel->pktns->tx.largest_acked_pn) {
 		largest_node = eb64_lookup(pkts, largest);
@@ -1333,7 +1438,8 @@ static inline int qc_parse_ack_frm(struct quic_frame *frm, struct quic_conn_ctx 
 		uint64_t gap, ack_range;
 
 		if (!ack->ack_range_num--) {
-			qc_ackrng_pkts(pkts, &pkt_flags, largest_node, largest, smallest, ctx);
+			qc_ackrng_pkts(pkts, &pkt_flags, &newly_acked_pkts,
+			               largest_node, largest, smallest, ctx);
 			break;
 		}
 
@@ -1373,9 +1479,14 @@ static inline int qc_parse_ack_frm(struct quic_frame *frm, struct quic_conn_ctx 
 		qel->pktns->tx.largest_acked_pn = ack->largest_ack;
 	}
 
+	if (!LIST_ISEMPTY(&newly_acked_pkts) && !eb_is_empty(&qel->pktns->tx.pkts))
+		qc_packet_loss_lookup(qel, ctx);
+	qc_treat_newly_acked_pkts(ctx, &newly_acked_pkts);
+
 	return 1;
 
  err:
+	free_quic_tx_pkts(&newly_acked_pkts);
 	TRACE_DEVEL("leaving in error", QUIC_EV_CONN_PRSAFRM, ctx->conn);
 	return 0;
 }
@@ -1524,7 +1635,7 @@ static int qc_parse_pkt_frms(struct quic_rx_packet *pkt, struct quic_conn_ctx *c
 
 				ack_delay = !quic_application_pktns(qel->pktns, conn) ? 0 :
 					min(quic_ack_delay_us(&frm.ack, conn), conn->max_ack_delay_us);
-				quic_loss_srtt_update(&conn->loss, rtt_sample, ack_delay, conn);
+				quic_loss_srtt_update(&conn->path->loss, rtt_sample, ack_delay, conn);
 			}
 			tasklet_wakeup(ctx->wait_event.tasklet);
 			break;
@@ -1679,7 +1790,7 @@ static int qc_send_ppkts(struct quic_conn_ctx *ctx)
 			p->time_sent = time_sent;
 			if (p->flags & QUIC_FL_TX_PACKET_ACK_ELICITING)
 				p->pktns->tx.time_of_last_eliciting = time_sent;
-			/* XXX TO DO increase congestion control in_flight counter. */
+			qc->path->in_flight += p->len;
 			LIST_DEL(&p->list);
 		}
 	}

@@ -73,6 +73,7 @@
 #define           QUIC_EV_CONN_SSLALERT  (1ULL << 27)
 #define           QUIC_EV_CONN_CPAPKT    (1ULL << 28)
 #define           QUIC_EV_CONN_RTTUPDT   (1ULL << 29)
+#define           QUIC_EV_CONN_CC        (1ULL << 30)
 
 #define           QUIC_EV_CONN_ENEW      (1ULL << 32)
 #define           QUIC_EV_CONN_EISEC     (1ULL << 33)
@@ -223,6 +224,7 @@ struct quic_pktns {
 		/* The packet which has been sent. */
 		struct eb_root pkts;
 		uint64_t time_of_last_eliciting;
+		uint64_t loss_time;
 	} tx;
 	struct {
 		/* Largest packet number */
