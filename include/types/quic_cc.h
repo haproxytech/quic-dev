@@ -1,0 +1,96 @@
+/*
+ * include/types/quic_cc.h
+ * This file contains definitions for QUIC congestion control.
+ *
+ * Copyright 2019 HAProxy Technologies, Frédéric Lécaille <flecaille@haproxy.com>
+ *
+ * This library is free software; you can redistribute it and/or
+ * modify it under the terms of the GNU Lesser General Public
+ * License as published by the Free Software Foundation, version 2.1
+ * exclusively.
+ *
+ * This library is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the GNU
+ * Lesser General Public License for more details.
+ *
+ * You should have received a copy of the GNU Lesser General Public
+ * License along with this library; if not, write to the Free Software
+ * Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301  USA
+ */
+
+#ifndef _TYPES_QUIC_CC_H
+#define _TYPES_QUIC_CC_H
+
+#include <stddef.h> /* size_t */
+#include <stdint.h>
+
+#include <common/buffer.h>
+
+#define QUIC_CC_INFINITE_SSTHESH ((uint64_t)-1)
+
+extern struct quic_cc_algo quic_cc_algo_nr;
+extern struct quic_cc_algo *default_quic_cc_algo;
+
+enum quic_cc_algo_state_type {
+	/* Slow start. */
+	QUIC_CC_ST_SS,
+	/* Congestion avoidance. */
+	QUIC_CC_ST_CA,
+};
+
+enum quic_cc_event_type {
+	/* ACK receipt. */
+	QUIC_CC_EVT_ACK,
+	/* Packet loss. */
+	QUIC_CC_EVT_LOSS,
+	/* ECN-CE. */
+	QUIC_CC_EVT_ECN_CE,
+};
+
+struct quic_cc_event {
+	enum quic_cc_event_type type;
+	union {
+		struct ack {
+			uint64_t acked;
+			uint64_t time_sent;
+		} ack;
+		struct loss {
+			uint64_t now_us;
+			uint64_t max_ack_delay_us;
+			uint64_t lost_bytes;
+			uint64_t newest_time_sent;
+			uint64_t period;
+		} loss;
+	};
+};
+
+enum quic_cc_algo_type {
+	QUIC_CC_ALGO_TP_NEWRENO,
+};
+
+union quic_cc_algo_state {
+	/* NewReno */
+	struct nr {
+		enum quic_cc_algo_state_type state;
+		uint64_t cwnd;
+		uint64_t ssthresh;
+		uint64_t recovery_start_time;
+	} nr;
+};
+
+struct quic_cc {
+	/* <conn> is there ony for debugging purpose. */
+	struct quic_conn *qc;
+	struct quic_cc_algo *algo;
+	union quic_cc_algo_state algo_state;
+};
+
+struct quic_cc_algo {
+	enum quic_cc_algo_type type;
+	int (*init)(struct quic_cc *cc);
+	void (*event)(struct quic_cc *cc, struct quic_cc_event *ev);
+	void (*state_trace)(struct buffer *buf, const struct quic_cc *cc);
+};
+
+#endif /* _TYPES_QUIC_CC_H */

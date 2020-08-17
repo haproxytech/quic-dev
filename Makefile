@@ -824,7 +824,8 @@ EBTREE_OBJS = $(EBTREE_DIR)/ebtree.o $(EBTREE_DIR)/eb32sctree.o \
 
 ifneq ($(USE_QUIC),)
 OBJS += src/proto_quic.o src/xprt_quic.o src/quic_tls.o src/quic_frame.o \
-        src/mux_quic.o src/mux_h3.o src/h3.o
+        src/mux_quic.o src/mux_h3.o src/h3.o src/quic_cc.o \
+        src/quic_cc_newreno.o
 endif
 
 ifneq ($(TRACE),)
