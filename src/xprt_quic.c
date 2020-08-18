@@ -101,6 +101,7 @@ static const struct trace_event quic_trace_events[] = {
 	{ .mask = QUIC_EV_CONN_SSLALERT, .name = "send_alert",       .desc = "TLS stack ->send_alert() call"},
 	{ .mask = QUIC_EV_CONN_CPAPKT,   .name = "phdshk_cpakt",     .desc = "clear post handhshake app. packet preparation" },
 	{ .mask = QUIC_EV_CONN_RTTUPDT,  .name = "rtt_updt",         .desc = "RTT sampling" },
+	{ .mask = QUIC_EV_CONN_SPPKTS,   .name = "sppkts",           .desc = "send prepared packets" },
 
 	{ .mask = QUIC_EV_CONN_ENEW,     .name = "new_conn_err",     .desc = "error on new QUIC connection" },
 	{ .mask = QUIC_EV_CONN_EISEC,    .name = "init_secs_err",    .desc = "error on initial secrets derivation" },
@@ -1778,6 +1779,7 @@ static int qc_send_ppkts(struct quic_conn_ctx *ctx)
 	struct buffer tmpbuf = { };
 	struct q_buf *rbuf;
 
+	TRACE_ENTER(QUIC_EV_CONN_SPPKTS, ctx->conn);
 	qc = ctx->conn->quic_conn;
 	for (rbuf = q_rbuf(qc); !q_buf_empty(rbuf) ; rbuf = q_next_rbuf(qc)) {
 		struct quic_tx_packet *p, *q;
@@ -1802,6 +1804,7 @@ static int qc_send_ppkts(struct quic_conn_ctx *ctx)
 			LIST_DEL(&p->list);
 		}
 	}
+	TRACE_LEAVE(QUIC_EV_CONN_SPPKTS, ctx->conn);
 
 	return 1;
 }

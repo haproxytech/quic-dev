@@ -74,6 +74,7 @@
 #define           QUIC_EV_CONN_CPAPKT    (1ULL << 28)
 #define           QUIC_EV_CONN_RTTUPDT   (1ULL << 29)
 #define           QUIC_EV_CONN_CC        (1ULL << 30)
+#define           QUIC_EV_CONN_SPPKTS    (1ULL << 31)
 
 #define           QUIC_EV_CONN_ENEW      (1ULL << 32)
 #define           QUIC_EV_CONN_EISEC     (1ULL << 33)
