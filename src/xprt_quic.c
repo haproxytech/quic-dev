@@ -1291,7 +1291,7 @@ static inline void qc_treat_newly_acked_pkts(struct quic_conn_ctx *ctx,
 	struct quic_cc_event ev = { .type = QUIC_CC_EVT_ACK, };
 
 	list_for_each_entry_safe(pkt, tmp, newly_acked_pkts, list) {
-		ev.ack.acked = pkt->len;
+		ev.ack.acked = pkt->in_flight_len;
 		ev.ack.time_sent = pkt->time_sent;
 		quic_cc_event(&qc->path->cc, &ev);
 		pool_free(pool_head_quic_tx_packet, pkt);
@@ -1352,7 +1352,7 @@ static void qc_packet_loss_lookup(struct quic_enc_level *qel,
 			list_for_each_entry_safe(frm, frmbak, &pkt->frms, list)
 				qc_treat_nacked_tx_frm(frm, qel, ctx);
 			/* Increment the packet loss byte counter. */
-			lost_bytes += pkt->len;
+			lost_bytes += pkt->in_flight_len;
 			eb64_delete(&pkt->pn_node);
 			if (!oldest_lost) {
 				oldest_lost = newest_lost = pkt;
@@ -1789,7 +1789,7 @@ static int qc_send_ppkts(struct quic_conn_ctx *ctx)
 			p->time_sent = time_sent;
 			if (p->flags & QUIC_FL_TX_PACKET_ACK_ELICITING)
 				p->pktns->tx.time_of_last_eliciting = time_sent;
-			qc->path->in_flight += p->len;
+			qc->path->in_flight += p->in_flight_len;
 			LIST_DEL(&p->list);
 		}
 	}
@@ -3787,7 +3787,7 @@ static ssize_t qc_do_build_hdshk_pkt(struct q_buf *wbuf,
 static inline void quic_tx_packet_init(struct quic_tx_packet *pkt)
 {
 	pkt->cdata_len = 0;
-	pkt->len = 0;
+	pkt->in_flight_len = 0;
 	LIST_INIT(&pkt->frms);
 }
 
@@ -3866,13 +3866,13 @@ static ssize_t qc_build_hdshk_pkt(struct q_buf *buf, struct quic_conn *qc, int p
 	++qel->pktns->tx.next_pn;
 	/* Attach the built packet to its tree. */
 	pkt->pn_node.key = qel->pktns->tx.next_pn;
-	/* Packet length for in-flight packet only. */
+	/* Set the packet in fligth length for in flight packet only. */
 	if (pkt->flags & QUIC_FL_TX_PACKET_IN_FLIGHT)
-		pkt->len = pkt_len;
+		pkt->in_flight_len = pkt_len;
 	pkt->pktns = qel->pktns;
 	eb64_insert(&qel->pktns->tx.pkts, &pkt->pn_node);
 	/* Increment the number of bytes in <buf> buffer by the length of this packet. */
-	buf->data += pkt->len;
+	buf->data += pkt_len;
 	/* Update the counter of the in flight CRYPTO data. */
 	qc->ifcdata += pkt->cdata_len;
 	/* Attach this packet to <buf>. */
@@ -4051,12 +4051,12 @@ static ssize_t qc_build_phdshk_apkt(struct q_buf *wbuf, struct quic_conn *qc)
 	/* Attach the built packet to its tree. */
 	pkt->pn_node.key = qel->pktns->tx.next_pn;
 	eb64_insert(&qel->pktns->tx.pkts, &pkt->pn_node);
-	/* Packet length for in-flight packet only. */
+	/* Set the packet in fligth length for in flight packet only. */
 	if (pkt->flags & QUIC_FL_TX_PACKET_IN_FLIGHT)
-		pkt->len = pkt_len;
+		pkt->in_flight_len = pkt_len;
 	pkt->pktns = qel->pktns;
 	/* Increment the number of bytes in <buf> buffer by the length of this packet. */
-	wbuf->data += pkt->len;
+	wbuf->data += pkt_len;
 	/* Attach this packet to <buf>. */
 	LIST_ADDQ(&wbuf->pkts, &pkt->list);
 

@@ -289,7 +289,10 @@ struct quic_rx_crypto_frm {
 struct quic_tx_packet {
 	/* List entry point. */
 	struct list list;
-	size_t len;
+	/* This is not the packet length but the length of outstanding data
+	 * for in flight TX packet.
+	 */
+	size_t in_flight_len;
 	struct eb64_node pn_node;
 	/* The number of bytes of CRYPTO data in this packet. */
 	size_t cdata_len;
