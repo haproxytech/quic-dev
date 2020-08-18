@@ -173,6 +173,10 @@ static inline char *quic_hdshk_state_str(const enum quic_handshake_state state)
 		return "SH";
 	case QUIC_HS_ST_SERVER_HANDSHAKE_FAILED:
 		return "SF";
+	case QUIC_HS_ST_COMPLETE:
+		return "CP";
+	case QUIC_HS_ST_CONFIRMED:
+		return "CF";
 	}
 
 	return NULL;
@@ -338,6 +342,8 @@ static inline int quic_get_tls_enc_levels(enum quic_tls_enc_level *level,
 		break;
 	case QUIC_HS_ST_SERVER_HANDSHAKE:
 	case QUIC_HS_ST_CLIENT_HANDSHAKE:
+	case QUIC_HS_ST_COMPLETE:
+	case QUIC_HS_ST_CONFIRMED:
 		*level = QUIC_TLS_ENC_LEVEL_HANDSHAKE;
 		*next_level = QUIC_TLS_ENC_LEVEL_APP;
 		break;

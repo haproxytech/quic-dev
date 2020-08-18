@@ -1516,7 +1516,7 @@ static inline int qc_provide_cdata(struct quic_enc_level *el,
 	TRACE_PROTO("in order CRYPTO data",
 	            QUIC_EV_CONN_SSLDATA, ctx->conn,, cf, ctx->ssl);
 
-	if (ctx->conn->flags & CO_FL_SSL_WAIT_HS) {
+	if (ctx->state < QUIC_HS_ST_COMPLETE) {
 		ssl_err = SSL_do_handshake(ctx->ssl);
 		if (ssl_err != 1) {
 			ssl_err = SSL_get_error(ctx->ssl, ssl_err);
@@ -1532,7 +1532,10 @@ static inline int qc_provide_cdata(struct quic_enc_level *el,
 		}
 
 		TRACE_PROTO("SSL handshake OK", QUIC_EV_CONN_HDSHK, ctx->conn, &ctx->state);
-		ctx->conn->flags &= ~CO_FL_SSL_WAIT_HS;
+		if (objt_listener(ctx->conn->target))
+			ctx->state = QUIC_HS_ST_CONFIRMED;
+		else
+			ctx->state = QUIC_HS_ST_COMPLETE;
 	} else {
 		ssl_err = SSL_process_quic_post_handshake(ctx->ssl);
 		if (ssl_err != 1) {
@@ -2060,7 +2063,8 @@ static inline void qc_rm_hp_pkts(struct quic_enc_level *el, struct quic_conn_ctx
 
 	TRACE_ENTER(QUIC_EV_CONN_ELRMHP, ctx->conn);
 	app_qel = &ctx->conn->quic_conn->els[QUIC_TLS_ENC_LEVEL_APP];
-	if (el == app_qel && (ctx->conn->flags & CO_FL_SSL_WAIT_HS)) {
+	/* A server must not process incoming 1-RTT packets before the handshake is complete. */
+	if (el == app_qel && objt_listener(ctx->conn->target) && ctx->state < QUIC_HS_ST_COMPLETE) {
 		TRACE_PROTO("hp not removed (handshake not completed)",
 		            QUIC_EV_CONN_ELRMHP, ctx->conn);
 		goto out;
@@ -2248,7 +2252,7 @@ static int qc_do_hdshk(struct quic_conn_ctx *ctx)
 	}
 
 	/* If the handshake has not been completed -> out! */
-	if (ctx->conn->flags & CO_FL_SSL_WAIT_HS)
+	if (ctx->state < QUIC_HS_ST_COMPLETE)
 		goto out;
 
 	if (!quic_build_post_handshake_frames(quic_conn) ||
@@ -2271,7 +2275,7 @@ static struct task *quic_conn_io_cb(struct task *t, void *context, unsigned shor
 	struct quic_conn_ctx *ctx = context;
 
 	QDPRINTF("%s: tid: %u\n", __func__, tid);
-	if (ctx->conn->flags & CO_FL_SSL_WAIT_HS) {
+	if (ctx->state < QUIC_HS_ST_COMPLETE) {
 		if (!qc_do_hdshk(ctx))
 			QDPRINTF("%s SSL handshake error\n", __func__);
 	}
@@ -3085,7 +3089,7 @@ static inline int qc_try_rm_hp(struct quic_rx_packet *qpkt,
 	qel = &ctx->conn->quic_conn->els[tel];
 
 	if ((qel->tls_ctx.rx.flags & QUIC_FL_TLS_SECRETS_SET) &&
-	    (tel != QUIC_TLS_ENC_LEVEL_APP || !(ctx->conn->flags & CO_FL_SSL_WAIT_HS))) {
+	    (tel != QUIC_TLS_ENC_LEVEL_APP || ctx->state >= QUIC_HS_ST_COMPLETE)) {
 		/*
 		 * Note that the following function enables us to unprotect the packet
 		 * number and its length subsequently used to decrypt the entire

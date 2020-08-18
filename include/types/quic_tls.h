@@ -46,6 +46,10 @@ enum quic_handshake_state {
 	QUIC_HS_ST_SERVER_INITIAL,
 	QUIC_HS_ST_SERVER_HANDSHAKE,
 	QUIC_HS_ST_SERVER_HANDSHAKE_FAILED,
+
+	/* Common to servers and clients */
+	QUIC_HS_ST_COMPLETE,
+	QUIC_HS_ST_CONFIRMED,
 };
 
 /* QUIC TLS level encryption */
