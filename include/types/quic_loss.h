@@ -28,6 +28,7 @@
 #define QUIC_LOSS_PACKET_THRESHOLD         3
 #define QUIC_TIMER_GRANULARITY_US     1000UL /* 1ms   */
 #define QUIC_LOSS_INITIAL_RTT_US    500000UL /* 500ms */
+#define QUIC_LOSS_TIME_INFINITE    (uint64_t)-1
 
 struct quic_loss {
 	/* The most recent RTT measurement. */

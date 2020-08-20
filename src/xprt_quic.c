@@ -1300,6 +1300,48 @@ static inline void qc_treat_newly_acked_pkts(struct quic_conn_ctx *ctx,
 
 }
 
+/*
+ * Treat <pkts> list of lost packets detected at <now_us> time removing
+ * treating their TX frame.
+ * Send a packet loss event to the congestion controller if
+ * in flight packet have been lost.
+ * Never fails.
+ */
+static inline void qc_treat_lost_pkts(struct quic_enc_level *qel,
+                                      struct quic_conn_ctx *ctx,
+                                      struct list *pkts,
+                                      uint64_t now_us)
+{
+	struct quic_tx_packet *pkt, *oldest_lost, *newest_lost;
+	struct quic_tx_frm *frm, *frmbak;
+	uint64_t lost_bytes;
+
+	lost_bytes = 0;
+	oldest_lost = newest_lost = NULL;
+	list_for_each_entry(pkt, pkts, list) {
+		lost_bytes += pkt->in_flight_len;
+		/* Treat the frames of this lost packet. */
+		list_for_each_entry_safe(frm, frmbak, &pkt->frms, list)
+			qc_treat_nacked_tx_frm(frm, qel, ctx);
+		if (!oldest_lost) {
+			oldest_lost = newest_lost = pkt;
+		}
+		else {
+			if (newest_lost != oldest_lost)
+				pool_free(pool_head_quic_tx_packet, newest_lost);
+			newest_lost = pkt;
+		}
+	}
+
+	if (lost_bytes) {
+		/* Sent a packet loss event to the congestion controller. */
+		qc_cc_loss_event(ctx->conn->quic_conn, lost_bytes, newest_lost->time_sent,
+		                 newest_lost->time_sent - oldest_lost->time_sent, now_us);
+		pool_free(pool_head_quic_tx_packet, oldest_lost);
+		pool_free(pool_head_quic_tx_packet, newest_lost);
+	}
+}
+
 /* Look for packet loss from sent packets for <qel> encryption level of a
  * connection with <ctx> as I/O handler context and set the <loss_time> value
  * of the packet number space if any unacked and not deemed lost packet are
@@ -1308,32 +1350,27 @@ static inline void qc_treat_newly_acked_pkts(struct quic_conn_ctx *ctx,
  * packets or when the the loss detection timer has expired.
  * Always succeeds.
  */
-static void qc_packet_loss_lookup(struct quic_enc_level *qel,
-                                  struct quic_conn_ctx *ctx)
+static void qc_packet_loss_lookup(struct quic_pktns *pktns,
+                                  struct quic_conn_ctx *ctx,
+                                  struct list *lost_pkts,
+                                  uint64_t now_us)
 {
-	struct quic_pktns *pktns;
 	struct eb_root *pkts;
 	struct eb64_node *node;
 	struct quic_loss *ql;
-	uint64_t now_us, loss_delay, loss_send_time;
-	uint64_t lost_bytes;
-	struct quic_tx_packet *oldest_lost, *newest_lost;
+	uint64_t loss_delay, loss_send_time;
 
-	pktns = qel->pktns;
 	pkts = &pktns->tx.pkts;
-	pktns->tx.loss_time = (uint64_t)-1;
+	pktns->tx.loss_time = QUIC_LOSS_TIME_INFINITE;
 	if (eb_is_empty(pkts))
 		return;
 
-	now_us = usec_now();
 	ql = &ctx->conn->quic_conn->path->loss;
 	loss_delay = max(ql->latest_rtt, ql->srtt >> 3);
 	loss_delay += loss_delay >> 3;
 	loss_delay = max(loss_delay, QUIC_TIMER_GRANULARITY_US);
 	loss_send_time = now_us - loss_delay;
 
-	oldest_lost = newest_lost = NULL;
-	lost_bytes = 0;
 	node = eb64_first(pkts);
 	while (node) {
 		struct quic_tx_packet *pkt;
@@ -1347,34 +1384,12 @@ static void qc_packet_loss_lookup(struct quic_enc_level *qel,
 
 		if (pkt->time_sent <= loss_send_time ||
 			(int64_t)largest_acked_pn >= pkt->pn_node.key + QUIC_LOSS_PACKET_THRESHOLD) {
-			struct quic_tx_frm *frm, *frmbak;
-
-			/* Treat the frames of this lost packet. */
-			list_for_each_entry_safe(frm, frmbak, &pkt->frms, list)
-				qc_treat_nacked_tx_frm(frm, qel, ctx);
-			/* Increment the packet loss byte counter. */
-			lost_bytes += pkt->in_flight_len;
 			eb64_delete(&pkt->pn_node);
-			if (!oldest_lost) {
-				oldest_lost = newest_lost = pkt;
-			}
-			else {
-				if (newest_lost != oldest_lost)
-					pool_free(pool_head_quic_tx_packet, newest_lost);
-				newest_lost = pkt;
-			}
+			LIST_ADDQ(lost_pkts, &pkt->list);
 		}
 		else {
 			pktns->tx.loss_time = min(pktns->tx.loss_time, pkt->time_sent + loss_delay);
 		}
-	}
-
-	if (lost_bytes) {
-		/* Sent a packet loss event to the congestion controller. */
-		qc_cc_loss_event(ctx->conn->quic_conn, lost_bytes, newest_lost->time_sent,
-		                 newest_lost->time_sent - oldest_lost->time_sent, now_us);
-		pool_free(pool_head_quic_tx_packet, oldest_lost);
-		pool_free(pool_head_quic_tx_packet, newest_lost);
 	}
 }
 
@@ -1398,6 +1413,8 @@ static inline int qc_parse_ack_frm(struct quic_frame *frm, struct quic_conn_ctx 
 	int may_sample_rtt;
 	unsigned int pkt_flags;
 	struct list newly_acked_pkts = LIST_HEAD_INIT(newly_acked_pkts);
+	struct list lost_pkts = LIST_HEAD_INIT(lost_pkts);
+	uint64_t now_us;
 
 	if (ack->largest_ack > qel->pktns->tx.next_pn) {
 		TRACE_DEVEL("ACK for not sent packet", QUIC_EV_CONN_PRSAFRM,
@@ -1471,16 +1488,21 @@ static inline int qc_parse_ack_frm(struct quic_frame *frm, struct quic_conn_ctx 
 		            ctx->conn,, &largest, &smallest);
 	} while (1);
 
+	now_us = 0;
 	if (may_sample_rtt && (pkt_flags & QUIC_FL_TX_PACKET_ACK_ELICITING)) {
-		uint64_t now;
-
-		now = usec_now();
-		*rtt_sample = now - time_sent;
+		now_us= usec_now();
+		*rtt_sample = now_us - time_sent;
 		qel->pktns->tx.largest_acked_pn = ack->largest_ack;
 	}
 
-	if (!LIST_ISEMPTY(&newly_acked_pkts) && !eb_is_empty(&qel->pktns->tx.pkts))
-		qc_packet_loss_lookup(qel, ctx);
+	if (!LIST_ISEMPTY(&newly_acked_pkts) && !eb_is_empty(&qel->pktns->tx.pkts)) {
+		if (!now_us)
+			now_us = usec_now();
+		qc_packet_loss_lookup(qel->pktns, ctx, &lost_pkts, now_us);
+		if (!LIST_ISEMPTY(&lost_pkts))
+			qc_treat_lost_pkts(qel, ctx, &lost_pkts, now_us);
+	}
+
 	qc_treat_newly_acked_pkts(ctx, &newly_acked_pkts);
 
 	return 1;

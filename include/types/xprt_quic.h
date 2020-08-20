@@ -225,6 +225,7 @@ struct quic_pktns {
 		/* The packet which has been sent. */
 		struct eb_root pkts;
 		uint64_t time_of_last_eliciting;
+		/* The time this packet number space has experienced packet loss. */
 		uint64_t loss_time;
 	} tx;
 	struct {
