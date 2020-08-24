@@ -1292,6 +1292,7 @@ static inline void qc_treat_newly_acked_pkts(struct quic_conn_ctx *ctx,
 	struct quic_cc_event ev = { .type = QUIC_CC_EVT_ACK, };
 
 	list_for_each_entry_safe(pkt, tmp, newly_acked_pkts, list) {
+		pkt->pktns->tx.in_flight -= pkt->in_flight_len;
 		ev.ack.acked = pkt->in_flight_len;
 		ev.ack.time_sent = pkt->time_sent;
 		quic_cc_event(&qc->path->cc, &ev);
@@ -1320,6 +1321,7 @@ static inline void qc_treat_lost_pkts(struct quic_enc_level *qel,
 	oldest_lost = newest_lost = NULL;
 	list_for_each_entry(pkt, pkts, list) {
 		lost_bytes += pkt->in_flight_len;
+		pkt->pktns->tx.in_flight -= pkt->in_flight_len;
 		/* Treat the frames of this lost packet. */
 		list_for_each_entry_safe(frm, frmbak, &pkt->frms, list)
 			qc_treat_nacked_tx_frm(frm, qel, ctx);
@@ -1824,6 +1826,7 @@ static int qc_send_ppkts(struct quic_conn_ctx *ctx)
 			if (p->flags & QUIC_FL_TX_PACKET_ACK_ELICITING)
 				p->pktns->tx.time_of_last_eliciting = time_sent;
 			qc->path->in_flight += p->in_flight_len;
+			p->pktns->tx.in_flight += p->in_flight_len;
 			LIST_DEL(&p->list);
 		}
 	}
