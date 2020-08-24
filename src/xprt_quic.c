@@ -1338,7 +1338,8 @@ static inline void qc_treat_lost_pkts(struct quic_enc_level *qel,
 		qc_cc_loss_event(ctx->conn->quic_conn, lost_bytes, newest_lost->time_sent,
 		                 newest_lost->time_sent - oldest_lost->time_sent, now_us);
 		pool_free(pool_head_quic_tx_packet, oldest_lost);
-		pool_free(pool_head_quic_tx_packet, newest_lost);
+		if (newest_lost != oldest_lost)
+			pool_free(pool_head_quic_tx_packet, newest_lost);
 	}
 }
 
