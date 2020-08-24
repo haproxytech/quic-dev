@@ -24,6 +24,8 @@
 
 #include <stdint.h>
 
+#include <common/time.h>
+
 #include <types/xprt_quic.h>
 
 #include <proto/trace.h>
