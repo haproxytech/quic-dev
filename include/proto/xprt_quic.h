@@ -978,6 +978,7 @@ static inline void quic_path_init(struct quic_path *path, int ipv4,
 	path->cwnd = min(10 * max_dgram_sz, max(max_dgram_sz << 1, 14720UL));
 	path->min_cwnd = max_dgram_sz << 1;
 	path->in_flight = 0;
+	path->in_flight_ae_pkts = 0;
 }
 
 /* Return 1 if <pktns> matches with the Application packet number space of <conn> connection
