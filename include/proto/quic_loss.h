@@ -98,4 +98,83 @@ static inline int quic_loss_persistent_congestion(struct quic_loss *ql,
 	return period >= congestion_period;
 }
 
+/* Returns for <qc> QUIC connection the first packet number space which
+ * experienced packet loss, if any or a packet number space with
+ * QUIC_TIME_INFINITE as packet loss time if not.
+ */
+static inline struct quic_pktns *quic_loss_pktns(struct quic_conn *qc)
+{
+	enum quic_tls_pktns i;
+	struct quic_pktns *pktns;
+
+	pktns = &qc->pktns[QUIC_TLS_PKTNS_INITIAL];
+	for (i = QUIC_TLS_PKTNS_01RTT; i < QUIC_TLS_PKTNS_MAX; i++)
+		if (qc->pktns[i].tx.loss_time < pktns->tx.loss_time)
+			pktns = &qc->pktns[i];
+
+	return pktns;
+}
+
+/* Returns for <qc> QUIC connection the first packet number space to
+ * arm the PTO for if any or a packet number space with QUIC_TIME_INFINITE
+ * as PTO value if not.
+ */
+static inline struct quic_pktns *quic_pto_pktns(struct quic_conn *qc,
+                                                int handshake_completed)
+{
+	int i;
+	uint64_t duration, pto_us;
+	struct quic_loss *ql = &qc->path->loss;
+	struct quic_pktns *pktns;
+
+	duration =
+		(ql->srtt >> 3) +
+		(max(ql->rtt_var, QUIC_TIMER_GRANULARITY_US) << ql->pto_count);
+
+	if (!qc->path->in_flight) {
+		struct quic_enc_level *iel, *hel;
+
+		iel = &qc->els[QUIC_TLS_ENC_LEVEL_INITIAL];
+		hel = &qc->els[QUIC_TLS_ENC_LEVEL_HANDSHAKE];
+
+		if (iel->tls_ctx.tx.flags & QUIC_FL_TLS_SECRETS_SET) {
+			pktns = &qc->pktns[QUIC_TLS_PKTNS_INITIAL];
+		}
+		else if (hel->tls_ctx.tx.flags & QUIC_FL_TLS_SECRETS_SET) {
+			pktns = &pktns[QUIC_TLS_PKTNS_HANDSHAKE];
+		}
+		pktns->tx.pto_us = usec_now() + duration;
+
+		return pktns;
+	}
+
+	pto_us = QUIC_TIME_INFINITE;
+	pktns = &qc->pktns[QUIC_TLS_PKTNS_INITIAL];
+
+	for (i = QUIC_TLS_PKTNS_INITIAL; i < QUIC_TLS_PKTNS_MAX; i++) {
+		struct quic_pktns *p;
+
+		p = &qc->pktns[i];
+		if (!p->tx.in_flight)
+			continue;
+
+		if (i == QUIC_TLS_PKTNS_01RTT) {
+			if (!handshake_completed) {
+				p->tx.pto_us = pto_us;
+				return p;
+			}
+
+			duration += qc->max_ack_delay_us << ql->pto_count;
+		}
+
+		p->tx.pto_us = p->tx.time_of_last_eliciting + duration;
+		if (p->tx.pto_us < pto_us) {
+			pto_us = p->tx.pto_us;
+			pktns = p;
+		}
+	}
+
+	return pktns;
+}
+
 #endif /* _PROTO_QUIC_LOSS_H */

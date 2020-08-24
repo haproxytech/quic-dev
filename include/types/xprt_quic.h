@@ -227,6 +227,8 @@ struct quic_pktns {
 		uint64_t time_of_last_eliciting;
 		/* The time this packet number space has experienced packet loss. */
 		uint64_t loss_time;
+		/* Probe timeout. */
+		uint64_t pto_us;
 		/* In flight bytes for this packet number space. */
 		uint64_t in_flight;
 	} tx;
