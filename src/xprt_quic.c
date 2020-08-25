@@ -1369,7 +1369,7 @@ static void qc_packet_loss_lookup(struct quic_pktns *pktns,
 	uint64_t loss_delay, loss_send_time;
 
 	pkts = &pktns->tx.pkts;
-	pktns->tx.loss_time = QUIC_LOSS_TIME_INFINITE;
+	pktns->tx.loss_time = QUIC_TIME_INFINITE;
 	if (eb_is_empty(pkts))
 		return;
 
