@@ -132,16 +132,14 @@ static inline struct quic_pktns *quic_pto_pktns(struct quic_conn *qc,
 		(max(ql->rtt_var, QUIC_TIMER_GRANULARITY_US) << ql->pto_count);
 
 	if (!qc->path->in_flight) {
-		struct quic_enc_level *iel, *hel;
+		struct quic_enc_level *hel;
 
-		iel = &qc->els[QUIC_TLS_ENC_LEVEL_INITIAL];
 		hel = &qc->els[QUIC_TLS_ENC_LEVEL_HANDSHAKE];
-
-		if (iel->tls_ctx.tx.flags & QUIC_FL_TLS_SECRETS_SET) {
-			pktns = &qc->pktns[QUIC_TLS_PKTNS_INITIAL];
+		if (hel->tls_ctx.tx.flags & QUIC_FL_TLS_SECRETS_SET) {
+			pktns = &qc->pktns[QUIC_TLS_PKTNS_HANDSHAKE];
 		}
-		else if (hel->tls_ctx.tx.flags & QUIC_FL_TLS_SECRETS_SET) {
-			pktns = &pktns[QUIC_TLS_PKTNS_HANDSHAKE];
+		else {
+			pktns = &qc->pktns[QUIC_TLS_PKTNS_INITIAL];
 		}
 		pktns->tx.pto_us = usec_now() + duration;
 
