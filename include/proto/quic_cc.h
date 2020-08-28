@@ -50,12 +50,12 @@ static inline void quic_cc_event_trace(struct buffer *buf, const struct quic_cc_
 	chunk_appendf(buf, " event type=");
 	switch (ev->type) {
 	case QUIC_CC_EVT_ACK:
-		chunk_appendf(buf, "ack acked=%lu time_sent:%lu", ev->ack.acked, ev->ack.time_sent);
+		chunk_appendf(buf, "ack acked=%zu time_sent:%u", ev->ack.acked, ev->ack.time_sent);
 		break;
 	case QUIC_CC_EVT_LOSS:
-		chunk_appendf(buf, "loss now_us=%lu max_ack_delay_us=%lu lost_bytes=%lu"
-		              " time_sent=%lu period=%lu",
-		              ev->loss.now_us, ev->loss.max_ack_delay_us, ev->loss.lost_bytes,
+		chunk_appendf(buf, "loss now_ms=%u max_ack_delay=%u lost_bytes=%zu"
+		              " time_sent=%u period=%u",
+		              ev->loss.now_ms, ev->loss.max_ack_delay, ev->loss.lost_bytes,
 		              ev->loss.newest_time_sent, ev->loss.period);
 		break;
 	case QUIC_CC_EVT_ECN_CE:

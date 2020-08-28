@@ -52,15 +52,15 @@ struct quic_cc_event {
 	enum quic_cc_event_type type;
 	union {
 		struct ack {
-			uint64_t acked;
-			uint64_t time_sent;
+			size_t acked;
+			unsigned int time_sent;
 		} ack;
 		struct loss {
-			uint64_t now_us;
-			uint64_t max_ack_delay_us;
-			uint64_t lost_bytes;
-			uint64_t newest_time_sent;
-			uint64_t period;
+			unsigned int now_ms;
+			unsigned int max_ack_delay;
+			size_t lost_bytes;
+			unsigned int newest_time_sent;
+			unsigned int period;
 		} loss;
 	};
 };

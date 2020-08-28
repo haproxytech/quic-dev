@@ -22,8 +22,7 @@
 #ifndef _PROTO_QUIC_LOSS_H
 #define _PROTO_QUIC_LOSS_H
 
-#include <stdint.h>
-
+#include <common/ticks.h>
 #include <common/time.h>
 
 #include <types/xprt_quic.h>
@@ -45,10 +44,10 @@ static inline void quic_loss_init(struct quic_loss *ql)
  * non handshake packets.
  */
 static inline void quic_loss_srtt_update(struct quic_loss *ql,
-                                         unsigned long rtt, unsigned long ack_delay,
+                                         unsigned int rtt, unsigned int ack_delay,
                                          struct quic_conn *conn)
 {
-	TRACE_PROTO("Loss info update", QUIC_EV_CONN_RTTUPDT, conn->conn, &rtt, &ack_delay);
+	TRACE_PROTO("Loss info update", QUIC_EV_CONN_RTTUPDT, conn->conn, &rtt, &ack_delay, ql);
 	ql->latest_rtt = rtt;
 	if (!ql->srtt) {
 		/* No previous measurement. */
@@ -82,17 +81,17 @@ static inline void quic_loss_srtt_update(struct quic_loss *ql,
  * experiencing a packet loss. Return 0 on the contrary.
  */
 static inline int quic_loss_persistent_congestion(struct quic_loss *ql,
-                                                  uint64_t period,
-                                                  uint64_t now_us,
-                                                  uint64_t max_ack_delay_us)
+                                                  unsigned int period,
+                                                  unsigned int now_us,
+                                                  unsigned int max_ack_delay)
 {
-	uint64_t congestion_period;
+	unsigned int congestion_period;
 
 	if (!period)
 		return 0;
 
 	congestion_period = (ql->srtt >> 3) +
-		max(ql->rtt_var, QUIC_TIMER_GRANULARITY_US) + max_ack_delay_us;
+		max(ql->rtt_var, QUIC_TIMER_GRANULARITY) + max_ack_delay;
 	congestion_period *= QUIC_LOSS_PACKET_THRESHOLD;
 
 	return period >= congestion_period;
@@ -100,7 +99,7 @@ static inline int quic_loss_persistent_congestion(struct quic_loss *ql,
 
 /* Returns for <qc> QUIC connection the first packet number space which
  * experienced packet loss, if any or a packet number space with
- * QUIC_TIME_INFINITE as packet loss time if not.
+ * TICK_ETERNITY as packet loss time if not.
  */
 static inline struct quic_pktns *quic_loss_pktns(struct quic_conn *qc)
 {
@@ -116,20 +115,21 @@ static inline struct quic_pktns *quic_loss_pktns(struct quic_conn *qc)
 }
 
 /* Returns for <qc> QUIC connection the first packet number space to
- * arm the PTO for if any or a packet number space with QUIC_TIME_INFINITE
+ * arm the PTO for if any or a packet number space with TICK_ETERNITY
  * as PTO value if not.
  */
 static inline struct quic_pktns *quic_pto_pktns(struct quic_conn *qc,
                                                 int handshake_completed)
 {
 	int i;
-	uint64_t duration, pto_us;
+	unsigned int duration, pto;
 	struct quic_loss *ql = &qc->path->loss;
 	struct quic_pktns *pktns;
 
+	TRACE_ENTER(QUIC_EV_CONN_SPTO, qc->conn);
 	duration =
 		(ql->srtt >> 3) +
-		(max(ql->rtt_var, QUIC_TIMER_GRANULARITY_US) << ql->pto_count);
+		(max(ql->rtt_var, QUIC_TIMER_GRANULARITY) << ql->pto_count);
 
 	if (!qc->path->in_flight) {
 		struct quic_enc_level *hel;
@@ -141,15 +141,15 @@ static inline struct quic_pktns *quic_pto_pktns(struct quic_conn *qc,
 		else {
 			pktns = &qc->pktns[QUIC_TLS_PKTNS_INITIAL];
 		}
-		pktns->tx.pto_us = usec_now() + duration;
-
-		return pktns;
+		pktns->tx.pto = tick_add(now_ms, duration);
+		goto out;
 	}
 
-	pto_us = QUIC_TIME_INFINITE;
+	pto = TICK_ETERNITY;
 	pktns = &qc->pktns[QUIC_TLS_PKTNS_INITIAL];
 
 	for (i = QUIC_TLS_PKTNS_INITIAL; i < QUIC_TLS_PKTNS_MAX; i++) {
+		unsigned int tmp_pto;
 		struct quic_pktns *p;
 
 		p = &qc->pktns[i];
@@ -158,19 +158,25 @@ static inline struct quic_pktns *quic_pto_pktns(struct quic_conn *qc,
 
 		if (i == QUIC_TLS_PKTNS_01RTT) {
 			if (!handshake_completed) {
-				p->tx.pto_us = pto_us;
-				return p;
+				p->tx.pto = pto;
+				pktns = p;
+				goto out;
 			}
 
-			duration += qc->max_ack_delay_us << ql->pto_count;
+			duration += qc->max_ack_delay << ql->pto_count;
 		}
 
-		p->tx.pto_us = p->tx.time_of_last_eliciting + duration;
-		if (p->tx.pto_us < pto_us) {
-			pto_us = p->tx.pto_us;
+		tmp_pto =
+			tick_first_2nz(pto, tick_add(p->tx.time_of_last_eliciting, duration));
+		TRACE_PROTO("pktns", QUIC_EV_CONN_SPTO, qc->conn, p);
+		if (!tick_isset(pto) || tmp_pto < pto) {
+			p->tx.pto = tmp_pto = pto;
 			pktns = p;
 		}
 	}
+
+ out:
+	TRACE_LEAVE(QUIC_EV_CONN_SPTO, qc->conn, pktns, &duration);
 
 	return pktns;
 }

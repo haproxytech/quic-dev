@@ -102,6 +102,10 @@ static const struct trace_event quic_trace_events[] = {
 	{ .mask = QUIC_EV_CONN_CPAPKT,   .name = "phdshk_cpakt",     .desc = "clear post handhshake app. packet preparation" },
 	{ .mask = QUIC_EV_CONN_RTTUPDT,  .name = "rtt_updt",         .desc = "RTT sampling" },
 	{ .mask = QUIC_EV_CONN_SPPKTS,   .name = "sppkts",           .desc = "send prepared packets" },
+	{ .mask = QUIC_EV_CONN_PKTLOSS,  .name = "pktloss",          .desc = "detect packet loss" },
+	{ .mask = QUIC_EV_CONN_STIMER,   .name = "stimer",           .desc = "set timer" },
+	{ .mask = QUIC_EV_CONN_PTIMER,   .name = "ptimer",           .desc = "process timer" },
+	{ .mask = QUIC_EV_CONN_SPTO,     .name = "spto",             .desc = "set PTO" },
 
 	{ .mask = QUIC_EV_CONN_ENEW,     .name = "new_conn_err",     .desc = "error on new QUIC connection" },
 	{ .mask = QUIC_EV_CONN_EISEC,    .name = "init_secs_err",    .desc = "error on initial secrets derivation" },
@@ -428,17 +432,17 @@ static void quic_trace(enum trace_level level, uint64_t mask, const struct trace
 		}
 
 		if (mask & QUIC_EV_CONN_RTTUPDT) {
-			const uint64_t *rtt_sample = a2;
-			const uint64_t *ack_delay = a3;
+			const unsigned int *rtt_sample = a2;
+			const unsigned int *ack_delay = a3;
 			const struct quic_loss *ql = a4;
 
 			if (rtt_sample)
-				chunk_appendf(&trace_buf, " rtt_sample=%luus", *rtt_sample);
+				chunk_appendf(&trace_buf, " rtt_sample=%ums", *rtt_sample);
 			if (ack_delay)
-				chunk_appendf(&trace_buf, " ack_delay=%luus", *ack_delay);
+				chunk_appendf(&trace_buf, " ack_delay=%ums", *ack_delay);
 			if (ql)
 				chunk_appendf(&trace_buf,
-				              " srtt=%luus rttvar=%luus min_rtt=%luus",
+				              " srtt=%ums rttvar=%ums min_rtt=%ums",
 				              ql->srtt >> 3, ql->rtt_var >> 2, ql->rtt_min);
 		}
 		if (mask & QUIC_EV_CONN_CC) {
@@ -450,6 +454,70 @@ static void quic_trace(enum trace_level level, uint64_t mask, const struct trace
 			if (a3)
 				quic_cc_state_trace(&trace_buf, cc);
 		}
+
+		if (mask & QUIC_EV_CONN_PKTLOSS) {
+			const struct quic_pktns *pktns = a2;
+			const struct list *lost_pkts = a3;
+			struct quic_conn *qc = conn->quic_conn;
+
+			if (pktns) {
+				chunk_appendf(&trace_buf, " pktns=%s",
+				              pktns == &qc->pktns[QUIC_TLS_PKTNS_INITIAL] ? "I" :
+				              pktns == &qc->pktns[QUIC_TLS_PKTNS_01RTT] ? "01RTT": "H");
+				if (pktns->tx.loss_time)
+				              chunk_appendf(&trace_buf, " loss_time=%dms",
+				                            TICKS_TO_MS(qc->timer - now_ms));
+			}
+			if (lost_pkts && !LIST_ISEMPTY(lost_pkts)) {
+				struct quic_tx_packet *pkt;
+
+				chunk_appendf(&trace_buf, " lost_pkts:");
+				list_for_each_entry(pkt, lost_pkts, list)
+					chunk_appendf(&trace_buf, " %lu", (unsigned long)pkt->pn_node.key);
+			}
+		}
+
+		if (mask & (QUIC_EV_CONN_STIMER|QUIC_EV_CONN_SPTO)) {
+			struct quic_conn *qc = conn->quic_conn;
+			const struct quic_pktns *pktns = a2;
+			const int *duration = a3;
+
+			if (pktns) {
+				chunk_appendf(&trace_buf, " pktns=%s",
+				              pktns == &qc->pktns[QUIC_TLS_PKTNS_INITIAL] ? "I" :
+				              pktns == &qc->pktns[QUIC_TLS_PKTNS_01RTT] ? "01RTT": "H");
+				if (mask & QUIC_EV_CONN_STIMER) {
+					if (pktns->tx.loss_time)
+						chunk_appendf(&trace_buf, " loss_time=%dms",
+						              TICKS_TO_MS(pktns->tx.loss_time - now_ms));
+				}
+				if (mask & QUIC_EV_CONN_SPTO) {
+					if (pktns->tx.time_of_last_eliciting)
+						chunk_appendf(&trace_buf, " tole=%dms",
+									  TICKS_TO_MS(pktns->tx.time_of_last_eliciting - now_ms));
+					if (duration)
+						chunk_appendf(&trace_buf, " duration=%dms", *duration);
+					if (pktns->tx.pto)
+						chunk_appendf(&trace_buf, " pto=%dms", TICKS_TO_MS(pktns->tx.pto - now_ms));
+				}
+			}
+
+			if (!(mask & QUIC_EV_CONN_SPTO) && qc->timer_task) {
+				chunk_appendf(&trace_buf,
+				              " expire=%dms", TICKS_TO_MS(qc->timer - now_ms));
+			}
+		}
+
+		if (mask & QUIC_EV_CONN_SPPKTS) {
+			const struct quic_tx_packet *pkt = a2;
+
+			if (pkt) {
+				chunk_appendf(&trace_buf, " #%lu(%s)",
+				              (unsigned long)pkt->pn_node.key,
+				              pkt->pktns == &qc->pktns[QUIC_TLS_PKTNS_INITIAL] ? "I" :
+				              pkt->pktns == &qc->pktns[QUIC_TLS_PKTNS_01RTT] ? "01RTT": "H");
+			}
+		}
 	}
 	if (mask & QUIC_EV_CONN_LPKT) {
 		const struct quic_rx_packet *pkt = a2;
@@ -458,6 +526,57 @@ static void quic_trace(enum trace_level level, uint64_t mask, const struct trace
 			chunk_appendf(&trace_buf, " type=0x%02x long? %d", pkt->type, qc_pkt_long(pkt));
 	}
 
+}
+
+/* Returns 1 if the peer has validated <qc> QUIC connection address, 0 if not. */
+static inline int quic_peer_validated_addr(struct quic_conn_ctx *ctx)
+{
+	struct quic_conn *qc;
+
+	qc = ctx->conn->quic_conn;
+	if (objt_listener(qc->conn->target))
+		return 1;
+
+	if ((qc->els[QUIC_TLS_ENC_LEVEL_HANDSHAKE].pktns->flags & QUIC_FL_PKTNS_ACK_RECEIVED) ||
+	    (qc->els[QUIC_TLS_ENC_LEVEL_APP].pktns->flags & QUIC_FL_PKTNS_ACK_RECEIVED) ||
+	    (ctx->state & QUIC_HS_ST_COMPLETE))
+		return 1;
+
+	return 0;
+}
+
+/* Set the timer attached to the QUIC connection with <ctx> as I/O handler and used for
+ * both loss detection and PTO and schedule the task assiated to this timer if needed.
+ */
+static inline void qc_set_timer(struct quic_conn_ctx *ctx)
+{
+	struct quic_conn *qc;
+	struct quic_pktns *pktns;
+
+	TRACE_ENTER(QUIC_EV_CONN_STIMER, ctx->conn);
+	qc = ctx->conn->quic_conn;
+	pktns = quic_loss_pktns(qc);
+	if (tick_isset(pktns->tx.loss_time)) {
+		qc->timer = pktns->tx.loss_time;
+		goto out;
+	}
+
+	/* XXX TODO: anti-amplification: the timer must be
+	 * cancelled for a server which reached the anti-amplification limit.
+	 */
+
+	if (!qc->path->in_flight_ae_pkts && quic_peer_validated_addr(ctx)) {
+		/* Timer cancellation. */
+		qc->timer = TICK_ETERNITY;
+		goto out;
+	}
+
+	pktns = quic_pto_pktns(qc, ctx->state & QUIC_HS_ST_COMPLETE);
+	if (tick_isset(pktns->tx.pto))
+		qc->timer = pktns->tx.pto;
+ out:
+	task_schedule(qc->timer_task, qc->timer);
+	TRACE_LEAVE(QUIC_EV_CONN_STIMER, ctx->conn, pktns);
 }
 
 #ifndef OPENSSL_IS_BORINGSSL
@@ -1263,15 +1382,15 @@ static inline void free_quic_tx_pkts(struct list *pkts)
  * Always succeeds.
  */
 static inline void qc_cc_loss_event(struct quic_conn *qc,
-                                    uint64_t lost_bytes,
-                                    uint64_t newest_time_sent,
-                                    uint64_t period,
-                                    uint64_t now_us)
+                                    unsigned int lost_bytes,
+                                    unsigned int newest_time_sent,
+                                    unsigned int period,
+                                    unsigned int now_us)
 {
 	struct quic_cc_event ev = {
 		.type = QUIC_CC_EVT_LOSS,
-		.loss.now_us           = now_us,
-		.loss.max_ack_delay_us = qc->max_ack_delay_us,
+		.loss.now_ms           = now_ms,
+		.loss.max_ack_delay    = qc->max_ack_delay,
 		.loss.lost_bytes       = lost_bytes,
 		.loss.newest_time_sent = newest_time_sent,
 		.loss.period           = period,
@@ -1303,17 +1422,17 @@ static inline void qc_treat_newly_acked_pkts(struct quic_conn_ctx *ctx,
 
 }
 
-/*
- * Treat <pkts> list of lost packets detected at <now_us> time removing
- * treating their TX frame.
+/* Handle <pkts> list of lost packets detected at <now_us> handling
+ * their TX frames.
  * Send a packet loss event to the congestion controller if
  * in flight packet have been lost.
+ * Also frees the packet in <pkts> list.
  * Never fails.
  */
-static inline void qc_treat_lost_pkts(struct quic_enc_level *qel,
-                                      struct quic_conn_ctx *ctx,
-                                      struct list *pkts,
-                                      uint64_t now_us)
+static inline void qc_release_lost_pkts(struct quic_enc_level *qel,
+                                        struct quic_conn_ctx *ctx,
+                                        struct list *pkts,
+                                        uint64_t now_us)
 {
 	struct quic_conn *qc = ctx->conn->quic_conn;
 	struct quic_tx_packet *pkt, *oldest_lost, *newest_lost;
@@ -1350,34 +1469,68 @@ static inline void qc_treat_lost_pkts(struct quic_enc_level *qel,
 	}
 }
 
+/* Treat <pkts> list of lost packets without freeing them so that
+ * to send a packet loss event to the congestion controller.
+ * Never fails.
+ */
+static inline void qc_treat_lost_pkts(struct quic_conn_ctx *ctx,
+                                      struct list *pkts,
+                                      uint64_t now_us)
+{
+	struct quic_conn *qc = ctx->conn->quic_conn;
+	struct quic_tx_packet *pkt, *oldest_lost, *newest_lost;
+	uint64_t lost_bytes;
+
+	lost_bytes = 0;
+	oldest_lost = newest_lost = NULL;
+	list_for_each_entry(pkt, pkts, list) {
+		lost_bytes += pkt->in_flight_len;
+		pkt->pktns->tx.in_flight -= pkt->in_flight_len;
+		if (pkt->flags & QUIC_FL_TX_PACKET_ACK_ELICITING)
+			qc->path->in_flight_ae_pkts--;
+		if (!oldest_lost) {
+			oldest_lost = newest_lost = pkt;
+		}
+		else {
+			newest_lost = pkt;
+		}
+	}
+
+	if (lost_bytes) {
+		/* Send a packet loss event to the congestion controller. */
+		qc_cc_loss_event(ctx->conn->quic_conn, lost_bytes, newest_lost->time_sent,
+		                 newest_lost->time_sent - oldest_lost->time_sent, now_us);
+	}
+}
+
 /* Look for packet loss from sent packets for <qel> encryption level of a
- * connection with <ctx> as I/O handler context and set the <loss_time> value
- * of the packet number space if any unacked and not deemed lost packet are
- * detected.
+ * connection with <ctx> as I/O handler context. If remove is true, remove them from
+ * their tree if deemed as lost or set the <loss_time> value the packet number
+ * space if any not deemed lost.
  * Should be called after having received an ACK frame with newly acknowledged
  * packets or when the the loss detection timer has expired.
  * Always succeeds.
  */
 static void qc_packet_loss_lookup(struct quic_pktns *pktns,
-                                  struct quic_conn_ctx *ctx,
-                                  struct list *lost_pkts,
-                                  uint64_t now_us)
+                                  struct quic_conn *qc,
+                                  struct list *lost_pkts, int remove)
 {
 	struct eb_root *pkts;
 	struct eb64_node *node;
 	struct quic_loss *ql;
-	uint64_t loss_delay, loss_send_time;
+	unsigned int loss_delay, loss_send_time;
 
+	TRACE_ENTER(QUIC_EV_CONN_PKTLOSS, qc->conn, pktns);
 	pkts = &pktns->tx.pkts;
-	pktns->tx.loss_time = QUIC_TIME_INFINITE;
+	pktns->tx.loss_time = TICK_ETERNITY;
 	if (eb_is_empty(pkts))
-		return;
+		goto out;
 
-	ql = &ctx->conn->quic_conn->path->loss;
+	ql = &qc->path->loss;
 	loss_delay = max(ql->latest_rtt, ql->srtt >> 3);
 	loss_delay += loss_delay >> 3;
-	loss_delay = max(loss_delay, QUIC_TIMER_GRANULARITY_US);
-	loss_send_time = now_us - loss_delay;
+	loss_delay = max(loss_delay, MS_TO_TICKS(QUIC_TIMER_GRANULARITY));
+	loss_send_time = now_ms - loss_delay;
 
 	node = eb64_first(pkts);
 	while (node) {
@@ -1390,15 +1543,19 @@ static void qc_packet_loss_lookup(struct quic_pktns *pktns,
 		if ((int64_t)pkt->pn_node.key > largest_acked_pn)
 			break;
 
-		if (pkt->time_sent <= loss_send_time ||
+		if (tick_is_le(pkt->time_sent, loss_send_time) ||
 			(int64_t)largest_acked_pn >= pkt->pn_node.key + QUIC_LOSS_PACKET_THRESHOLD) {
-			eb64_delete(&pkt->pn_node);
+			if (remove)
+				eb64_delete(&pkt->pn_node);
 			LIST_ADDQ(lost_pkts, &pkt->list);
 		}
 		else {
-			pktns->tx.loss_time = min(pktns->tx.loss_time, pkt->time_sent + loss_delay);
+			pktns->tx.loss_time = tick_first(pktns->tx.loss_time, pkt->time_sent + loss_delay);
 		}
 	}
+
+ out:
+	TRACE_LEAVE(QUIC_EV_CONN_PKTLOSS, qc->conn, pktns, lost_pkts);
 }
 
 /*
@@ -1410,19 +1567,16 @@ static void qc_packet_loss_lookup(struct quic_pktns *pktns,
  */
 static inline int qc_parse_ack_frm(struct quic_frame *frm, struct quic_conn_ctx *ctx,
                                    struct quic_enc_level *qel,
-                                   uint64_t *rtt_sample,
+                                   unsigned int *rtt_sample,
                                    const unsigned char **pos, const unsigned char *end)
 {
 	struct quic_ack *ack = &frm->ack;
 	uint64_t smallest, largest;
 	struct eb_root *pkts;
 	struct eb64_node *largest_node;
-	uint64_t time_sent;
-	int may_sample_rtt;
-	unsigned int pkt_flags;
+	unsigned int time_sent, pkt_flags;
 	struct list newly_acked_pkts = LIST_HEAD_INIT(newly_acked_pkts);
 	struct list lost_pkts = LIST_HEAD_INIT(lost_pkts);
-	uint64_t now_us;
 
 	if (ack->largest_ack > qel->pktns->tx.next_pn) {
 		TRACE_DEVEL("ACK for not sent packet", QUIC_EV_CONN_PRSAFRM,
@@ -1442,7 +1596,6 @@ static inline int qc_parse_ack_frm(struct quic_frame *frm, struct quic_conn_ctx 
 	pkt_flags = 0;
 	largest_node = NULL;
 	time_sent = 0;
-	may_sample_rtt = 0;
 
 	if ((int64_t)ack->largest_ack > qel->pktns->tx.largest_acked_pn) {
 		largest_node = eb64_lookup(pkts, largest);
@@ -1452,7 +1605,6 @@ static inline int qc_parse_ack_frm(struct quic_frame *frm, struct quic_conn_ctx 
 			goto err;
 		}
 
-		may_sample_rtt = 1;
 		time_sent = eb64_entry(&largest_node->node,
 		                       struct quic_tx_packet, pn_node)->time_sent;
 	}
@@ -1496,19 +1648,17 @@ static inline int qc_parse_ack_frm(struct quic_frame *frm, struct quic_conn_ctx 
 		            ctx->conn,, &largest, &smallest);
 	} while (1);
 
-	now_us = 0;
-	if (may_sample_rtt && (pkt_flags & QUIC_FL_TX_PACKET_ACK_ELICITING)) {
-		now_us= usec_now();
-		*rtt_sample = now_us - time_sent;
+	if (time_sent && (pkt_flags & QUIC_FL_TX_PACKET_ACK_ELICITING)) {
+		*rtt_sample = now_ms - time_sent;
 		qel->pktns->tx.largest_acked_pn = ack->largest_ack;
 	}
 
+	/* Flag this packet number space as having received an ACK. */
+	qel->pktns->flags |= QUIC_FL_PKTNS_ACK_RECEIVED;
 	if (!LIST_ISEMPTY(&newly_acked_pkts) && !eb_is_empty(&qel->pktns->tx.pkts)) {
-		if (!now_us)
-			now_us = usec_now();
-		qc_packet_loss_lookup(qel->pktns, ctx, &lost_pkts, now_us);
+		qc_packet_loss_lookup(qel->pktns, ctx->conn->quic_conn, &lost_pkts, 1);
 		if (!LIST_ISEMPTY(&lost_pkts))
-			qc_treat_lost_pkts(qel, ctx, &lost_pkts, now_us);
+			qc_release_lost_pkts(qel, ctx, &lost_pkts, now_ms);
 	}
 
 	qc_treat_newly_acked_pkts(ctx, &newly_acked_pkts);
@@ -1657,17 +1807,17 @@ static int qc_parse_pkt_frms(struct quic_rx_packet *pkt, struct quic_conn_ctx *c
 			break;
 		case QUIC_FT_ACK:
 		{
-			uint64_t rtt_sample;
+			unsigned int rtt_sample;
 
 			rtt_sample = 0;
 			if (!qc_parse_ack_frm(&frm, ctx, qel, &rtt_sample, &pos, end))
 				goto err;
 
 			if (rtt_sample) {
-				uint64_t ack_delay;
+				unsigned int ack_delay;
 
 				ack_delay = !quic_application_pktns(qel->pktns, conn) ? 0 :
-					min(quic_ack_delay_us(&frm.ack, conn), conn->max_ack_delay_us);
+					MS_TO_TICKS(min(quic_ack_delay_ms(&frm.ack, conn), conn->max_ack_delay));
 				quic_loss_srtt_update(&conn->path->loss, rtt_sample, ack_delay, conn);
 			}
 			tasklet_wakeup(ctx->wait_event.tasklet);
@@ -1813,7 +1963,7 @@ static int qc_send_ppkts(struct quic_conn_ctx *ctx)
 	qc = ctx->conn->quic_conn;
 	for (rbuf = q_rbuf(qc); !q_buf_empty(rbuf) ; rbuf = q_next_rbuf(qc)) {
 		struct quic_tx_packet *p, *q;
-		uint64_t time_sent;
+		unsigned int time_sent;
 
 		tmpbuf.area = (char *)rbuf->area;
 		tmpbuf.size = tmpbuf.data = rbuf->data;
@@ -1822,7 +1972,7 @@ static int qc_send_ppkts(struct quic_conn_ctx *ctx)
 	                           &tmpbuf, tmpbuf.data, 0) <= 0)
 		    break;
 
-	    time_sent = usec_now();
+	    time_sent = now_ms;
 	    /* Reset this buffer to make it available for the next packet to prepare. */
 	    q_buf_reset(rbuf);
 		/* Remove from <rbuf> the packets which have just been sent. */
@@ -1832,6 +1982,9 @@ static int qc_send_ppkts(struct quic_conn_ctx *ctx)
 				p->pktns->tx.time_of_last_eliciting = time_sent;
 				qc->path->in_flight_ae_pkts++;
 			}
+			TRACE_PROTO("sent pkt", QUIC_EV_CONN_SPPKTS, ctx->conn, p);
+			if (p->in_flight_len)
+				qc_set_timer(ctx);
 			qc->path->in_flight += p->in_flight_len;
 			p->pktns->tx.in_flight += p->in_flight_len;
 			LIST_DEL(&p->list);
@@ -2499,7 +2652,41 @@ static void quic_conn_free(struct quic_conn *conn)
 	for (i = 0; i < QUIC_TLS_ENC_LEVEL_MAX; i++)
 		quic_conn_enc_level_uninit(&conn->els[i]);
 	free_quic_conn_tx_bufs(conn->tx.bufs, conn->tx.nb_buf);
+	if (conn->timer_task)
+		task_destroy(conn->timer_task);
 	pool_free(pool_head_quic_conn, conn);
+}
+
+/* Callback called upon loss detection and PTO timer expirations. */
+static struct task *process_timer(struct task *task, void *ctx, unsigned short state)
+{
+	struct quic_conn_ctx *conn_ctx;
+	struct quic_conn *qc;
+	struct quic_pktns *pktns;
+
+
+	conn_ctx = task->context;
+	qc = conn_ctx->conn->quic_conn;
+	TRACE_ENTER(QUIC_EV_CONN_PTIMER, conn_ctx->conn);
+	pktns = quic_loss_pktns(qc);
+	if (tick_isset(pktns->tx.loss_time)) {
+		struct list lost_pkts = LIST_HEAD_INIT(lost_pkts);
+
+		qc_packet_loss_lookup(pktns, qc, &lost_pkts, 0);
+		if (!LIST_ISEMPTY(&lost_pkts))
+			qc_treat_lost_pkts(ctx, &lost_pkts, now_ms);
+		goto out;
+	}
+
+	if (qc->path->in_flight)
+		tasklet_wakeup(conn_ctx->wait_event.tasklet);
+	qc->path->loss.pto_count++;
+
+ out:
+	qc_set_timer(conn_ctx);
+	TRACE_LEAVE(QUIC_EV_CONN_PTIMER, conn_ctx->conn);
+
+	return task;
 }
 
 /*
@@ -2584,6 +2771,16 @@ static int qc_new_conn_init(struct quic_conn *conn, int ipv4,
 	/* XXX TO DO: Only one path at this time. */
 	conn->path = &conn->paths[0];
 	quic_path_init(conn->path, ipv4, default_quic_cc_algo, conn);
+
+	/* Timer. */
+	conn->timer_task = task_new(MAX_THREADS_MASK);
+	if (!conn->timer_task)
+		goto err;
+
+	conn->timer = TICK_ETERNITY;
+	conn->timer_task->process = process_timer;
+	conn->timer_task->context = conn->conn->xprt_ctx;
+
 	TRACE_LEAVE(QUIC_EV_CONN_INIT, conn->conn);
 
 	return 1;

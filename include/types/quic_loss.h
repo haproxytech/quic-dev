@@ -26,21 +26,24 @@
 
 /* Maximum reordering in packets. */
 #define QUIC_LOSS_PACKET_THRESHOLD         3
-#define QUIC_TIMER_GRANULARITY_US     1000UL /* 1ms   */
-#define QUIC_LOSS_INITIAL_RTT_US    500000UL /* 500ms */
-#define QUIC_TIME_INFINITE      (uint64_t)-1
+#define QUIC_TIMER_GRANULARITY            1U /* 1ms   */
+#define QUIC_LOSS_INITIAL_RTT           500U /* 500ms */
+
+/* Note that all the unit of variables for QUIC LOSS dectections
+ * is the tick.
+ */
 
 struct quic_loss {
 	/* The most recent RTT measurement. */
-	unsigned long latest_rtt;
+	unsigned int latest_rtt;
 	/* Smoothed RTT << 4*/
-	unsigned long srtt;
+	unsigned int srtt;
 	/* RTT variation << 2 */
-	unsigned long rtt_var;
+	unsigned int rtt_var;
 	/* Minimum RTT. */
-	unsigned long rtt_min;
+	unsigned int rtt_min;
 	/* Number of NACKed sent PTO. */
-	unsigned long pto_count;
+	unsigned int pto_count;
 };
 
 #endif /* _TYPES_QUIC_LOSS_H */

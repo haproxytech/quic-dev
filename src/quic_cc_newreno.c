@@ -101,14 +101,14 @@ static void quic_cc_nr_ca_cb(struct quic_cc *cc, struct quic_cc_event *ev)
 	case QUIC_CC_EVT_LOSS:
 		path->in_flight -= ev->loss.lost_bytes;
 		if (ev->loss.newest_time_sent > cc->algo_state.nr.recovery_start_time) {
-			cc->algo_state.nr.recovery_start_time = ev->loss.now_us;
+			cc->algo_state.nr.recovery_start_time = ev->loss.now_ms;
 			cc->algo_state.nr.cwnd = max(cc->algo_state.nr.cwnd >> 1, path->min_cwnd);
 			cc->algo_state.nr.ssthresh = cc->algo_state.nr.cwnd;
 		}
 		if (quic_loss_persistent_congestion(&path->loss,
 		                                    ev->loss.period,
-		                                    ev->loss.now_us,
-		                                    ev->loss.max_ack_delay_us)) {
+		                                    ev->loss.now_ms,
+		                                    ev->loss.max_ack_delay)) {
 			cc->algo_state.nr.cwnd = path->min_cwnd;
 			/* Re-entering slow start state. */
 			cc->algo_state.nr.state = QUIC_CC_ST_SS;

@@ -28,6 +28,7 @@
 #include <common/chunk.h>
 #include <common/net_helper.h>
 #include <common/openssl-compat.h>
+#include <common/ticks.h>
 #include <common/time.h>
 
 #include <types/listener.h>
@@ -504,8 +505,8 @@ static inline void quic_packet_number_encode(unsigned char **buf, const unsigned
 }
 
 /* Returns the <ack_delay> field value from <ack_frm> ACK frame. */
-static inline uint64_t quic_ack_delay_us(struct quic_ack *ack_frm,
-                                         struct quic_conn *conn)
+static inline unsigned int quic_ack_delay_ms(struct quic_ack *ack_frm,
+                                             struct quic_conn *conn)
 {
 	return ack_frm->ack_delay << conn->rx_tps.ack_delay_exponent;
 }
@@ -936,7 +937,7 @@ static inline int quic_transport_params_store(struct quic_conn *conn, int server
 		return 0;
 
 	if (conn->rx_tps.max_ack_delay)
-		conn->max_ack_delay_us = conn->rx_tps.max_ack_delay * 1000UL;
+		conn->max_ack_delay = conn->rx_tps.max_ack_delay;
 
 	return 1;
 }
@@ -951,8 +952,8 @@ static inline void quic_pktns_init(struct quic_pktns *pktns)
 	pktns->tx.pkts = EB_ROOT_UNIQUE;
 	pktns->tx.largest_acked_pn = -1;
 	pktns->tx.time_of_last_eliciting = 0;
-	pktns->tx.loss_time = QUIC_TIME_INFINITE;
-	pktns->tx.pto_us = QUIC_TIME_INFINITE;
+	pktns->tx.loss_time = TICK_ETERNITY;
+	pktns->tx.pto = TICK_ETERNITY;
 	pktns->tx.in_flight = 0;
 
 	pktns->rx.largest_pn = -1;

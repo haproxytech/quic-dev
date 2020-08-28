@@ -618,16 +618,6 @@ static inline void tv_leaving_poll(int timeout, int interrupted)
 	ti->prev_mono_time = now_mono_time();
 }
 
-/* Returns the current time in microseconds. */
-static inline uint64_t usec_now(void)
-{
-	struct timeval ts;
-
-	gettimeofday(&ts, NULL);
-
-	return (uint64_t)ts.tv_sec * 1000000ULL + (uint64_t)ts.tv_usec;
-}
-
 #endif /* _COMMON_TIME_H */
 
 /*

@@ -32,6 +32,7 @@
 #include <types/quic_frame.h>
 #include <types/quic_tls.h>
 #include <types/quic_loss.h>
+#include <types/task.h>
 
 #include <eb64tree.h>
 #include <ebmbtree.h>
@@ -75,6 +76,10 @@
 #define           QUIC_EV_CONN_RTTUPDT   (1ULL << 29)
 #define           QUIC_EV_CONN_CC        (1ULL << 30)
 #define           QUIC_EV_CONN_SPPKTS    (1ULL << 31)
+#define           QUIC_EV_CONN_PKTLOSS   (1ULL << 32)
+#define           QUIC_EV_CONN_STIMER    (1ULL << 33)
+#define           QUIC_EV_CONN_PTIMER    (1ULL << 34)
+#define           QUIC_EV_CONN_SPTO      (1ULL << 35)
 
 #define           QUIC_EV_CONN_ENEW      (1ULL << 32)
 #define           QUIC_EV_CONN_EISEC     (1ULL << 33)
@@ -214,6 +219,7 @@ struct quic_ack_ranges {
 
 /* Flag the packet number space as requiring an ACK frame to be sent. */
 #define QUIC_FL_PKTNS_ACK_REQUIRED  (1UL << 0)
+#define QUIC_FL_PKTNS_ACK_RECEIVED  (1UL << 1)
 
 /* QUIC packet number space */
 struct quic_pktns {
@@ -224,19 +230,20 @@ struct quic_pktns {
 		int64_t largest_acked_pn;
 		/* The packet which has been sent. */
 		struct eb_root pkts;
-		uint64_t time_of_last_eliciting;
+		/* The time the most recent ack-eliciting packer was sent. */
+		unsigned int time_of_last_eliciting;
 		/* The time this packet number space has experienced packet loss. */
-		uint64_t loss_time;
+		unsigned int loss_time;
 		/* Probe timeout. */
-		uint64_t pto_us;
+		unsigned int pto;
 		/* In flight bytes for this packet number space. */
-		uint64_t in_flight;
+		size_t in_flight;
 	} tx;
 	struct {
 		/* Largest packet number */
 		int64_t largest_pn;
 		/* Number of ack-eliciting packets. */
-		uint64_t nb_ack_eliciting;
+		size_t nb_ack_eliciting;
 		struct quic_ack_ranges ack_ranges;
 	} rx;
 	unsigned int flags;
@@ -305,7 +312,7 @@ struct quic_tx_packet {
 	/* The list of frames of this packet. */
 	struct list frms;
 	/* The time this packet was sent (usec). */
-	uint64_t time_sent;
+	unsigned int time_sent;
 	/* Packet number spakce. */
 	struct quic_pktns *pktns;
 	/* Flags. */
@@ -457,9 +464,12 @@ struct quic_conn {
 	} tx;
 	/* In flight CRYPTO data counter. */
 	size_t ifcdata;
-	uint64_t max_ack_delay_us;
+	unsigned int max_ack_delay;
 	struct quic_path paths[1];
 	struct quic_path *path;
+
+	struct task *timer_task;
+	unsigned int timer;
 };
 
 #endif /* _TYPES_XPRT_QUIC_H */
