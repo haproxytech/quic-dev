@@ -3556,23 +3556,22 @@ static ssize_t qc_lstnr_pkt_rcv(unsigned char **buf, const unsigned char *end,
 
 		dcid_len = qpkt->dcid.len;
 		saddr_len = 0;
-		/*
-		 * DCIDs of first packets coming from clients may have the same values.
-		 * Let's distinguish them concatenating the socket addresses to the DCIDs.
-		 */
-		if (qpkt->type == QUIC_PACKET_TYPE_INITIAL)
-			saddr_len = quic_cid_saddr_cat(&qpkt->dcid, saddr);
-
 		/* For Initial packets, and for servers (QUIC clients connections),
 		 * there is no Initial connection IDs storage.
 		 */
 		if (qpkt->type == QUIC_PACKET_TYPE_INITIAL) {
+			/*
+			 * DCIDs of first packets coming from clients may have the same values.
+			 * Let's distinguish them concatenating the socket addresses to the DCIDs.
+			 */
+			saddr_len = quic_cid_saddr_cat(&qpkt->dcid, saddr);
 			cids = &l->icids;
 			cid_lookup_len = qpkt->dcid.len;
 		}
 		else {
 			if (qpkt->dcid.len != QUIC_CID_LEN)
 				goto err;
+
 			cids = &l->cids;
 			cid_lookup_len = QUIC_CID_LEN;
 		}
