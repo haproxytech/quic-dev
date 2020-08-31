@@ -3547,7 +3547,6 @@ static ssize_t qc_lstnr_pkt_rcv(unsigned char **buf, const unsigned char *end,
 	/* Header form */
 	qc_parse_hd_form(qpkt, *(*buf)++, &long_header);
 	if (long_header) {
-		size_t cid_lookup_len;
 		unsigned char dcid_len;
 		size_t saddr_len;
 
@@ -3566,17 +3565,15 @@ static ssize_t qc_lstnr_pkt_rcv(unsigned char **buf, const unsigned char *end,
 			 */
 			saddr_len = quic_cid_saddr_cat(&qpkt->dcid, saddr);
 			cids = &l->icids;
-			cid_lookup_len = qpkt->dcid.len;
 		}
 		else {
 			if (qpkt->dcid.len != QUIC_CID_LEN)
 				goto err;
 
 			cids = &l->cids;
-			cid_lookup_len = QUIC_CID_LEN;
 		}
 
-		node = ebmb_lookup(cids, qpkt->dcid.data, cid_lookup_len);
+		node = ebmb_lookup(cids, qpkt->dcid.data, qpkt->dcid.len);
 		if (!node) {
 			struct quic_cid *odcid;
 			int ipv4;
@@ -3597,7 +3594,7 @@ static ssize_t qc_lstnr_pkt_rcv(unsigned char **buf, const unsigned char *end,
 
 			ipv4 = saddr->ss_family == AF_INET;
 			if (!qc_new_conn_init(conn, ipv4, &l->icids, &l->cids,
-			                      qpkt->dcid.data, cid_lookup_len,
+			                      qpkt->dcid.data, qpkt->dcid.len,
 			                      qpkt->scid.data, qpkt->scid.len))
 				goto err;
 
