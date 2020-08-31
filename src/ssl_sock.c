@@ -90,7 +90,9 @@
 #include <proto/stream.h>
 #include <proto/task.h>
 #include <proto/vars.h>
+#ifdef USE_QUIC
 #include <proto/xprt_quic.h>
+#endif
 
 /* ***** READ THIS before adding code here! *****
  *
