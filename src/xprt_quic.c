@@ -3574,6 +3574,16 @@ static ssize_t qc_lstnr_pkt_rcv(unsigned char **buf, const unsigned char *end,
 		}
 
 		node = ebmb_lookup(cids, qpkt->dcid.data, qpkt->dcid.len);
+		if (!node && qpkt->type == QUIC_PACKET_TYPE_INITIAL && dcid_len == QUIC_CID_LEN &&
+		    cids == &l->icids) {
+			/* Switch to the definitive tree ->cids containing the final CIDs. */
+			node = ebmb_lookup(&l->cids, qpkt->dcid.data, dcid_len);
+			if (node) {
+				/* If found, signal this with NULL as special value for <cids>. */
+				qpkt->dcid.len = dcid_len;
+				cids = NULL;
+			}
+		}
 		if (!node) {
 			struct quic_cid *odcid;
 			int ipv4;
@@ -3617,7 +3627,7 @@ static ssize_t qc_lstnr_pkt_rcv(unsigned char **buf, const unsigned char *end,
 			SSL_set_quic_transport_params(conn_ctx->ssl, conn->enc_params, conn->enc_params_len);
 		}
 		else {
-			if (qpkt->type == QUIC_PACKET_TYPE_INITIAL)
+			if (qpkt->type == QUIC_PACKET_TYPE_INITIAL && cids == &l->icids)
 				conn = ebmb_entry(node, struct quic_conn, odcid_node);
 			else
 				conn = ebmb_entry(node, struct quic_conn, scid_node);
