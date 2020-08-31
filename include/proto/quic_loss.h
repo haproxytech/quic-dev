@@ -167,12 +167,12 @@ static inline struct quic_pktns *quic_pto_pktns(struct quic_conn *qc,
 		}
 
 		tmp_pto =
-			tick_first_2nz(pto, tick_add(p->tx.time_of_last_eliciting, duration));
-		TRACE_PROTO("pktns", QUIC_EV_CONN_SPTO, qc->conn, p);
+			tick_first_2nz(pto, p->tx.time_of_last_eliciting + duration);
 		if (!tick_isset(pto) || tmp_pto < pto) {
-			p->tx.pto = tmp_pto = pto;
+			p->tx.pto = pto = tmp_pto;
 			pktns = p;
 		}
+		TRACE_PROTO("pktns", QUIC_EV_CONN_SPTO, qc->conn, p);
 	}
 
  out:
