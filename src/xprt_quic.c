@@ -3312,13 +3312,6 @@ static inline int qc_try_rm_hp(struct quic_rx_packet *qpkt,
 	 * protection.
 	 */
 	pn = *buf;
-	/* Increase the total length of this packet by the header length. */
-	qpkt->len += pn - beg;
-	if (qpkt->len > sizeof qpkt->data) {
-		TRACE_PROTO("Too big packet", QUIC_EV_CONN_TRMHP, ctx->conn,, &qpkt->len);
-		goto err;
-	}
-
 	tel = quic_packet_type_enc_level(qpkt->type);
 	if (tel == QUIC_TLS_ENC_LEVEL_NONE) {
 		TRACE_DEVEL("Wrong enc. level", QUIC_EV_CONN_TRMHP, ctx->conn);
@@ -3512,6 +3505,13 @@ static ssize_t qc_srv_pkt_rcv(unsigned char **buf, const unsigned char *end,
 	QDPRINTF("%s packet length: %zu\n", __func__, qpkt->len);
 
 	conn_ctx = conn->conn->xprt_ctx;
+
+	/* Increase the total length of this packet by the header length. */
+	qpkt->len += *buf - beg;
+	if (qpkt->len > sizeof qpkt->data) {
+		TRACE_PROTO("Too big packet", QUIC_EV_CONN_SPKT, conn->conn, qpkt, &qpkt->len);
+		goto err;
+	}
 
 	if (!qc_try_rm_hp(qpkt, buf, beg, end, conn_ctx))
 		goto err;
@@ -3715,6 +3715,13 @@ static ssize_t qc_lstnr_pkt_rcv(unsigned char **buf, const unsigned char *end,
 
 	/* Update the state if needed. */
 	conn_ctx = conn->conn->xprt_ctx;
+
+	/* Increase the total length of this packet by the header length. */
+	qpkt->len += *buf - beg;
+	if (qpkt->len > sizeof qpkt->data) {
+		TRACE_PROTO("Too big packet", QUIC_EV_CONN_LPKT, conn->conn, qpkt, &qpkt->len);
+		goto err;
+	}
 
 	if (!qc_try_rm_hp(qpkt, buf, beg, end, conn_ctx))
 		goto err;
