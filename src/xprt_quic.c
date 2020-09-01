@@ -3371,6 +3371,7 @@ static inline int qc_try_rm_hp(struct quic_rx_packet *qpkt,
 typedef ssize_t qpkt_read_func(unsigned char **buf,
                                const unsigned char *end,
                                struct quic_rx_packet *qpkt, void *ctx,
+                               struct ebmb_node **dcid_node,
                                struct sockaddr_storage *saddr,
                                socklen_t *saddrlen);
 
@@ -3394,6 +3395,7 @@ static inline void qc_parse_hd_form(struct quic_rx_packet *pkt,
 
 static ssize_t qc_srv_pkt_rcv(unsigned char **buf, const unsigned char *end,
                               struct quic_rx_packet *qpkt, void *ctx,
+                              struct ebmb_node **dcid_node,
                               struct sockaddr_storage *saddr, socklen_t *saddrlen)
 {
 	unsigned char *beg;
@@ -3482,7 +3484,15 @@ static ssize_t qc_srv_pkt_rcv(unsigned char **buf, const unsigned char *end,
 		conn = ebmb_entry(node, struct quic_conn, scid_node);
 		*buf += QUIC_CID_LEN;
 	}
-
+	/* Store the DCID used for this packet to check the packet which
+	 * come in this UDP datagram match with it.
+	 */
+	if (!*dcid_node)
+		*dcid_node = node;
+	else if (*dcid_node != node) {
+		TRACE_PROTO("Packet dropped", QUIC_EV_CONN_LPKT, conn->conn);
+		goto err;
+	}
 	/*
 	 * Only packets packets with long headers and not RETRY or VERSION as type
 	 * have a length field.
@@ -3520,7 +3530,7 @@ static ssize_t qc_srv_pkt_rcv(unsigned char **buf, const unsigned char *end,
 }
 
 static ssize_t qc_lstnr_pkt_rcv(unsigned char **buf, const unsigned char *end,
-                                struct quic_rx_packet *qpkt, void *ctx,
+                                struct quic_rx_packet *qpkt, void *ctx, struct ebmb_node **dcid_node,
                                 struct sockaddr_storage *saddr, socklen_t *saddrlen)
 {
 	unsigned char *beg;
@@ -3623,6 +3633,8 @@ static ssize_t qc_lstnr_pkt_rcv(unsigned char **buf, const unsigned char *end,
 			if (!conn->enc_params_len)
 				goto err;
 
+			/* This is the DCID sent in this packet by the client. */
+			node = &conn->odcid_node;
 			conn_ctx = conn->conn->xprt_ctx;
 			SSL_set_quic_transport_params(conn_ctx->ssl, conn->enc_params, conn->enc_params_len);
 		}
@@ -3674,7 +3686,15 @@ static ssize_t qc_lstnr_pkt_rcv(unsigned char **buf, const unsigned char *end,
 		conn = ebmb_entry(node, struct quic_conn, scid_node);
 		*buf += QUIC_CID_LEN;
 	}
-
+	/* Store the DCID used for this packet to check the packet which
+	 * come in this UDP datagram match with it.
+	 */
+	if (!*dcid_node)
+		*dcid_node = node;
+	else if (*dcid_node != node) {
+		TRACE_PROTO("Packet dropped", QUIC_EV_CONN_LPKT, conn->conn);
+		goto err;
+	}
 	/*
 	 * Only packets packets with long headers and not RETRY or VERSION as type
 	 * have a length field.
@@ -4370,9 +4390,11 @@ static ssize_t quic_packets_read(char *buf, size_t len, void *ctx,
 {
 	unsigned char *pos;
 	const unsigned char *end;
+	struct ebmb_node *dcid_node;
 
 	pos = (unsigned char *)buf;
 	end = pos + len;
+	dcid_node = NULL;
 
 	do {
 		int ret;
@@ -4386,7 +4408,7 @@ static ssize_t quic_packets_read(char *buf, size_t len, void *ctx,
 
 		memset(qpkt, 0, sizeof(*qpkt));
 		qpkt->refcnt = 1;
-		ret = func(&pos, end, qpkt, ctx, saddr, saddrlen);
+		ret = func(&pos, end, qpkt, ctx, &dcid_node, saddr, saddrlen);
 		if (ret == -1) {
 			free_quic_rx_packet(qpkt);
 			goto err;
