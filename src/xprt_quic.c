@@ -534,7 +534,7 @@ static inline int quic_peer_validated_addr(struct quic_conn_ctx *ctx)
 	struct quic_conn *qc;
 
 	qc = ctx->conn->quic_conn;
-	if (objt_listener(qc->conn->target))
+	if (objt_server(qc->conn->target))
 		return 1;
 
 	if ((qc->els[QUIC_TLS_ENC_LEVEL_HANDSHAKE].pktns->flags & QUIC_FL_PKTNS_ACK_RECEIVED) ||
