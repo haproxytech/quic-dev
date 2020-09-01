@@ -4409,12 +4409,8 @@ static ssize_t quic_packets_read(char *buf, size_t len, void *ctx,
 		memset(qpkt, 0, sizeof(*qpkt));
 		qpkt->refcnt = 1;
 		ret = func(&pos, end, qpkt, ctx, &dcid_node, saddr, saddrlen);
-		if (ret == -1) {
+		if (ret == -1)
 			free_quic_rx_packet(qpkt);
-			goto err;
-		}
-
-		QDPRINTF("long header? %d packet type: 0x%02x \n", qc_pkt_long(qpkt), qpkt->type);
 	} while (pos < end);
 
 	return pos - (unsigned char *)buf;
