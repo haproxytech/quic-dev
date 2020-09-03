@@ -3496,10 +3496,6 @@ static ssize_t qc_srv_pkt_rcv(unsigned char **buf, const unsigned char *end,
 	 */
 	if (!dgram_ctx->dcid_node)
 		dgram_ctx->dcid_node = node;
-	else if (dgram_ctx->dcid_node != node) {
-		TRACE_PROTO("Packet dropped", QUIC_EV_CONN_SPKT, conn->conn);
-		goto err;
-	}
 	/*
 	 * Only packets packets with long headers and not RETRY or VERSION as type
 	 * have a length field.
@@ -3522,6 +3518,12 @@ static ssize_t qc_srv_pkt_rcv(unsigned char **buf, const unsigned char *end,
 
 	/* Increase the total length of this packet by the header length. */
 	qpkt->len += *buf - beg;
+	/* Do not check the DCID node before the length. */
+	if (dgram_ctx->dcid_node != node) {
+		TRACE_PROTO("Packet dropped", QUIC_EV_CONN_LPKT, conn->conn);
+		goto err;
+	}
+
 	if (qpkt->len > sizeof qpkt->data) {
 		TRACE_PROTO("Too big packet", QUIC_EV_CONN_SPKT, conn->conn, qpkt, &qpkt->len);
 		goto err;
@@ -3708,10 +3710,6 @@ static ssize_t qc_lstnr_pkt_rcv(unsigned char **buf, const unsigned char *end,
 		dgram_ctx->dcid_node = node;
 		dgram_ctx->quic_conn = conn;
 	}
-	else if (dgram_ctx->dcid_node != node) {
-		TRACE_PROTO("Packet dropped", QUIC_EV_CONN_LPKT, conn->conn);
-		goto err;
-	}
 	/*
 	 * Only packets packets with long headers and not RETRY or VERSION as type
 	 * have a length field.
@@ -3735,6 +3733,12 @@ static ssize_t qc_lstnr_pkt_rcv(unsigned char **buf, const unsigned char *end,
 
 	/* Increase the total length of this packet by the header length. */
 	qpkt->len += *buf - beg;
+	/* Do not check the DCID node before the length. */
+	if (dgram_ctx->dcid_node != node) {
+		TRACE_PROTO("Packet dropped", QUIC_EV_CONN_LPKT, conn->conn);
+		goto err;
+	}
+
 	if (qpkt->len > sizeof qpkt->data) {
 		TRACE_PROTO("Too big packet", QUIC_EV_CONN_LPKT, conn->conn, qpkt, &qpkt->len);
 		goto err;
