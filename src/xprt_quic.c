@@ -4416,8 +4416,15 @@ static ssize_t quic_packets_read(char *buf, size_t len, void *ctx,
 		memset(qpkt, 0, sizeof(*qpkt));
 		qpkt->refcnt = 1;
 		ret = func(&pos, end, qpkt, ctx, &dcid_node, saddr, saddrlen);
-		if (ret == -1)
+		if (ret == -1) {
+			size_t pkt_len;
+
+			pkt_len = qpkt->len;
 			free_quic_rx_packet(qpkt);
+			/* If the packet length could not be found, we cannot continue. */
+			if (!pkt_len)
+				break;
+		}
 	} while (pos < end);
 
 	return pos - (unsigned char *)buf;
