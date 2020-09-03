@@ -446,8 +446,6 @@ struct quic_conn {
 	} obuf;
 
 	struct {
-		/* The packets which have been sent. */
-		struct eb_root pkts;
 		/* The remaining frames to send. */
 		struct list frms_to_send;
 
