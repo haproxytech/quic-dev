@@ -1974,16 +1974,9 @@ static int qc_send_ppkts(struct quic_conn_ctx *ctx)
 	for (rbuf = q_rbuf(qc); !q_buf_empty(rbuf) ; rbuf = q_next_rbuf(qc)) {
 		struct quic_tx_packet *p, *q;
 		unsigned int time_sent;
-#if 1
-		static int count = 0;
-#endif
 
 		tmpbuf.area = (char *)rbuf->area;
 		tmpbuf.size = tmpbuf.data = rbuf->data;
-
-#if 1
-		if (count++)
-#endif
 	    if (ctx->xprt->snd_buf(qc->conn, qc->conn->xprt_ctx,
 	                           &tmpbuf, tmpbuf.data, 0) <= 0)
 		    break;
