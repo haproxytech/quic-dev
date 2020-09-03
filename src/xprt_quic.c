@@ -59,6 +59,15 @@ struct quic_conn_ctx {
 	struct wait_event *subs;
 };
 
+/* UDP datagram context used by the I/O handler receiver callbacks.
+ * Useful to store the connection
+ */
+struct quic_dgram_ctx {
+	struct quic_conn *quic_conn;
+	struct ebmb_node *dcid_node;
+	void *ctx;
+};
+
 struct quic_transport_params quid_dflt_transport_params = {
 	.max_packet_size    = QUIC_DFLT_MAX_PACKET_SIZE,
 	.ack_delay_exponent = QUIC_DFLT_ACK_DELAY_COMPONENT,
@@ -1965,17 +1974,24 @@ static int qc_send_ppkts(struct quic_conn_ctx *ctx)
 	for (rbuf = q_rbuf(qc); !q_buf_empty(rbuf) ; rbuf = q_next_rbuf(qc)) {
 		struct quic_tx_packet *p, *q;
 		unsigned int time_sent;
+#if 1
+		static int count = 0;
+#endif
 
 		tmpbuf.area = (char *)rbuf->area;
 		tmpbuf.size = tmpbuf.data = rbuf->data;
 
+#if 1
+		if (count++)
+#endif
 	    if (ctx->xprt->snd_buf(qc->conn, qc->conn->xprt_ctx,
 	                           &tmpbuf, tmpbuf.data, 0) <= 0)
 		    break;
 
-	    time_sent = now_ms;
-	    /* Reset this buffer to make it available for the next packet to prepare. */
-	    q_buf_reset(rbuf);
+		qc->tx.bytes += tmpbuf.data;
+		time_sent = now_ms;
+		/* Reset this buffer to make it available for the next packet to prepare. */
+		q_buf_reset(rbuf);
 		/* Remove from <rbuf> the packets which have just been sent. */
 		list_for_each_entry_safe(p, q, &rbuf->pkts, list) {
 			p->time_sent = time_sent;
@@ -2759,6 +2775,7 @@ static int qc_new_conn_init(struct quic_conn *conn, int ipv4,
 		conn->els[i].pktns = &conn->pktns[quic_tls_pktns(i)];
 	}
 
+	/* TX part. */
 	LIST_INIT(&conn->tx.frms_to_send);
 	conn->tx.bufs = quic_conn_tx_bufs_alloc(QUIC_CONN_TX_BUFS_NB, QUIC_CONN_TX_BUF_SZ);
 	if (!conn->tx.bufs)
@@ -2766,6 +2783,9 @@ static int qc_new_conn_init(struct quic_conn *conn, int ipv4,
 
 	conn->tx.nb_buf = QUIC_CONN_TX_BUFS_NB;
 	conn->tx.wbuf = conn->tx.rbuf = 0;
+	conn->tx.bytes = 0;
+	/* RX part. */
+	conn->rx.bytes = 0;
 
 	conn->ifcdata = 0;
 
@@ -3364,8 +3384,8 @@ static inline int qc_try_rm_hp(struct quic_rx_packet *qpkt,
 
 typedef ssize_t qpkt_read_func(unsigned char **buf,
                                const unsigned char *end,
-                               struct quic_rx_packet *qpkt, void *ctx,
-                               struct ebmb_node **dcid_node,
+                               struct quic_rx_packet *qpkt,
+                               struct quic_dgram_ctx *dgram_ctx,
                                struct sockaddr_storage *saddr,
                                socklen_t *saddrlen);
 
@@ -3388,8 +3408,8 @@ static inline void qc_parse_hd_form(struct quic_rx_packet *pkt,
 }
 
 static ssize_t qc_srv_pkt_rcv(unsigned char **buf, const unsigned char *end,
-                              struct quic_rx_packet *qpkt, void *ctx,
-                              struct ebmb_node **dcid_node,
+                              struct quic_rx_packet *qpkt,
+                              struct quic_dgram_ctx *dgram_ctx,
                               struct sockaddr_storage *saddr, socklen_t *saddrlen)
 {
 	unsigned char *beg;
@@ -3411,7 +3431,7 @@ static ssize_t qc_srv_pkt_rcv(unsigned char **buf, const unsigned char *end,
 		/* XXX TO BE DISCARDED */
 		goto err;
 
-	srv_conn = ctx;
+	srv_conn = dgram_ctx->ctx;
 	beg = *buf;
 	/* Header form */
 	qc_parse_hd_form(qpkt, *(*buf)++, &long_header);
@@ -3481,9 +3501,9 @@ static ssize_t qc_srv_pkt_rcv(unsigned char **buf, const unsigned char *end,
 	/* Store the DCID used for this packet to check the packet which
 	 * come in this UDP datagram match with it.
 	 */
-	if (!*dcid_node)
-		*dcid_node = node;
-	else if (*dcid_node != node) {
+	if (!dgram_ctx->dcid_node)
+		dgram_ctx->dcid_node = node;
+	else if (dgram_ctx->dcid_node != node) {
 		TRACE_PROTO("Packet dropped", QUIC_EV_CONN_SPKT, conn->conn);
 		goto err;
 	}
@@ -3531,7 +3551,8 @@ static ssize_t qc_srv_pkt_rcv(unsigned char **buf, const unsigned char *end,
 }
 
 static ssize_t qc_lstnr_pkt_rcv(unsigned char **buf, const unsigned char *end,
-                                struct quic_rx_packet *qpkt, void *ctx, struct ebmb_node **dcid_node,
+                                struct quic_rx_packet *qpkt,
+                                struct quic_dgram_ctx *dgram_ctx,
                                 struct sockaddr_storage *saddr, socklen_t *saddrlen)
 {
 	unsigned char *beg;
@@ -3553,7 +3574,7 @@ static ssize_t qc_lstnr_pkt_rcv(unsigned char **buf, const unsigned char *end,
 		/* XXX TO BE DISCARDED */
 		goto err;
 
-	l = ctx;
+	l = dgram_ctx->ctx;
 	beg = *buf;
 	/* Header form */
 	qc_parse_hd_form(qpkt, *(*buf)++, &long_header);
@@ -3690,9 +3711,11 @@ static ssize_t qc_lstnr_pkt_rcv(unsigned char **buf, const unsigned char *end,
 	/* Store the DCID used for this packet to check the packet which
 	 * come in this UDP datagram match with it.
 	 */
-	if (!*dcid_node)
-		*dcid_node = node;
-	else if (*dcid_node != node) {
+	if (!dgram_ctx->dcid_node) {
+		dgram_ctx->dcid_node = node;
+		dgram_ctx->quic_conn = conn;
+	}
+	else if (dgram_ctx->dcid_node != node) {
 		TRACE_PROTO("Packet dropped", QUIC_EV_CONN_LPKT, conn->conn);
 		goto err;
 	}
@@ -4398,11 +4421,13 @@ static ssize_t quic_packets_read(char *buf, size_t len, void *ctx,
 {
 	unsigned char *pos;
 	const unsigned char *end;
-	struct ebmb_node *dcid_node;
+	struct quic_dgram_ctx dgram_ctx = {
+		.dcid_node = NULL,
+		.ctx = ctx,
+	};
 
 	pos = (unsigned char *)buf;
 	end = pos + len;
-	dcid_node = NULL;
 
 	do {
 		int ret;
@@ -4416,7 +4441,7 @@ static ssize_t quic_packets_read(char *buf, size_t len, void *ctx,
 
 		memset(qpkt, 0, sizeof(*qpkt));
 		qpkt->refcnt = 1;
-		ret = func(&pos, end, qpkt, ctx, &dcid_node, saddr, saddrlen);
+		ret = func(&pos, end, qpkt, &dgram_ctx, saddr, saddrlen);
 		if (ret == -1) {
 			size_t pkt_len;
 
@@ -4427,6 +4452,12 @@ static ssize_t quic_packets_read(char *buf, size_t len, void *ctx,
 				break;
 		}
 	} while (pos < end);
+
+	/* Increasing the received bytes counter by the UDP datagram length
+	 * if this datagram could be associated to a connection.
+	 */
+	if (dgram_ctx.quic_conn)
+		dgram_ctx.quic_conn->rx.bytes += len;
 
 	return pos - (unsigned char *)buf;
 

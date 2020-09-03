@@ -457,7 +457,13 @@ struct quic_conn {
 		int wbuf;
 		/* Reader index. */
 		int rbuf;
+		/* Number of sent bytes. */
+		uint64_t bytes;
 	} tx;
+	struct {
+		/* Number of received bytes. */
+		uint64_t bytes;
+	} rx;
 	/* In flight CRYPTO data counter. */
 	size_t ifcdata;
 	unsigned int max_ack_delay;
