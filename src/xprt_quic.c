@@ -355,7 +355,7 @@ static void quic_trace(enum trace_level level, uint64_t mask, const struct trace
 				chunk_appendf(&trace_buf, " err=%s", ssl_error_str(*err));
 		}
 
-		if (mask & (QUIC_EV_CONN_TRMHP|QUIC_EV_CONN_ELRMHP)) {
+		if (mask & (QUIC_EV_CONN_TRMHP|QUIC_EV_CONN_ELRMHP|QUIC_EV_CONN_ESPKT|QUIC_EV_CONN_SPKT)) {
 			const struct quic_rx_packet *pkt = a2;
 			const unsigned long *pktlen = a3;
 			const SSL *ssl = a4;
@@ -523,7 +523,8 @@ static void quic_trace(enum trace_level level, uint64_t mask, const struct trace
 		const struct quic_rx_packet *pkt = a2;
 
 		if (pkt)
-			chunk_appendf(&trace_buf, " type=0x%02x long? %d", pkt->type, qc_pkt_long(pkt));
+			chunk_appendf(&trace_buf, " type=0x%02x %s",
+			              pkt->type, qc_pkt_long(pkt) ? "long" : "short");
 	}
 
 }
@@ -3483,7 +3484,7 @@ static ssize_t qc_srv_pkt_rcv(unsigned char **buf, const unsigned char *end,
 	if (!*dcid_node)
 		*dcid_node = node;
 	else if (*dcid_node != node) {
-		TRACE_PROTO("Packet dropped", QUIC_EV_CONN_LPKT, conn->conn);
+		TRACE_PROTO("Packet dropped", QUIC_EV_CONN_SPKT, conn->conn);
 		goto err;
 	}
 	/*
