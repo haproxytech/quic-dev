@@ -354,5 +354,12 @@ static inline int quic_get_tls_enc_levels(enum quic_tls_enc_level *level,
 	return 1;
 }
 
+/* Flag the keys at <qel> encryption level as discarded. */
+static inline void quic_tls_discard_keys(struct quic_enc_level *qel)
+{
+	qel->tls_ctx.rx.flags |= QUIC_FL_TLS_SECRETS_DCD;
+	qel->tls_ctx.tx.flags |= QUIC_FL_TLS_SECRETS_DCD;
+}
+
 #endif /* _PROTO_QUIC_TLS_H */
 

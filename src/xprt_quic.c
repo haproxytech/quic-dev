@@ -1855,6 +1855,16 @@ static int qc_parse_pkt_frms(struct quic_rx_packet *pkt, struct quic_conn_ctx *c
 		}
 	}
 
+	/* The server must switch from INITIAL to HANDSHAKE handshake state when it
+	 * has successfully parse a Handshake packet. The Initial encryption must also
+	 * be discarded.
+	 */
+	if (ctx->state == QUIC_HS_ST_SERVER_INITIAL &&
+	    pkt->type == QUIC_PACKET_TYPE_HANDSHAKE) {
+		quic_tls_discard_keys(&conn->els[QUIC_TLS_ENC_LEVEL_INITIAL]);
+		ctx->state = QUIC_HS_ST_SERVER_HANDSHAKE;
+	}
+
 	TRACE_LEAVE(QUIC_EV_CONN_PRSHPKT, ctx->conn);
 	return 1;
 
@@ -1894,6 +1904,7 @@ static int qc_prep_hdshk_pkts(struct quic_conn_ctx *ctx)
 	 */
 	while ((q_buf_empty(wbuf) || reuse_wbuf)) {
 		ssize_t ret;
+		enum quic_pkt_type pkt_type;
 
 		/* Do not build any more packet if no ACK are required
 		 * and if there is not more CRYPTO data available or in flight
@@ -1910,9 +1921,9 @@ static int qc_prep_hdshk_pkts(struct quic_conn_ctx *ctx)
 			break;
 		}
 
+		pkt_type = quic_tls_level_pkt_type(tel);
 		reuse_wbuf = 0;
-		ret = qc_build_hdshk_pkt(wbuf, qc,
-		                         quic_tls_level_pkt_type(tel), qel);
+		ret = qc_build_hdshk_pkt(wbuf, qc, pkt_type, qel);
 		switch (ret) {
 		case -2:
 			goto err;
@@ -1923,6 +1934,14 @@ static int qc_prep_hdshk_pkts(struct quic_conn_ctx *ctx)
 		case 0:
 			goto out;
 		default:
+			/* Discard the Initial encryption keys as soon as
+			 * a handshake packet could be built.
+			 */
+			if (ctx->state == QUIC_HS_ST_CLIENT_INITIAL &&
+			    pkt_type == QUIC_PACKET_TYPE_HANDSHAKE) {
+				quic_tls_discard_keys(&qc->els[QUIC_TLS_ENC_LEVEL_INITIAL]);
+				ctx->state = QUIC_HS_ST_CLIENT_HANDSHAKE;
+			}
 			/* Special case for Initial packets: when they have all
 			 * been sent, select the next level.
 			 */
@@ -2451,8 +2470,6 @@ static int qc_do_hdshk(struct quic_conn_ctx *ctx)
 	if ((next_qel->tls_ctx.rx.flags & QUIC_FL_TLS_SECRETS_SET) &&
 	    (!LIST_ISEMPTY(&next_qel->rx.pqpkts) || !eb_is_empty(&next_qel->rx.pkts))) {
 		qel = next_qel;
-		if (ctx->state == QUIC_HS_ST_CLIENT_INITIAL)
-			ctx->state = QUIC_HS_ST_CLIENT_HANDSHAKE;
 		goto next_level;
 	}
 
@@ -2460,6 +2477,8 @@ static int qc_do_hdshk(struct quic_conn_ctx *ctx)
 	if (ctx->state < QUIC_HS_ST_COMPLETE)
 		goto out;
 
+	/* Discard the Handshake keys. */
+	quic_tls_discard_keys(&quic_conn->els[QUIC_TLS_ENC_LEVEL_HANDSHAKE]);
 	if (!quic_build_post_handshake_frames(quic_conn) ||
 	    !qc_prep_phdshk_pkts(quic_conn) ||
 	    !qc_send_ppkts(ctx))
@@ -3334,6 +3353,11 @@ static inline int qc_try_rm_hp(struct quic_rx_packet *qpkt,
 
 	qel = &ctx->conn->quic_conn->els[tel];
 
+	if (qel->tls_ctx.rx.flags & QUIC_FL_TLS_SECRETS_DCD) {
+		TRACE_DEVEL("Discarded keys", QUIC_EV_CONN_TRMHP, ctx->conn);
+		goto err;
+	}
+
 	if ((qel->tls_ctx.rx.flags & QUIC_FL_TLS_SECRETS_SET) &&
 	    (tel != QUIC_TLS_ENC_LEVEL_APP || ctx->state >= QUIC_HS_ST_COMPLETE)) {
 		/*
@@ -3746,9 +3770,6 @@ static ssize_t qc_lstnr_pkt_rcv(unsigned char **buf, const unsigned char *end,
 
 	if (!qc_try_rm_hp(qpkt, buf, beg, end, conn_ctx))
 		goto err;
-
-	if (conn_ctx->state == QUIC_HS_ST_SERVER_INITIAL && qpkt->type == QUIC_PACKET_TYPE_HANDSHAKE)
-		conn_ctx->state = QUIC_HS_ST_SERVER_HANDSHAKE;
 
 	/* Wake the tasklet of the QUIC connection packet handler. */
 	if (conn_ctx)

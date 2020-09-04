@@ -77,7 +77,10 @@ enum quic_tls_pktns {
 
 extern unsigned char initial_salt[20];
 
+/* Flag to be used when TLS secrets have been set. */
 #define QUIC_FL_TLS_SECRETS_SET  (1 << 0)
+/* Flag to be used when TLS secrets have been discarded. */
+#define QUIC_FL_TLS_SECRETS_DCD  (1 << 1)
 
 struct quic_tls_secrets {
 	const EVP_CIPHER *aead;
