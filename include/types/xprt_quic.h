@@ -106,6 +106,8 @@
 
 extern struct trace_source trace_quic;
 extern struct pool_head *pool_head_quic_rx_packet;
+extern struct pool_head *pool_head_quic_tx_packet;
+extern struct pool_head *pool_head_quic_tx_frm;
 
 /*
  * This struct is used by ebmb_node structs as last member of flexible arrays.

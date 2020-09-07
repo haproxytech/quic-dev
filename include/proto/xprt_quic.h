@@ -963,6 +963,36 @@ static inline void quic_pktns_init(struct quic_pktns *pktns)
 	pktns->rx.ack_ranges.enc_sz = 0;
 }
 
+/* Discard <pktns> packet number space attached to <qc> QUIC connection.
+ * Its loss information are reset. Deduce the outstanding bytes for this
+ * packet number space from the outstanding bytes for the path of this
+ * connection§.
+ * All the TX packets and their frames are freed.
+ */
+static inline void quic_pktns_discard(struct quic_pktns *pktns,
+                                      struct quic_conn *qc)
+{
+	struct eb64_node *node;
+
+	pktns->tx.time_of_last_eliciting = 0;
+	pktns->tx.loss_time = TICK_ETERNITY;
+	qc->path->loss.pto_count = 0;
+	qc->path->in_flight -= pktns->tx.in_flight;
+
+	node = eb64_first(&pktns->tx.pkts);
+	while (node) {
+		struct quic_tx_packet *pkt;
+		struct quic_tx_frm *frm, *frmbak;
+
+		pkt = eb64_entry(&node->node, struct quic_tx_packet, pn_node);
+		node = eb64_next(node);
+		list_for_each_entry_safe(frm, frmbak, &pkt->frms, list)
+			pool_free(pool_head_quic_tx_frm, frm);
+
+		pool_free(pool_head_quic_tx_packet, pkt);
+	}
+}
+
 /*
  * Initialize <p> QUIC network path depending on <ipv4> boolean
  * which is true for an IPv4 path, if not false for an IPv6 path.

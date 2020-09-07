@@ -205,13 +205,13 @@ DECLARE_POOL(pool_head_quic_connection_id,
 
 DECLARE_POOL(pool_head_quic_rx_packet, "quic_rx_packet_pool", sizeof(struct quic_rx_packet));
 
-DECLARE_STATIC_POOL(pool_head_quic_tx_packet, "quic_tx_packet_pool", sizeof(struct quic_tx_packet));
+DECLARE_POOL(pool_head_quic_tx_packet, "quic_tx_packet_pool", sizeof(struct quic_tx_packet));
 
 DECLARE_STATIC_POOL(pool_head_quic_conn_ctx, "quic_conn_ctx_pool", sizeof(struct quic_conn_ctx));
 
 DECLARE_STATIC_POOL(pool_head_quic_rx_crypto_frm, "quic_rx_crypto_frm_pool", sizeof(struct quic_rx_crypto_frm));
 
-DECLARE_STATIC_POOL(pool_head_quic_tx_frm, "quic_tx_frm_pool", sizeof(struct quic_tx_frm));
+DECLARE_POOL(pool_head_quic_tx_frm, "quic_tx_frm_pool", sizeof(struct quic_tx_frm));
 
 DECLARE_STATIC_POOL(pool_head_quic_crypto_buf, "quic_crypto_buf_pool", sizeof(struct quic_crypto_buf));
 
@@ -1862,6 +1862,8 @@ static int qc_parse_pkt_frms(struct quic_rx_packet *pkt, struct quic_conn_ctx *c
 	if (ctx->state == QUIC_HS_ST_SERVER_INITIAL &&
 	    pkt->type == QUIC_PACKET_TYPE_HANDSHAKE) {
 		quic_tls_discard_keys(&conn->els[QUIC_TLS_ENC_LEVEL_INITIAL]);
+		quic_pktns_discard(conn->els[QUIC_TLS_ENC_LEVEL_INITIAL].pktns, conn);
+		qc_set_timer(ctx);
 		ctx->state = QUIC_HS_ST_SERVER_HANDSHAKE;
 	}
 
@@ -1940,6 +1942,8 @@ static int qc_prep_hdshk_pkts(struct quic_conn_ctx *ctx)
 			if (ctx->state == QUIC_HS_ST_CLIENT_INITIAL &&
 			    pkt_type == QUIC_PACKET_TYPE_HANDSHAKE) {
 				quic_tls_discard_keys(&qc->els[QUIC_TLS_ENC_LEVEL_INITIAL]);
+				quic_pktns_discard(qc->els[QUIC_TLS_ENC_LEVEL_INITIAL].pktns, qc);
+				qc_set_timer(ctx);
 				ctx->state = QUIC_HS_ST_CLIENT_HANDSHAKE;
 			}
 			/* Special case for Initial packets: when they have all
@@ -2479,6 +2483,8 @@ static int qc_do_hdshk(struct quic_conn_ctx *ctx)
 
 	/* Discard the Handshake keys. */
 	quic_tls_discard_keys(&quic_conn->els[QUIC_TLS_ENC_LEVEL_HANDSHAKE]);
+	quic_pktns_discard(quic_conn->els[QUIC_TLS_ENC_LEVEL_HANDSHAKE].pktns, quic_conn);
+	qc_set_timer(ctx);
 	if (!quic_build_post_handshake_frames(quic_conn) ||
 	    !qc_prep_phdshk_pkts(quic_conn) ||
 	    !qc_send_ppkts(ctx))
