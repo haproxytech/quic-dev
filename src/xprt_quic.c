@@ -4061,8 +4061,13 @@ static ssize_t qc_do_build_hdshk_pkt(struct q_buf *wbuf,
 	padding_len = 0;
 	if (objt_server(conn->conn->target) &&
 	    pkt_type == QUIC_PACKET_TYPE_INITIAL &&
-	    len < QUIC_INITIAL_PACKET_MINLEN)
+	    len < QUIC_INITIAL_PACKET_MINLEN) {
 		len += padding_len = QUIC_INITIAL_PACKET_MINLEN - len;
+	}
+	else if (!ack_frm_len && LIST_ISEMPTY(&pkt->frms)) {
+		/* If there is no frame at all to follow, add at least a PADDING frame. */
+		len += padding_len = QUIC_PACKET_PN_MAXLEN - *pn_len;
+	}
 
 	/*
 	 * Length (of the remaining data). Must not fail because, the buffer size
