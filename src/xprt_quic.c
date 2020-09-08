@@ -343,7 +343,11 @@ static void quic_trace(enum trace_level level, uint64_t mask, const struct trace
 
 		if (mask & QUIC_EV_CONN_HPKT) {
 			const struct quic_tx_packet *pkt = a2;
+			const struct quic_enc_level *qel = a3;
 
+			if (qel)
+				chunk_appendf(&trace_buf, "\n qel=%c",
+				              quic_enc_level_char_from_qel(qel, qc));
 			if (pkt) {
 				const struct quic_tx_frm *frm;
 				chunk_appendf(&trace_buf, "\n  pn=%lu cdata_len=%lu",
@@ -4153,7 +4157,7 @@ static ssize_t qc_build_hdshk_pkt(struct q_buf *buf, struct quic_conn *qc, int p
 	struct quic_tls_ctx *tls_ctx;
 	struct quic_tx_packet *pkt;
 
-	TRACE_ENTER(QUIC_EV_CONN_HPKT, qc->conn);
+	TRACE_ENTER(QUIC_EV_CONN_HPKT, qc->conn,, qel);
 	pkt = pool_alloc(pool_head_quic_tx_packet);
 	if (!pkt) {
 		TRACE_DEVEL("Not enough memory for a new packet", QUIC_EV_CONN_HPKT, qc->conn);

@@ -243,6 +243,25 @@ static inline char quic_enc_level_char(enum quic_tls_enc_level level)
 	}
 }
 
+/* Return a character identifying <qel> encryption level from <qc> QUIC connection
+ * (for debug purpose).
+ * Initial -> 'I', Early Data -> 'E', Handshake -> 'H', Application -> 'A' and
+ * '-' if undefined.
+ */
+static inline char quic_enc_level_char_from_qel(const struct quic_enc_level *qel,
+                                                const struct quic_conn *qc)
+{
+	if (qel == &qc->els[QUIC_TLS_ENC_LEVEL_INITIAL])
+		return 'I';
+	else if (qel == &qc->els[QUIC_TLS_ENC_LEVEL_EARLY_DATA])
+		return 'E';
+	else if (qel == &qc->els[QUIC_TLS_ENC_LEVEL_HANDSHAKE])
+		return 'H';
+	else if (qel == &qc->els[QUIC_TLS_ENC_LEVEL_APP])
+		return 'A';
+	return '-';
+}
+
 /*
  * Return a character identifying the encryption level of a packet depending on
  * its <type> type, and its <long_header> header length (for debug purpose).
