@@ -226,6 +226,8 @@ struct quic_ack_ranges {
 /* QUIC packet number space */
 struct quic_pktns {
 	struct {
+		/* List of frames to send. */
+		struct list frms;
 		/* Next packet number to use for transmissions. */
 		int64_t next_pn;
 		/* Largest acked sent packet. */
@@ -386,7 +388,6 @@ struct quic_enc_level {
 			/* The offset of the CRYPT0 data stream. */
 			uint64_t offset;
 		} crypto;
-		struct list frms;
 	} tx;
 	struct quic_pktns *pktns;
 };
