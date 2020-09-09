@@ -962,6 +962,8 @@ static inline void quic_pktns_init(struct quic_pktns *pktns)
 	LIST_INIT(&pktns->rx.ack_ranges.list);
 	pktns->rx.ack_ranges.sz = 0;
 	pktns->rx.ack_ranges.enc_sz = 0;
+
+	pktns->flags = 0;
 }
 
 /* Discard <pktns> packet number space attached to <qc> QUIC connection.
