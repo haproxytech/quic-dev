@@ -4096,8 +4096,8 @@ static inline void free_quic_tx_packet(struct quic_tx_packet *pkt)
 	struct quic_tx_frm *frm, *frmbak;
 
 	list_for_each_entry_safe(frm, frmbak, &pkt->frms, list) {
-		pool_free(pool_head_quic_tx_frm, frm);
 		LIST_DEL(&frm->list);
+		pool_free(pool_head_quic_tx_frm, frm);
 	}
 	pool_free(pool_head_quic_tx_packet, pkt);
 }
