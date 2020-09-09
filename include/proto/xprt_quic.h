@@ -989,9 +989,11 @@ static inline void quic_pktns_discard(struct quic_pktns *pktns,
 
 		pkt = eb64_entry(&node->node, struct quic_tx_packet, pn_node);
 		node = eb64_next(node);
-		list_for_each_entry_safe(frm, frmbak, &pkt->frms, list)
+		list_for_each_entry_safe(frm, frmbak, &pkt->frms, list) {
+			LIST_DEL(&frm->list);
 			pool_free(pool_head_quic_tx_frm, frm);
-
+		}
+		eb64_delete(&pkt->pn_node);
 		pool_free(pool_head_quic_tx_packet, pkt);
 	}
 }

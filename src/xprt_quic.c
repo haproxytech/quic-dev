@@ -1385,8 +1385,11 @@ static inline void free_quic_tx_pkts(struct list *pkts)
 {
 	struct quic_tx_packet *pkt, *tmp;
 
-	list_for_each_entry_safe(pkt, tmp, pkts, list)
+	list_for_each_entry_safe(pkt, tmp, pkts, list) {
+		LIST_DEL(&pkt->list);
+		eb64_delete(&pkt->pn_node);
 		pool_free(pool_head_quic_tx_packet, pkt);
+	}
 }
 
 /* Send a packet loss event nofification to the congestion controller
@@ -1431,6 +1434,8 @@ static inline void qc_treat_newly_acked_pkts(struct quic_conn_ctx *ctx,
 		ev.ack.acked = pkt->in_flight_len;
 		ev.ack.time_sent = pkt->time_sent;
 		quic_cc_event(&qc->path->cc, &ev);
+		LIST_DEL(&pkt->list);
+		eb64_delete(&pkt->pn_node);
 		pool_free(pool_head_quic_tx_packet, pkt);
 	}
 
@@ -1449,13 +1454,13 @@ static inline void qc_release_lost_pkts(struct quic_pktns *pktns,
                                         uint64_t now_us)
 {
 	struct quic_conn *qc = ctx->conn->quic_conn;
-	struct quic_tx_packet *pkt, *oldest_lost, *newest_lost;
+	struct quic_tx_packet *pkt, *tmp, *oldest_lost, *newest_lost;
 	struct quic_tx_frm *frm, *frmbak;
 	uint64_t lost_bytes;
 
 	lost_bytes = 0;
 	oldest_lost = newest_lost = NULL;
-	list_for_each_entry(pkt, pkts, list) {
+	list_for_each_entry_safe(pkt, tmp, pkts, list) {
 		lost_bytes += pkt->in_flight_len;
 		pkt->pktns->tx.in_flight -= pkt->in_flight_len;
 		if (pkt->flags & QUIC_FL_TX_PACKET_ACK_ELICITING)
@@ -1463,6 +1468,7 @@ static inline void qc_release_lost_pkts(struct quic_pktns *pktns,
 		/* Treat the frames of this lost packet. */
 		list_for_each_entry_safe(frm, frmbak, &pkt->frms, list)
 			qc_treat_nacked_tx_frm(frm, pktns, ctx);
+		LIST_DEL(&pkt->list);
 		if (!oldest_lost) {
 			oldest_lost = newest_lost = pkt;
 		}
@@ -1493,7 +1499,7 @@ static inline void qc_release_lost_pkts(struct quic_pktns *pktns,
  */
 static void qc_packet_loss_lookup(struct quic_pktns *pktns,
                                   struct quic_conn *qc,
-                                  struct list *lost_pkts, int remove)
+                                  struct list *lost_pkts)
 {
 	struct eb_root *pkts;
 	struct eb64_node *node;
@@ -1525,8 +1531,7 @@ static void qc_packet_loss_lookup(struct quic_pktns *pktns,
 
 		if (tick_is_le(pkt->time_sent, loss_send_time) ||
 			(int64_t)largest_acked_pn >= pkt->pn_node.key + QUIC_LOSS_PACKET_THRESHOLD) {
-			if (remove)
-				eb64_delete(&pkt->pn_node);
+			eb64_delete(&pkt->pn_node);
 			LIST_ADDQ(lost_pkts, &pkt->list);
 		}
 		else {
@@ -1636,7 +1641,7 @@ static inline int qc_parse_ack_frm(struct quic_frame *frm, struct quic_conn_ctx 
 	/* Flag this packet number space as having received an ACK. */
 	qel->pktns->flags |= QUIC_FL_PKTNS_ACK_RECEIVED;
 	if (!LIST_ISEMPTY(&newly_acked_pkts) && !eb_is_empty(&qel->pktns->tx.pkts)) {
-		qc_packet_loss_lookup(qel->pktns, ctx->conn->quic_conn, &lost_pkts, 1);
+		qc_packet_loss_lookup(qel->pktns, ctx->conn->quic_conn, &lost_pkts);
 		if (!LIST_ISEMPTY(&lost_pkts))
 			qc_release_lost_pkts(qel->pktns, ctx, &lost_pkts, now_ms);
 	}
@@ -2676,7 +2681,7 @@ static struct task *process_timer(struct task *task, void *ctx, unsigned short s
 	if (tick_isset(pktns->tx.loss_time)) {
 		struct list lost_pkts = LIST_HEAD_INIT(lost_pkts);
 
-		qc_packet_loss_lookup(pktns, qc, &lost_pkts, 1);
+		qc_packet_loss_lookup(pktns, qc, &lost_pkts);
 		if (!LIST_ISEMPTY(&lost_pkts))
 			qc_release_lost_pkts(pktns, ctx, &lost_pkts, now_ms);
 		goto out;
@@ -4091,6 +4096,7 @@ static inline void quic_tx_packet_init(struct quic_tx_packet *pkt)
 	LIST_INIT(&pkt->frms);
 }
 
+/* Free <pkt> TX packet which has not already attache to any tree. */
 static inline void free_quic_tx_packet(struct quic_tx_packet *pkt)
 {
 	struct quic_tx_frm *frm, *frmbak;
