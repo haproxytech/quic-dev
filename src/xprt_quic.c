@@ -2684,6 +2684,7 @@ static struct task *process_timer(struct task *task, void *ctx, unsigned short s
 		qc_packet_loss_lookup(pktns, qc, &lost_pkts);
 		if (!LIST_ISEMPTY(&lost_pkts))
 			qc_release_lost_pkts(pktns, ctx, &lost_pkts, now_ms);
+		qc_set_timer(conn_ctx);
 		goto out;
 	}
 
@@ -2692,7 +2693,6 @@ static struct task *process_timer(struct task *task, void *ctx, unsigned short s
 	qc->path->loss.pto_count++;
 
  out:
-	qc_set_timer(conn_ctx);
 	TRACE_LEAVE(QUIC_EV_CONN_PTIMER, conn_ctx->conn);
 
 	return task;
