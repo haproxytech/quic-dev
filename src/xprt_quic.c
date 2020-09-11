@@ -3988,10 +3988,6 @@ static ssize_t qc_do_build_hdshk_pkt(struct q_buf *wbuf,
 	beg = pos = q_buf_getpos(wbuf);
 	end = q_buf_end(wbuf);
 	max_cdata_len = QUIC_CRYPTO_IN_FLIGHT_MAX - conn->ifcdata;
-	if (!LIST_ISEMPTY(&qel->pktns->tx.frms) && !max_cdata_len) {
-		TRACE_DEVEL("ifcdada limit reached", QUIC_EV_CONN_CHPKT, conn->conn);
-		goto out;
-	}
 
 	/* For a server, the token field of an Initial packet is empty. */
 	token_fields_len = pkt_type == QUIC_PACKET_TYPE_INITIAL ? 1 : 0;
