@@ -1991,10 +1991,10 @@ static int qc_send_ppkts(struct quic_conn_ctx *ctx)
 				qc->path->in_flight_ae_pkts++;
 			}
 			TRACE_PROTO("sent pkt", QUIC_EV_CONN_SPPKTS, ctx->conn, p);
-			if (p->in_flight_len)
-				qc_set_timer(ctx);
 			qc->path->in_flight += p->in_flight_len;
 			p->pktns->tx.in_flight += p->in_flight_len;
+			if (p->in_flight_len)
+				qc_set_timer(ctx);
 			LIST_DEL(&p->list);
 		}
 	}
