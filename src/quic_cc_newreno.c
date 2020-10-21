@@ -89,7 +89,7 @@ static void quic_cc_nr_ca_cb(struct quic_cc *cc, struct quic_cc_event *ev)
 		path->in_flight -= ev->ack.acked;
 		/* Do not increase the congestion window in recovery period. */
 		if (ev->ack.time_sent <= cc->algo_state.nr.recovery_start_time)
-			return;
+			goto out;
 
 		/* Increasing the congestion window by 1 maximum packet size by
 		 * congestion window.
@@ -120,6 +120,8 @@ static void quic_cc_nr_ca_cb(struct quic_cc *cc, struct quic_cc_event *ev)
 		/* XXX TO DO XXX */
 		break;
 	}
+
+ out:
 	TRACE_LEAVE(QUIC_EV_CONN_CC, cc->qc->conn);
 }
 
