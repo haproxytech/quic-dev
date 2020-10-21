@@ -954,7 +954,6 @@ static inline void quic_pktns_init(struct quic_pktns *pktns)
 	pktns->tx.largest_acked_pn = -1;
 	pktns->tx.time_of_last_eliciting = 0;
 	pktns->tx.loss_time = TICK_ETERNITY;
-	pktns->tx.pto = TICK_ETERNITY;
 	pktns->tx.in_flight = 0;
 
 	pktns->rx.largest_pn = -1;
