@@ -2677,6 +2677,7 @@ static struct task *process_timer(struct task *task, void *ctx, unsigned short s
 	conn_ctx = task->context;
 	qc = conn_ctx->conn->quic_conn;
 	TRACE_ENTER(QUIC_EV_CONN_PTIMER, conn_ctx->conn);
+	task->expire = TICK_ETERNITY;
 	pktns = quic_loss_pktns(qc);
 	if (tick_isset(pktns->tx.loss_time)) {
 		struct list lost_pkts = LIST_HEAD_INIT(lost_pkts);
