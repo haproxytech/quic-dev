@@ -978,6 +978,7 @@ static inline void quic_pktns_discard(struct quic_pktns *pktns,
 
 	pktns->tx.time_of_last_eliciting = 0;
 	pktns->tx.loss_time = TICK_ETERNITY;
+	pktns->tx.in_flight = 0;
 	qc->path->loss.pto_count = 0;
 	qc->path->in_flight -= pktns->tx.in_flight;
 
