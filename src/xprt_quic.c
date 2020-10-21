@@ -509,9 +509,7 @@ static void quic_trace(enum trace_level level, uint64_t mask, const struct trace
 						chunk_appendf(&trace_buf, " tole=%dms",
 									  TICKS_TO_MS(pktns->tx.time_of_last_eliciting - now_ms));
 					if (duration)
-						chunk_appendf(&trace_buf, " duration=%dms", *duration);
-					if (pktns->tx.pto)
-						chunk_appendf(&trace_buf, " pto=%dms", TICKS_TO_MS(pktns->tx.pto - now_ms));
+						chunk_appendf(&trace_buf, " duration=%dms", TICKS_TO_MS(*duration));
 				}
 			}
 
@@ -566,6 +564,7 @@ static inline void qc_set_timer(struct quic_conn_ctx *ctx)
 {
 	struct quic_conn *qc;
 	struct quic_pktns *pktns;
+	unsigned int pto;
 
 	TRACE_ENTER(QUIC_EV_CONN_STIMER, ctx->conn);
 	qc = ctx->conn->quic_conn;
@@ -585,9 +584,9 @@ static inline void qc_set_timer(struct quic_conn_ctx *ctx)
 		goto out;
 	}
 
-	pktns = quic_pto_pktns(qc, ctx->state & QUIC_HS_ST_COMPLETE);
-	if (tick_isset(pktns->tx.pto))
-		qc->timer = pktns->tx.pto;
+	pktns = quic_pto_pktns(qc, ctx->state & QUIC_HS_ST_COMPLETE, &pto);
+	if (tick_isset(pto))
+		qc->timer = pto;
  out:
 	task_schedule(qc->timer_task, qc->timer);
 	TRACE_LEAVE(QUIC_EV_CONN_STIMER, ctx->conn, pktns);

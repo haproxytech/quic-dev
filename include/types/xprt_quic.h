@@ -238,8 +238,6 @@ struct quic_pktns {
 		unsigned int time_of_last_eliciting;
 		/* The time this packet number space has experienced packet loss. */
 		unsigned int loss_time;
-		/* Probe timeout. */
-		unsigned int pto;
 		/* In flight bytes for this packet number space. */
 		size_t in_flight;
 	} tx;

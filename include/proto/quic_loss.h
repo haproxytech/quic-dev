@@ -119,10 +119,11 @@ static inline struct quic_pktns *quic_loss_pktns(struct quic_conn *qc)
  * as PTO value if not.
  */
 static inline struct quic_pktns *quic_pto_pktns(struct quic_conn *qc,
-                                                int handshake_completed)
+                                                int handshake_completed,
+                                                unsigned int *pto)
 {
 	int i;
-	unsigned int duration, pto;
+	unsigned int duration, lpto;
 	struct quic_loss *ql = &qc->path->loss;
 	struct quic_pktns *pktns;
 
@@ -141,11 +142,11 @@ static inline struct quic_pktns *quic_pto_pktns(struct quic_conn *qc,
 		else {
 			pktns = &qc->pktns[QUIC_TLS_PKTNS_INITIAL];
 		}
-		pktns->tx.pto = tick_add(now_ms, duration);
+		lpto = tick_add(now_ms, duration);
 		goto out;
 	}
 
-	pto = TICK_ETERNITY;
+	lpto = TICK_ETERNITY;
 	pktns = &qc->pktns[QUIC_TLS_PKTNS_INITIAL];
 
 	for (i = QUIC_TLS_PKTNS_INITIAL; i < QUIC_TLS_PKTNS_MAX; i++) {
@@ -158,7 +159,6 @@ static inline struct quic_pktns *quic_pto_pktns(struct quic_conn *qc,
 
 		if (i == QUIC_TLS_PKTNS_01RTT) {
 			if (!handshake_completed) {
-				p->tx.pto = pto;
 				pktns = p;
 				goto out;
 			}
@@ -167,15 +167,17 @@ static inline struct quic_pktns *quic_pto_pktns(struct quic_conn *qc,
 		}
 
 		tmp_pto =
-			tick_first_2nz(pto, p->tx.time_of_last_eliciting + duration);
-		if (!tick_isset(pto) || tmp_pto < pto) {
-			p->tx.pto = pto = tmp_pto;
+			tick_first_2nz(lpto, p->tx.time_of_last_eliciting + duration);
+		if (!tick_isset(lpto) || tmp_pto < lpto) {
+			lpto = tmp_pto;
 			pktns = p;
 		}
 		TRACE_PROTO("pktns", QUIC_EV_CONN_SPTO, qc->conn, p);
 	}
 
  out:
+	if (pto)
+		*pto = lpto;
 	TRACE_LEAVE(QUIC_EV_CONN_SPTO, qc->conn, pktns, &duration);
 
 	return pktns;
