@@ -452,9 +452,6 @@ struct quic_conn {
 	} obuf;
 
 	struct {
-#if 1
-	unsigned int count;
-#endif
 		/* The remaining frames to send. */
 		struct list frms_to_send;
 
