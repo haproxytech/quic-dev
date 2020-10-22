@@ -223,6 +223,9 @@ struct quic_ack_ranges {
 #define QUIC_FL_PKTNS_ACK_REQUIRED  (1UL << 0)
 #define QUIC_FL_PKTNS_ACK_RECEIVED  (1UL << 1)
 
+/* The maximum number of dgrams which may be sent upon PTO expirations. */
+#define QUIC_MAX_NB_PTO_DGRAMS         2
+
 /* QUIC packet number space */
 struct quic_pktns {
 	struct {
@@ -238,6 +241,8 @@ struct quic_pktns {
 		unsigned int time_of_last_eliciting;
 		/* The time this packet number space has experienced packet loss. */
 		unsigned int loss_time;
+		/* Boolean to denote if we must send probe packet. */
+		unsigned int pto_probe;
 		/* In flight bytes for this packet number space. */
 		size_t in_flight;
 	} tx;
@@ -447,6 +452,9 @@ struct quic_conn {
 	} obuf;
 
 	struct {
+#if 1
+	unsigned int count;
+#endif
 		/* The remaining frames to send. */
 		struct list frms_to_send;
 
@@ -460,6 +468,10 @@ struct quic_conn {
 		int rbuf;
 		/* Number of sent bytes. */
 		uint64_t bytes;
+		/* The number of datagrams which may be sent
+		 * when sending probe packets.
+		 */
+		size_t nb_pto_dgrams;
 	} tx;
 	struct {
 		/* Number of received bytes. */

@@ -345,9 +345,17 @@ static void quic_trace(enum trace_level level, uint64_t mask, const struct trace
 			const struct quic_tx_packet *pkt = a2;
 			const struct quic_enc_level *qel = a3;
 
-			if (qel)
-				chunk_appendf(&trace_buf, "\n qel=%c",
-				              quic_enc_level_char_from_qel(qel, qc));
+			if (qel) {
+				struct quic_pktns *pktns;
+
+				pktns = qc->pktns;
+				chunk_appendf(&trace_buf, "\n  qel=%c path_in_flight=%u in_flight=%u "
+				              "pto_probe=%zu nb_pto_drgams=%u",
+				              quic_enc_level_char_from_qel(qel, qc),
+				              qc->path->in_flight,
+				              pktns->tx.in_flight, pktns->tx.pto_probe,
+				              qc->tx.nb_pto_dgrams);
+			}
 			if (pkt) {
 				const struct quic_tx_frm *frm;
 				chunk_appendf(&trace_buf, "\n  pn=%lu cdata_len=%lu",
@@ -414,14 +422,31 @@ static void quic_trace(enum trace_level level, uint64_t mask, const struct trace
 		if (mask & (QUIC_EV_CONN_PRSFRM|QUIC_EV_CONN_BFRM)) {
 			const struct quic_frame *frm = a2;
 
-			if (a2)
+			if (frm)
 				chunk_appendf(&trace_buf, " %s", quic_frame_type_string(frm->type));
 		}
 
-		if (mask & QUIC_EV_CONN_RMHP) {
-			const struct quic_rx_packet *pkt;
+		if (mask & QUIC_EV_CONN_PHPKTS) {
+			const struct quic_enc_level *qel = a2;
 
-			pkt = a2;
+			if (qel) {
+				struct quic_pktns *pktns;
+
+				pktns = qc->pktns;
+				chunk_appendf(&trace_buf,
+				              "\n  qel=%c ack_required=%d path_in_flight=%u in_flight=%u "
+				              "pto_probe=%zu nb_pto_dgrams=%u ifcdata=%lu",
+				              quic_enc_level_char_from_qel(qel, qc),
+				              !!(pktns->flags & QUIC_FL_PKTNS_ACK_REQUIRED),
+				              qc->path->in_flight,
+				              pktns->tx.in_flight, pktns->tx.pto_probe, qc->tx.nb_pto_dgrams,
+				              qc->ifcdata);
+			}
+		}
+
+		if (mask & QUIC_EV_CONN_RMHP) {
+			const struct quic_rx_packet *pkt = a2;
+
 			if (pkt) {
 				const int *ret = a3;
 
@@ -490,7 +515,7 @@ static void quic_trace(enum trace_level level, uint64_t mask, const struct trace
 			}
 		}
 
-		if (mask & (QUIC_EV_CONN_STIMER|QUIC_EV_CONN_SPTO)) {
+		if (mask & (QUIC_EV_CONN_STIMER|QUIC_EV_CONN_PTIMER|QUIC_EV_CONN_SPTO)) {
 			struct quic_conn *qc = conn->quic_conn;
 			const struct quic_pktns *pktns = a2;
 			const int *duration = a3;
@@ -523,10 +548,12 @@ static void quic_trace(enum trace_level level, uint64_t mask, const struct trace
 			const struct quic_tx_packet *pkt = a2;
 
 			if (pkt) {
-				chunk_appendf(&trace_buf, " #%lu(%s)",
+				chunk_appendf(&trace_buf, " #%lu(%s) path_in_flight=%u in_flight_len=%zu cdata_len=%zu",
 				              (unsigned long)pkt->pn_node.key,
 				              pkt->pktns == &qc->pktns[QUIC_TLS_PKTNS_INITIAL] ? "I" :
-				              pkt->pktns == &qc->pktns[QUIC_TLS_PKTNS_01RTT] ? "01RTT": "H");
+				              pkt->pktns == &qc->pktns[QUIC_TLS_PKTNS_01RTT] ? "01RTT": "H",
+				              qc->path->in_flight,
+				              pkt->in_flight_len, pkt->cdata_len);
 			}
 		}
 	}
@@ -1632,20 +1659,26 @@ static inline int qc_parse_ack_frm(struct quic_frame *frm, struct quic_conn_ctx 
 		            ctx->conn,, &largest, &smallest);
 	} while (1);
 
+	/* Flag this packet number space as having received an ACK. */
+	qel->pktns->flags |= QUIC_FL_PKTNS_ACK_RECEIVED;
+
 	if (time_sent && (pkt_flags & QUIC_FL_TX_PACKET_ACK_ELICITING)) {
 		*rtt_sample = now_ms - time_sent;
 		qel->pktns->tx.largest_acked_pn = ack->largest_ack;
 	}
 
-	/* Flag this packet number space as having received an ACK. */
-	qel->pktns->flags |= QUIC_FL_PKTNS_ACK_RECEIVED;
-	if (!LIST_ISEMPTY(&newly_acked_pkts) && !eb_is_empty(&qel->pktns->tx.pkts)) {
-		qc_packet_loss_lookup(qel->pktns, ctx->conn->quic_conn, &lost_pkts);
-		if (!LIST_ISEMPTY(&lost_pkts))
-			qc_release_lost_pkts(qel->pktns, ctx, &lost_pkts, now_ms);
+	if (!LIST_ISEMPTY(&newly_acked_pkts)) {
+		if (!eb_is_empty(&qel->pktns->tx.pkts)) {
+			qc_packet_loss_lookup(qel->pktns, ctx->conn->quic_conn, &lost_pkts);
+			if (!LIST_ISEMPTY(&lost_pkts))
+				qc_release_lost_pkts(qel->pktns, ctx, &lost_pkts, now_ms);
+		}
+		qc_treat_newly_acked_pkts(ctx, &newly_acked_pkts);
+		if (quic_peer_validated_addr(ctx))
+			ctx->conn->quic_conn->path->loss.pto_count = 0;
+		qc_set_timer(ctx);
 	}
 
-	qc_treat_newly_acked_pkts(ctx, &newly_acked_pkts);
 
 	return 1;
 
@@ -1740,8 +1773,10 @@ static int qc_parse_pkt_frms(struct quic_rx_packet *pkt, struct quic_conn_ctx *c
 	struct quic_frame frm;
 	const unsigned char *pos, *end;
 	struct quic_conn *conn = ctx->conn->quic_conn;
+	int ack_received;
 
 	TRACE_ENTER(QUIC_EV_CONN_PRSHPKT, ctx->conn);
+	ack_received = 0;
 	/* Skip the AAD */
 	pos = pkt->data + pkt->aad_len;
 	end = pkt->data + pkt->len;
@@ -1804,6 +1839,7 @@ static int qc_parse_pkt_frms(struct quic_rx_packet *pkt, struct quic_conn_ctx *c
 					MS_TO_TICKS(min(quic_ack_delay_ms(&frm.ack, conn), conn->max_ack_delay));
 				quic_loss_srtt_update(&conn->path->loss, rtt_sample, ack_delay, conn);
 			}
+			ack_received = 1;
 			tasklet_wakeup(ctx->wait_event.tasklet);
 			break;
 		}
@@ -1882,11 +1918,14 @@ static int qc_prep_hdshk_pkts(struct quic_conn_ctx *ctx)
 		ssize_t ret;
 		enum quic_pkt_type pkt_type;
 
+		TRACE_DEVEL("enc. level state", QUIC_EV_CONN_PHPKTS, ctx->conn, qel);
 		/* Do not build any more packet if no ACK are required
+		 * and if there is no more packets to send upon PTO expiration
 		 * and if there is not more CRYPTO data available or in flight
 		 * CRYPTO data limit reached.
 		 */
 		if (!(qel->pktns->flags & QUIC_FL_PKTNS_ACK_REQUIRED) &&
+		    !qc->tx.nb_pto_dgrams &&
 		    (LIST_ISEMPTY(&qel->pktns->tx.frms) ||
 		     qc->ifcdata >= QUIC_CRYPTO_IN_FLIGHT_MAX)) {
 			TRACE_DEVEL("nothing more to do",
@@ -1923,7 +1962,7 @@ static int qc_prep_hdshk_pkts(struct quic_conn_ctx *ctx)
 			/* Special case for Initial packets: when they have all
 			 * been sent, select the next level.
 			 */
-			if (LIST_ISEMPTY(&qel->pktns->tx.frms) &&
+			if ((LIST_ISEMPTY(&qel->pktns->tx.frms) || qc->els[next_tel].pktns->tx.in_flight) &&
 			    tel == QUIC_TLS_ENC_LEVEL_INITIAL) {
 				tel = next_tel;
 				qel = &qc->els[tel];
@@ -2688,8 +2727,21 @@ static struct task *process_timer(struct task *task, void *ctx, unsigned short s
 		goto out;
 	}
 
-	if (qc->path->in_flight)
-		tasklet_wakeup(conn_ctx->wait_event.tasklet);
+	if (qc->path->in_flight) {
+		pktns = quic_pto_pktns(qc, conn_ctx->state >= QUIC_HS_ST_COMPLETE, NULL);
+		pktns->tx.pto_probe = 1;
+	}
+	else if (objt_server(qc->conn->target) && conn_ctx->state <= QUIC_HS_ST_COMPLETE) {
+		struct quic_enc_level *iel = &qc->els[QUIC_TLS_ENC_LEVEL_INITIAL];
+		struct quic_enc_level *hel = &qc->els[QUIC_TLS_ENC_LEVEL_HANDSHAKE];
+
+		if (hel->tls_ctx.rx.flags == QUIC_FL_TLS_SECRETS_SET)
+			hel->pktns->tx.pto_probe = 1;
+		if (iel->tls_ctx.rx.flags == QUIC_FL_TLS_SECRETS_SET)
+			iel->pktns->tx.pto_probe = 1;
+	}
+	qc->tx.nb_pto_dgrams = QUIC_MAX_NB_PTO_DGRAMS;
+	tasklet_wakeup(conn_ctx->wait_event.tasklet);
 	qc->path->loss.pto_count++;
 
  out:
@@ -2776,6 +2828,7 @@ static int qc_new_conn_init(struct quic_conn *conn, int ipv4,
 	conn->tx.nb_buf = QUIC_CONN_TX_BUFS_NB;
 	conn->tx.wbuf = conn->tx.rbuf = 0;
 	conn->tx.bytes = 0;
+	conn->tx.nb_pto_dgrams = 0;
 	/* RX part. */
 	conn->rx.bytes = 0;
 
@@ -3884,12 +3937,17 @@ static int quic_ack_frm_reduce_sz(struct quic_frame *ack_frm, size_t limit)
  * Return 1 if succeeded, 0 if not.
  */
 static inline int qc_build_cfrms(struct quic_tx_packet *pkt,
-                                 size_t room, size_t *len, size_t max_cdata_len,
+                                 size_t room, size_t *len,
                                  struct quic_enc_level *qel,
                                  struct quic_conn *conn)
 {
 	struct quic_tx_frm *cf, *cfbak;
+	size_t max_cdata_len;
 
+	if (conn->tx.nb_pto_dgrams)
+		max_cdata_len = room;
+	else
+		max_cdata_len =  QUIC_CRYPTO_IN_FLIGHT_MAX - conn->ifcdata;
 	list_for_each_entry_safe(cf, cfbak, &qel->pktns->tx.frms, list) {
 		/* header length, data length, frame length. */
 		size_t hlen, dlen, cflen;
@@ -3977,17 +4035,17 @@ static ssize_t qc_do_build_hdshk_pkt(struct q_buf *wbuf,
 	/* The Length QUIC packet field value which is the length
 	 * of the remaining data after this field after encryption.
 	 */
-	size_t len, token_fields_len, max_cdata_len, padding_len;
+	size_t len, token_fields_len, padding_len;
 	struct quic_frame frm = { .type = QUIC_FT_CRYPTO, };
 	struct quic_frame ack_frm = { .type = QUIC_FT_ACK, };
 	struct quic_crypto *crypto = &frm.crypto;
 	size_t ack_frm_len;
 	int64_t largest_acked_pn;
+	int add_ping_frm, probe_packet;
 
 	TRACE_ENTER(QUIC_EV_CONN_CHPKT, conn->conn);
 	beg = pos = q_buf_getpos(wbuf);
 	end = q_buf_end(wbuf);
-	max_cdata_len = QUIC_CRYPTO_IN_FLIGHT_MAX - conn->ifcdata;
 
 	/* For a server, the token field of an Initial packet is empty. */
 	token_fields_len = pkt_type == QUIC_PACKET_TYPE_INITIAL ? 1 : 0;
@@ -4025,18 +4083,26 @@ static ssize_t qc_do_build_hdshk_pkt(struct q_buf *wbuf,
 	/* Length field value without the CRYPTO frames data length. */
 	len = ack_frm_len + *pn_len;
 	if (!LIST_ISEMPTY(&qel->pktns->tx.frms) &&
-	    !qc_build_cfrms(pkt, end - pos, &len, max_cdata_len, qel, conn))
+	    !qc_build_cfrms(pkt, end - pos, &len, qel, conn))
 		goto err;
 
+	add_ping_frm = 0;
 	padding_len = 0;
 	if (objt_server(conn->conn->target) &&
 	    pkt_type == QUIC_PACKET_TYPE_INITIAL &&
 	    len < QUIC_INITIAL_PACKET_MINLEN) {
 		len += padding_len = QUIC_INITIAL_PACKET_MINLEN - len;
 	}
-	else if (!ack_frm_len && LIST_ISEMPTY(&pkt->frms)) {
+	else if (LIST_ISEMPTY(&pkt->frms)) {
+		if (qel->pktns->tx.pto_probe) {
+			/* If we cannot send a CRYPTO frame, we send a PING frame. */
+			probe_packet = 1;
+			add_ping_frm = 1;
+			len += 1;
+		}
 		/* If there is no frame at all to follow, add at least a PADDING frame. */
-		len += padding_len = QUIC_PACKET_PN_MAXLEN - *pn_len;
+		if (!ack_frm_len)
+			len += padding_len = QUIC_PACKET_PN_MAXLEN - *pn_len;
 	}
 
 	/*
@@ -4068,6 +4134,13 @@ static ssize_t qc_do_build_hdshk_pkt(struct q_buf *wbuf,
 		}
 	}
 
+	/* Build a PING frame if needed. */
+	if (add_ping_frm) {
+		frm.type = QUIC_FT_PING;
+		if (!qc_build_frm(&pos, end, &frm, pkt, conn))
+			goto err;
+	}
+
 	/* Build a PADDING frame if needed. */
 	if (padding_len) {
 		frm.type = QUIC_FT_PADDING;
@@ -4075,6 +4148,9 @@ static ssize_t qc_do_build_hdshk_pkt(struct q_buf *wbuf,
 		if (!qc_build_frm(&pos, end, &frm, pkt, conn))
 			goto err;
 	}
+
+	if (probe_packet)
+		qel->pktns->tx.pto_probe = 0;
 
  out:
 	TRACE_LEAVE(QUIC_EV_CONN_CHPKT, conn->conn, (int *)(pos - beg));
@@ -4203,17 +4279,12 @@ static ssize_t qc_do_build_phdshk_apkt(struct q_buf *wbuf,
 	unsigned char *pos;
 	struct quic_frame *frm, *sfrm;
 	struct quic_frame ack_frm = { .type = QUIC_FT_ACK, };
-	size_t fake_len, max_cdata_len, ack_frm_len;
+	size_t fake_len, ack_frm_len;
 	int64_t largest_acked_pn;
 
 	TRACE_ENTER(QUIC_EV_CONN_CPAPKT, conn->conn);
 	beg = pos = q_buf_getpos(wbuf);
 	end = q_buf_end(wbuf);
-	max_cdata_len = QUIC_CRYPTO_IN_FLIGHT_MAX - conn->ifcdata;
-	if (!LIST_ISEMPTY(&qel->pktns->tx.frms) && !max_cdata_len) {
-		TRACE_DEVEL("ifcdada limit reached", QUIC_EV_CONN_CPAPKT, conn->conn);
-		goto out;
-	}
 	largest_acked_pn = qel->pktns->tx.largest_acked_pn;
 	/* Packet number length */
 	*pn_len = quic_packet_number_length(pn, largest_acked_pn);
@@ -4248,7 +4319,7 @@ static ssize_t qc_do_build_phdshk_apkt(struct q_buf *wbuf,
 
 	fake_len = ack_frm_len;
 	if (!LIST_ISEMPTY(&qel->pktns->tx.frms) &&
-	    !qc_build_cfrms(pkt, end - pos, &fake_len, max_cdata_len, qel, conn)) {
+	    !qc_build_cfrms(pkt, end - pos, &fake_len, qel, conn)) {
 		TRACE_DEVEL("some CRYPTO frames could not be built",
 		            QUIC_EV_CONN_CPAPKT, conn->conn);
 		goto err;
