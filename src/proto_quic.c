@@ -39,6 +39,7 @@
 #include <haproxy/protocol.h>
 #include <haproxy/proxy-t.h>
 #include <haproxy/sock.h>
+#include <haproxy/quic_sock.h>
 #include <haproxy/sock_inet.h>
 #include <haproxy/tools.h>
 
@@ -67,14 +68,14 @@ static struct protocol proto_quic4 = {
 	.unbind = default_unbind_listener,
 	.suspend = default_suspend_listener,
 	.resume  = default_resume_listener,
-	.accept_conn = sock_accept_conn,
+	.accept_conn = quic_sock_accept_conn,
 	.rx_enable = sock_enable,
 	.rx_disable = sock_disable,
 	.rx_unbind = sock_unbind,
 	.rx_suspend = quic_suspend_receiver,
 	.rx_resume = quic_resume_receiver,
-	.rx_listening = sock_accepting_conn,
-	.default_iocb = &sock_accept_iocb,
+	.rx_listening = quic_sock_accepting_conn,
+	.default_iocb = &quic_sock_fd_iocb,
 	.connect = quic_connect_server,
 	.receivers = LIST_HEAD_INIT(proto_quic4.receivers),
 	.nb_receivers = 0,
@@ -97,14 +98,14 @@ static struct protocol proto_quic6 = {
 	.unbind = default_unbind_listener,
 	.suspend = default_suspend_listener,
 	.resume  = default_resume_listener,
-	.accept_conn = sock_accept_conn,
+	.accept_conn = quic_sock_accept_conn,
 	.rx_enable = sock_enable,
 	.rx_disable = sock_disable,
 	.rx_unbind = sock_unbind,
 	.rx_suspend = quic_suspend_receiver,
 	.rx_resume = quic_resume_receiver,
-	.rx_listening = sock_accepting_conn,
-	.default_iocb = &sock_accept_iocb,
+	.rx_listening = quic_sock_accepting_conn,
+	.default_iocb = &quic_sock_fd_iocb,
 	.connect = quic_connect_server,
 	.receivers = LIST_HEAD_INIT(proto_quic6.receivers),
 	.nb_receivers = 0,
