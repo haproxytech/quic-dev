@@ -78,6 +78,7 @@
 #include <haproxy/time.h>
 #include <haproxy/tools.h>
 #include <haproxy/uri_auth-t.h>
+#include <haproxy/xprt_quic.h>
 
 
 /* Used to chain configuration sections definitions. This list
@@ -446,6 +447,10 @@ void init_default_instance()
 
 	defproxy.email_alert.level = LOG_ALERT;
 	defproxy.load_server_state_from_file = PR_SRV_STATE_FILE_UNSPEC;
+#if defined(USE_OPENSSL) && defined(USE_QUIC)
+	quic_transport_params_init(&defproxy.defsrv.quic_params, 0);
+#endif
+
 }
 
 /* Allocate and initialize the frontend of a "peers" section found in
