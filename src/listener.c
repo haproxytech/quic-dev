@@ -35,6 +35,9 @@
 #include <haproxy/task.h>
 #include <haproxy/time.h>
 #include <haproxy/tools.h>
+#if defined(USE_OPENSSL) && defined(USE_QUIC)
+#include <haproxy/xprt_quic.h>
+#endif
 
 
 /* List head of all known bind keywords */
@@ -600,6 +603,13 @@ int create_listeners(struct bind_conf *bc, const struct sockaddr_storage *ss,
 	struct listener *l;
 	int port;
 
+#if defined(USE_OPENSSL) && defined(USE_QUIC)
+	if (proto->sock_type == SOCK_DGRAM && proto->ctrl_type == SOCK_STREAM) {
+		bc->xprt = xprt_get(XPRT_QUIC);
+		quic_transport_params_init(&bc->quic_params, 1);
+	}
+#endif
+
 	for (port = portl; port <= porth; port++) {
 		l = calloc(1, sizeof(*l));
 		if (!l) {
@@ -614,6 +624,11 @@ int create_listeners(struct bind_conf *bc, const struct sockaddr_storage *ss,
 		l->rx.owner = l;
 		l->rx.iocb = proto->default_iocb;
 		l->rx.fd = fd;
+#if defined(USE_OPENSSL) && defined(USE_QUIC)
+		LIST_INIT(&l->rx.qpkts);
+		l->rx.icids = EB_ROOT_UNIQUE;
+		l->rx.cids = EB_ROOT_UNIQUE;
+#endif
 		memcpy(&l->rx.addr, ss, sizeof(*ss));
 		MT_LIST_INIT(&l->wait_queue);
 		listener_set_state(l, LI_INIT);

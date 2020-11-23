@@ -62,6 +62,11 @@ struct receiver {
 	void (*iocb)(int fd);            /* generic I/O handler (typically accept callback) */
 	struct rx_settings *settings;    /* points to the settings used by this receiver */
 	struct list proto_list;          /* list in the protocol header */
+#if defined(USE_OPENSSL) && defined(USE_QUIC)
+	struct list qpkts;               /* QUIC received packets */
+	struct eb_root icids;            /* QUIC initial connection IDs. */
+	struct eb_root cids;             /* QUIC connection IDs. */
+#endif
 	/* warning: this struct is huge, keep it at the bottom */
 	struct sockaddr_storage addr;    /* the address the socket is bound to */
 };
