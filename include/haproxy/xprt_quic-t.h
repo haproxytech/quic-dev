@@ -22,6 +22,9 @@
 #ifndef _HAPROXY_XPRT_QUIC_T_H
 #define _HAPROXY_XPRT_QUIC_T_H
 #ifdef USE_QUIC
+#ifndef USE_OPENSSL
+#error "Must define USE_OPENSSL"
+#endif
 
 #include <sys/socket.h>
 #include <openssl/ssl.h>

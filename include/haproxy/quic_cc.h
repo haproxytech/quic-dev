@@ -22,6 +22,9 @@
 #ifndef _PROTO_QUIC_CC_H
 #define _PROTO_QUIC_CC_H
 #ifdef USE_QUIC
+#ifndef USE_OPENSSL
+#error "Must define USE_OPENSSL"
+#endif
 
 #include <haproxy/api.h>
 #include <haproxy/chunk.h>

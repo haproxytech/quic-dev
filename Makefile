@@ -562,10 +562,10 @@ ifneq ($(USE_DL),)
 OPTIONS_LDFLAGS += -ldl
 endif
 OPTIONS_OBJS  += src/ssl_sample.o src/ssl_sock.o src/ssl_crtlist.o src/ssl_ckch.o src/ssl_utils.o src/cfgparse-ssl.o
+endif
 ifneq ($(USE_QUIC),)
 OPTIONS_OBJS += src/quic_sock.o src/proto_quic.o src/xprt_quic.o src/quic_tls.o \
                 src/quic_frame.o src/quic_cc.o src/quic_cc_newreno.o
-endif
 endif
 
 # The private cache option affect the way the shctx is built

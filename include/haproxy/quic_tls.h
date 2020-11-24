@@ -14,6 +14,9 @@
 #ifndef _PROTO_QUIC_TLS_H
 #define _PROTO_QUIC_TLS_H
 #ifdef USE_QUIC
+#ifndef USE_OPENSSL
+#error "Must define USE_OPENSSL"
+#endif
 
 #define TRACE_SOURCE &trace_quic
 

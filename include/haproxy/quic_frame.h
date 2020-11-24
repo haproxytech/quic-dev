@@ -22,6 +22,9 @@
 #ifndef _HAPROXY_QUIC_FRAME_H
 #define _HAPROXY_QUIC_FRAME_H
 #ifdef USE_QUIC
+#ifndef USE_OPENSSL
+#error "Must define USE_OPENSSL"
+#endif
 
 #include <haproxy/quic_frame-t.h>
 #include <haproxy/xprt_quic-t.h>

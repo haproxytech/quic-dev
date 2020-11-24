@@ -22,6 +22,9 @@
 #ifndef _PROTO_QUIC_LOSS_H
 #define _PROTO_QUIC_LOSS_H
 #ifdef USE_QUIC
+#ifndef USE_OPENSSL
+#error "Must define USE_OPENSSL"
+#endif
 
 #include <haproxy/ticks.h>
 #include <haproxy/time.h>
