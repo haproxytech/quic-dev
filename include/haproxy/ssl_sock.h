@@ -92,11 +92,6 @@ int ssl_sock_load_global_dh_param_from_file(const char *filename);
 void ssl_free_dh(void);
 #endif
 void ssl_free_engines(void);
-#ifdef OPENSSL_IS_BORINGSSL
-int ssl_sock_switchctx_cbk(const struct ssl_early_callback_ctx *ctx);
-#else
-int ssl_sock_switchctx_cbk(SSL *ssl, int *al, void *arg);
-#endif
 #if ((HA_OPENSSL_VERSION_NUMBER >= 0x10101000L) || defined(OPENSSL_IS_BORINGSSL))
 int ssl_sock_switchctx_err_cbk(SSL *ssl, int *al, void *priv);
 #ifdef OPENSSL_IS_BORINGSSL
@@ -104,6 +99,8 @@ int ssl_sock_switchctx_cbk(const struct ssl_early_callback_ctx *ctx);
 #else
 int ssl_sock_switchctx_cbk(SSL *ssl, int *al, void *arg);
 #endif
+#else
+static int ssl_sock_switchctx_cbk(SSL *ssl, int *al, void *priv);
 #endif
 
 SSL_CTX *ssl_sock_create_cert(struct connection *conn, const char *servername, unsigned int key);
