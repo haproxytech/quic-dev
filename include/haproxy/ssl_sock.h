@@ -61,7 +61,7 @@ void ssl_sock_free_all_ctx(struct bind_conf *bind_conf);
 int ssl_sock_load_ca(struct bind_conf *bind_conf);
 void ssl_sock_free_ca(struct bind_conf *bind_conf);
 int ssl_bio_and_sess_init(struct connection *conn, SSL_CTX *ssl_ctx,
-                          SSL **ssl, BIO **bio, const BIO_METHOD *bio_meth, void *ctx);
+                          SSL **ssl, BIO **bio, BIO_METHOD *bio_meth, void *ctx);
 const char *ssl_sock_get_sni(struct connection *conn);
 const char *ssl_sock_get_cert_sig(struct connection *conn);
 const char *ssl_sock_get_cipher_name(struct connection *conn);

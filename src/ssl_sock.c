@@ -4969,7 +4969,7 @@ ssl_sock_free_ca(struct bind_conf *bind_conf)
  * CO_ER_SSL_NO_MEM.
  */
 int ssl_bio_and_sess_init(struct connection *conn, SSL_CTX *ssl_ctx,
-                          SSL **ssl, BIO **bio, const BIO_METHOD *bio_meth, void *ctx)
+                          SSL **ssl, BIO **bio, BIO_METHOD *bio_meth, void *ctx)
 {
 	int retry = 1;
 
