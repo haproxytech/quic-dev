@@ -35,9 +35,7 @@
 #include <haproxy/task.h>
 #include <haproxy/time.h>
 #include <haproxy/tools.h>
-#if defined(USE_OPENSSL) && defined(USE_QUIC)
 #include <haproxy/xprt_quic.h>
-#endif
 
 
 /* List head of all known bind keywords */

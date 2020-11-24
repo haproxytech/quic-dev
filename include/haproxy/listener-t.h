@@ -35,10 +35,8 @@
 
 #ifdef USE_OPENSSL
 #include <haproxy/openssl-compat.h>
-#ifdef USE_QUIC
+#endif
 #include <haproxy/xprt_quic-t.h>
-#endif
-#endif
 
 /* Some pointer types reference below */
 struct task;

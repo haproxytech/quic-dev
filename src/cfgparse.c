@@ -78,9 +78,7 @@
 #include <haproxy/time.h>
 #include <haproxy/tools.h>
 #include <haproxy/uri_auth-t.h>
-#if defined(USE_OPENSSL) && defined(USE_QUIC)
 #include <haproxy/xprt_quic.h>
-#endif
 
 
 /* Used to chain configuration sections definitions. This list

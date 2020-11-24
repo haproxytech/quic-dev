@@ -41,9 +41,7 @@
 #include <haproxy/stats-t.h>
 #include <haproxy/task-t.h>
 #include <haproxy/thread-t.h>
-#if defined(USE_OPENSSL) && defined(USE_QUIC)
 #include <haproxy/xprt_quic-t.h>
-#endif
 
 
 /* server states. Only SRV_ST_STOPPED indicates a down server. */
