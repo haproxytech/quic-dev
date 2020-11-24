@@ -21,6 +21,7 @@
 
 #ifndef _HAPROXY_XPRT_QUIC_T_H
 #define _HAPROXY_XPRT_QUIC_T_H
+#ifdef USE_QUIC
 
 #include <sys/socket.h>
 #include <openssl/ssl.h>
@@ -630,4 +631,5 @@ struct quic_conn {
 	unsigned int timer;
 };
 
+#endif /* USE_QUIC */
 #endif /* _HAPROXY_XPRT_QUIC_T_H */

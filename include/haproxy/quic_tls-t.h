@@ -13,6 +13,7 @@
 
 #ifndef _TYPES_QUIC_TLS_H
 #define _TYPES_QUIC_TLS_H
+#ifdef USE_QUIC
 
 #include <openssl/evp.h>
 
@@ -103,5 +104,6 @@ struct quic_tls_ctx {
 	struct quic_tls_secrets tx;
 };
 
+#endif /* USE_QUIC */
 #endif /* _TYPES_QUIC_TLS_H */
 

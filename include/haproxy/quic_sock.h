@@ -21,6 +21,7 @@
 
 #ifndef _HAPROXY_QUIC_SOCK_H
 #define _HAPROXY_QUIC_SOCK_H
+#ifdef USE_QUIC
 
 #include <sys/socket.h>
 #include <sys/types.h>
@@ -33,6 +34,7 @@ int quic_sock_accepting_conn(const struct receiver *rx);
 struct connection *quic_sock_accept_conn(struct listener *l, int *status);
 void quic_sock_fd_iocb(int fd);
 
+#endif /* USE_QUIC */
 #endif /* _HAPROXY_QUIC_SOCK_H */
 
 /*

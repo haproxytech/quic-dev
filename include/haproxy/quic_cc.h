@@ -21,6 +21,7 @@
 
 #ifndef _PROTO_QUIC_CC_H
 #define _PROTO_QUIC_CC_H
+#ifdef USE_QUIC
 
 #include <haproxy/api.h>
 #include <haproxy/chunk.h>
@@ -63,4 +64,5 @@ static inline void quic_cc_event_trace(struct buffer *buf, const struct quic_cc_
 	}
 }
 
+#endif /* USE_QUIC */
 #endif /* _PROTO_QUIC_CC_H */

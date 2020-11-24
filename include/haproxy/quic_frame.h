@@ -21,6 +21,7 @@
 
 #ifndef _HAPROXY_QUIC_FRAME_H
 #define _HAPROXY_QUIC_FRAME_H
+#ifdef USE_QUIC
 
 #include <haproxy/quic_frame-t.h>
 #include <haproxy/xprt_quic-t.h>
@@ -35,4 +36,5 @@ int qc_parse_frm(struct quic_frame *frm, struct quic_rx_packet *pkt,
                  const unsigned char **buf, const unsigned char *end,
                  struct quic_conn *conn);
 
+#endif /* USE_QUIC */
 #endif /* _HAPROXY_QUIC_FRAME_H */

@@ -13,6 +13,7 @@
 
 #ifndef _PROTO_QUIC_TLS_H
 #define _PROTO_QUIC_TLS_H
+#ifdef USE_QUIC
 
 #define TRACE_SOURCE &trace_quic
 
@@ -442,5 +443,6 @@ static inline int qc_new_isecs(struct connection *conn,
 	return 0;
 }
 
+#endif /* USE_QUIC */
 #endif /* _PROTO_QUIC_TLS_H */
 

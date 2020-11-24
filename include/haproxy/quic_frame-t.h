@@ -21,6 +21,7 @@
 
 #ifndef _TYPES_QUIC_FRAME_H
 #define _TYPES_QUIC_FRAME_H
+#ifdef USE_QUIC
 
 #include <stdint.h>
 #include <stdlib.h>
@@ -227,4 +228,5 @@ struct quic_frame {
 	};
 };
 
+#endif /* USE_QUIC */
 #endif /* _TYPES_QUIC_FRAME_H */

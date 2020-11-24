@@ -21,6 +21,7 @@
 
 #ifndef _HAPROXY_QUIC_CC_H
 #define _HAPROXY_QUIC_CC_H
+#ifdef USE_QUIC
 
 #include <stddef.h> /* size_t */
 #include <stdint.h>
@@ -93,4 +94,5 @@ struct quic_cc_algo {
 	void (*state_trace)(struct buffer *buf, const struct quic_cc *cc);
 };
 
+#endif /* USE_QUIC */
 #endif /* _HAPROXY_QUIC_CC_H */

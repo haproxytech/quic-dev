@@ -21,6 +21,7 @@
 
 #ifndef _TYPES_QUIC_LOSS_H
 #define _TYPES_QUIC_LOSS_H
+#ifdef USE_QUIC
 
 #include <stdint.h>
 
@@ -46,4 +47,5 @@ struct quic_loss {
 	unsigned int pto_count;
 };
 
+#endif /* USE_QUIC */
 #endif /* _TYPES_QUIC_LOSS_H */

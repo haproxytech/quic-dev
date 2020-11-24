@@ -21,6 +21,7 @@
 
 #ifndef _PROTO_QUIC_LOSS_H
 #define _PROTO_QUIC_LOSS_H
+#ifdef USE_QUIC
 
 #include <haproxy/ticks.h>
 #include <haproxy/time.h>
@@ -182,4 +183,5 @@ static inline struct quic_pktns *quic_pto_pktns(struct quic_conn *qc,
 	return pktns;
 }
 
+#endif /* USE_QUIC */
 #endif /* _PROTO_QUIC_LOSS_H */

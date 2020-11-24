@@ -21,6 +21,7 @@
 
 #ifndef _HAPROXY_XPRT_QUIC_H
 #define _HAPROXY_XPRT_QUIC_H
+#ifdef USE_QUIC
 
 #include <stdint.h>
 
@@ -1201,4 +1202,5 @@ ssize_t quic_lstnr_dgram_read(char *buf, size_t len, void *owner,
                               struct sockaddr_storage *saddr);
 ssize_t quic_srv_dgram_read(char *buf, size_t len, void *owner,
                             struct sockaddr_storage *saddr);
+#endif /* USE_QUIC */
 #endif /* _HAPROXY_XPRT_QUIC_H */
