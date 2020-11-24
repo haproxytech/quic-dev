@@ -2842,7 +2842,6 @@ static ssize_t qc_lstnr_pkt_rcv(unsigned char **buf, const unsigned char *end,
 	qc_parse_hd_form(pkt, *(*buf)++, &long_header);
 	if (long_header) {
 		unsigned char dcid_len;
-		size_t saddr_len;
 
 		if (!quic_packet_read_long_header(buf, end, pkt)) {
 			TRACE_PROTO("Packet dropped", QUIC_EV_CONN_LPKT, qc->conn);
@@ -2850,7 +2849,6 @@ static ssize_t qc_lstnr_pkt_rcv(unsigned char **buf, const unsigned char *end,
 		}
 
 		dcid_len = pkt->dcid.len;
-		saddr_len = 0;
 		/* For Initial packets, and for servers (QUIC clients connections),
 		 * there is no Initial connection IDs storage.
 		 */
@@ -2858,7 +2856,7 @@ static ssize_t qc_lstnr_pkt_rcv(unsigned char **buf, const unsigned char *end,
 			/* DCIDs of first packets coming from clients may have the same values.
 			 * Let's distinguish them concatenating the socket addresses to the DCIDs.
 			 */
-			saddr_len = quic_cid_saddr_cat(&pkt->dcid, saddr);
+			quic_cid_saddr_cat(&pkt->dcid, saddr);
 			cids = &l->rx.icids;
 		}
 		else {
@@ -2896,7 +2894,9 @@ static ssize_t qc_lstnr_pkt_rcv(unsigned char **buf, const unsigned char *end,
 
 			pkt->qc = qc;
 			pkt->saddr = *saddr;
-			/* Note that here, odcid_len = pkt->dcid.len - saddr_len */
+			/* Note that here, odcid_len equals to pkt->dcid.len minus the length
+			 * of <saddr>.
+			 */
 			pkt->odcid_len = dcid_len;
 			/* Enqueue this packet. */
 			LIST_ADDQ(&l->rx.qpkts, &pkt->rx_list);
