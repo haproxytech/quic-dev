@@ -2827,7 +2827,7 @@ static ssize_t qc_lstnr_pkt_rcv(unsigned char **buf, const unsigned char *end,
 	/* Fixed bit */
 	if (!(**buf & QUIC_PACKET_FIXED_BIT)) {
 		/* XXX TO BE DISCARDED */
-		TRACE_PROTO("Packet dropped", QUIC_EV_CONN_LPKT, qc->conn);
+		TRACE_PROTO("Packet dropped", QUIC_EV_CONN_LPKT);
 		goto err;
 	}
 
@@ -2839,7 +2839,7 @@ static ssize_t qc_lstnr_pkt_rcv(unsigned char **buf, const unsigned char *end,
 		unsigned char dcid_len;
 
 		if (!quic_packet_read_long_header(buf, end, pkt)) {
-			TRACE_PROTO("Packet dropped", QUIC_EV_CONN_LPKT, qc->conn);
+			TRACE_PROTO("Packet dropped", QUIC_EV_CONN_LPKT);
 			goto err;
 		}
 
@@ -2856,7 +2856,7 @@ static ssize_t qc_lstnr_pkt_rcv(unsigned char **buf, const unsigned char *end,
 		}
 		else {
 			if (pkt->dcid.len != QUIC_CID_LEN) {
-				TRACE_PROTO("Packet dropped", QUIC_EV_CONN_LPKT, qc->conn);
+				TRACE_PROTO("Packet dropped", QUIC_EV_CONN_LPKT);
 				goto err;
 			}
 
@@ -2951,14 +2951,14 @@ static ssize_t qc_lstnr_pkt_rcv(unsigned char **buf, const unsigned char *end,
 	}
 	else {
 		if (end - *buf < QUIC_CID_LEN) {
-			TRACE_PROTO("Packet dropped", QUIC_EV_CONN_LPKT, qc->conn);
+			TRACE_PROTO("Packet dropped", QUIC_EV_CONN_LPKT);
 			goto err;
 		}
 
 		cids = &l->rx.cids;
 		node = ebmb_lookup(cids, *buf, QUIC_CID_LEN);
 		if (!node) {
-			TRACE_PROTO("Packet dropped", QUIC_EV_CONN_LPKT, qc->conn);
+			TRACE_PROTO("Packet dropped", QUIC_EV_CONN_LPKT);
 			goto err;
 		}
 
