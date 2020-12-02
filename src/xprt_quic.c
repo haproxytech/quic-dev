@@ -4044,6 +4044,7 @@ static ssize_t qc_do_build_hdshk_pkt(struct q_buf *wbuf,
 	int add_ping_frm, probe_packet;
 
 	TRACE_ENTER(QUIC_EV_CONN_CHPKT, conn->conn);
+	probe_packet = 0;
 	beg = pos = q_buf_getpos(wbuf);
 	end = q_buf_end(wbuf);
 
