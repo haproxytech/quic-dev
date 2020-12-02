@@ -67,7 +67,6 @@ static const struct trace_event quic_trace_events[] = {
 	{ .mask = QUIC_EV_CONN_WSEC,     .name = "write_secs",       .desc = "write secrets derivation" },
 	{ .mask = QUIC_EV_CONN_LPKT,     .name = "lstnr_packet",     .desc = "new listener received packet" },
 	{ .mask = QUIC_EV_CONN_SPKT,     .name = "srv_packet",       .desc = "new server received packet" },
-	{ .mask = QUIC_EV_CONN_CHPKT,    .name = "chdshk_pkt",       .desc = "clear handhshake packet building" },
 	{ .mask = QUIC_EV_CONN_HPKT,     .name = "hdshk_pkt",        .desc = "handhshake packet building" },
 	{ .mask = QUIC_EV_CONN_PAPKT,    .name = "phdshk_apkt",      .desc = "post handhshake application packet preparation" },
 	{ .mask = QUIC_EV_CONN_PAPKTS,   .name = "phdshk_apkts",     .desc = "post handhshake application packets preparation" },
@@ -208,11 +207,10 @@ static void quic_trace(enum trace_level level, uint64_t mask, const struct trace
 		if ((mask & QUIC_EV_CONN_INIT) && qc) {
 			chunk_appendf(&trace_buf, "\n  odcid");
 			quic_cid_dump(&trace_buf, &qc->odcid);
-			chunk_appendf(&trace_buf, " dcid");
+			chunk_appendf(&trace_buf, "\n   dcid");
 			quic_cid_dump(&trace_buf, &qc->dcid);
-			chunk_appendf(&trace_buf, " scid");
+			chunk_appendf(&trace_buf, "\n   scid");
 			quic_cid_dump(&trace_buf, &qc->scid);
-			chunk_appendf(&trace_buf, " conn_ctx@%p", conn->xprt_ctx);
 		}
 
 		if (mask & QUIC_EV_CONN_ADDDATA) {
@@ -282,14 +280,6 @@ static void quic_trace(enum trace_level level, uint64_t mask, const struct trace
 			}
 
 		}
-		if (mask & QUIC_EV_CONN_CHPKT) {
-			const long int len = (long int)a2;
-
-			if (qc->ifcdata != QUIC_CRYPTO_IN_FLIGHT_MAX)
-				chunk_appendf(&trace_buf, "\n  ifcdata=%lu", qc->ifcdata);
-			if (len)
-				chunk_appendf(&trace_buf, " pktlen=%ld", len);
-		}
 
 		if (mask & QUIC_EV_CONN_HPKT) {
 			const struct quic_tx_packet *pkt = a2;
@@ -299,8 +289,7 @@ static void quic_trace(enum trace_level level, uint64_t mask, const struct trace
 				struct quic_pktns *pktns;
 
 				pktns = qc->pktns;
-				chunk_appendf(&trace_buf, "\n  qel=%c path_in_flight=%lu in_flight=%lu "
-				              "pto_probe=%llu nb_pto_drgams=%llu",
+				chunk_appendf(&trace_buf, " qel=%c pif=%lu if=%lu pp=%llu pdg=%llu",
 				              quic_enc_level_char_from_qel(qel, qc),
 				              qc->path->in_flight,
 				              pktns->tx.in_flight, (unsigned long long)pktns->tx.pto_probe,
@@ -308,11 +297,11 @@ static void quic_trace(enum trace_level level, uint64_t mask, const struct trace
 			}
 			if (pkt) {
 				const struct quic_tx_frm *frm;
-				chunk_appendf(&trace_buf, "\n  pn=%lu cdata_len=%lu",
+				chunk_appendf(&trace_buf, " pn=%lu cdlen=%lu",
 				              (unsigned long)pkt->pn_node.key, pkt->cdata_len);
 				list_for_each_entry(frm, &pkt->frms, list)
 					chunk_tx_frm_appendf(&trace_buf, frm);
-				chunk_appendf(&trace_buf, " ifcdata=%zu", qc->ifcdata);
+				chunk_appendf(&trace_buf, " ifcd=%zu", qc->ifcdata);
 			}
 		}
 
@@ -332,7 +321,7 @@ static void quic_trace(enum trace_level level, uint64_t mask, const struct trace
 			const SSL *ssl = a4;
 
 			if (pkt) {
-				chunk_appendf(&trace_buf, "\n  pkt@%p el=%c",
+				chunk_appendf(&trace_buf, " pkt@%p el=%c",
 				              pkt, quic_packet_type_enc_level_char(pkt->type));
 				if (pkt->pnl)
 					chunk_appendf(&trace_buf, " pnl=%u pn=%lu", pkt->pnl, pkt->pn);
@@ -340,7 +329,7 @@ static void quic_trace(enum trace_level level, uint64_t mask, const struct trace
 					chunk_appendf(&trace_buf, " toklen=%lu", pkt->token_len);
 				if (pkt->aad_len)
 					chunk_appendf(&trace_buf, " aadlen=%lu", pkt->aad_len);
-				chunk_appendf(&trace_buf, " flags:0x%x len=%lu", pkt->flags, pkt->len);
+				chunk_appendf(&trace_buf, " flags=0x%x len=%lu", pkt->flags, pkt->len);
 			}
 			if (pktlen)
 				chunk_appendf(&trace_buf, " (%ld)", *pktlen);
@@ -357,7 +346,7 @@ static void quic_trace(enum trace_level level, uint64_t mask, const struct trace
 			const SSL *ssl = a4;
 
 			if (pkt)
-				chunk_appendf(&trace_buf, "\n  pkt@%p el=%c pn=%lu", pkt,
+				chunk_appendf(&trace_buf, " pkt@%p el=%c pn=%lu", pkt,
 				              quic_packet_type_enc_level_char(pkt->type), pkt->pn);
 			if (cf)
 				chunk_appendf(&trace_buf, " cfoff=%lu cflen=%lu",
@@ -384,8 +373,7 @@ static void quic_trace(enum trace_level level, uint64_t mask, const struct trace
 
 				pktns = qc->pktns;
 				chunk_appendf(&trace_buf,
-				              "\n  qel=%c ack_required=%d path_in_flight=%llu in_flight=%lu "
-				              "pto_probe=%u nb_pto_dgrams=%llu ifcdata=%lu",
+				              " qel=%c ack?%d pif=%llu if=%lu pp=%u pdg=%llu ifcd=%lu",
 				              quic_enc_level_char_from_qel(qel, qc),
 				              !!(pktns->flags & QUIC_FL_PKTNS_ACK_REQUIRED),
 				              (unsigned long long)qc->path->in_flight,
@@ -403,7 +391,7 @@ static void quic_trace(enum trace_level level, uint64_t mask, const struct trace
 
 				chunk_appendf(&trace_buf, " pkt@%p", pkt);
 				if (ret && *ret)
-					chunk_appendf(&trace_buf, "\n  pnl=%u pn=%lu", pkt->pnl, pkt->pn);
+					chunk_appendf(&trace_buf, " pnl=%u pn=%lu", pkt->pnl, pkt->pn);
 			}
 		}
 
@@ -485,7 +473,7 @@ static void quic_trace(enum trace_level level, uint64_t mask, const struct trace
 						chunk_appendf(&trace_buf, " tole=%dms",
 						              TICKS_TO_MS(pktns->tx.time_of_last_eliciting - now_ms));
 					if (duration)
-						chunk_appendf(&trace_buf, " duration=%dms", TICKS_TO_MS(*duration));
+						chunk_appendf(&trace_buf, " dur=%dms", TICKS_TO_MS(*duration));
 				}
 			}
 
@@ -499,7 +487,7 @@ static void quic_trace(enum trace_level level, uint64_t mask, const struct trace
 			const struct quic_tx_packet *pkt = a2;
 
 			if (pkt) {
-				chunk_appendf(&trace_buf, " #%lu(%s) path_in_flight=%lu in_flight_len=%zu cdata_len=%zu",
+				chunk_appendf(&trace_buf, " #%lu(%s) pif=%lu iflen=%zu cdlen=%zu",
 				              (unsigned long)pkt->pn_node.key,
 				              pkt->pktns == &qc->pktns[QUIC_TLS_PKTNS_INITIAL] ? "I" :
 				              pkt->pktns == &qc->pktns[QUIC_TLS_PKTNS_01RTT] ? "01RTT": "H",
@@ -972,7 +960,6 @@ static int qc_do_rm_hp(struct quic_rx_packet *pkt, struct quic_tls_ctx *tls_ctx,
 	EVP_CIPHER_CTX *cctx;
 	unsigned char *hp_key;
 
-	TRACE_ENTER(QUIC_EV_CONN_RMHP, ctx->conn, pkt);
 	/* Check there is enough data in this packet. */
 	if (end - pn < QUIC_PACKET_PN_MAXLEN + sizeof mask) {
 		TRACE_DEVEL("too short packet", QUIC_EV_CONN_RMHP, ctx->conn, pkt);
@@ -1012,7 +999,6 @@ static int qc_do_rm_hp(struct quic_rx_packet *pkt, struct quic_tls_ctx *tls_ctx,
 
  out:
 	EVP_CIPHER_CTX_free(cctx);
-	TRACE_LEAVE(QUIC_EV_CONN_RMHP, ctx->conn, pkt, &ret);
 
 	return ret;
 }
@@ -1645,7 +1631,7 @@ static int qc_prep_hdshk_pkts(struct quic_conn_ctx *ctx)
 		ssize_t ret;
 		enum quic_pkt_type pkt_type;
 
-		TRACE_DEVEL("enc. level state", QUIC_EV_CONN_PHPKTS, ctx->conn, qel);
+		TRACE_POINT(QUIC_EV_CONN_PHPKTS, ctx->conn, qel);
 		/* Do not build any more packet if no ACK are required
 		 * and if there is no more packets to send upon PTO expiration
 		 * and if there is not more CRYPTO data available or in flight
@@ -1730,7 +1716,6 @@ int qc_send_ppkts(struct quic_conn_ctx *ctx)
 	struct buffer tmpbuf = { };
 	struct q_buf *rbuf;
 
-	TRACE_ENTER(QUIC_EV_CONN_SPPKTS, ctx->conn);
 	qc = ctx->conn->qc;
 	for (rbuf = q_rbuf(qc); !q_buf_empty(rbuf) ; rbuf = q_next_rbuf(qc)) {
 		struct quic_tx_packet *p, *q;
@@ -1761,7 +1746,6 @@ int qc_send_ppkts(struct quic_conn_ctx *ctx)
 			LIST_DEL(&p->list);
 		}
 	}
-	TRACE_LEAVE(QUIC_EV_CONN_SPPKTS, ctx->conn);
 
 	return 1;
 }
@@ -3243,7 +3227,6 @@ static ssize_t qc_do_build_hdshk_pkt(struct q_buf *wbuf,
 	int64_t largest_acked_pn;
 	int add_ping_frm, probe_packet;
 
-	TRACE_ENTER(QUIC_EV_CONN_CHPKT, conn->conn);
 	probe_packet = 0;
 	beg = pos = q_buf_getpos(wbuf);
 	end = q_buf_end(wbuf);
@@ -3353,7 +3336,6 @@ static ssize_t qc_do_build_hdshk_pkt(struct q_buf *wbuf,
 		qel->pktns->tx.pto_probe = 0;
 
  out:
-	TRACE_LEAVE(QUIC_EV_CONN_CHPKT, conn->conn, (int *)(pos - beg));
 	return pos - beg;
 
  err:
