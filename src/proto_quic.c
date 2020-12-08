@@ -38,6 +38,7 @@
 #include <haproxy/port_range.h>
 #include <haproxy/protocol.h>
 #include <haproxy/proto_quic.h>
+#include <haproxy/proto_udp.h>
 #include <haproxy/proxy-t.h>
 #include <haproxy/sock.h>
 #include <haproxy/sock_inet.h>
@@ -46,8 +47,6 @@
 
 static int quic_bind_listener(struct listener *listener, char *errmsg, int errlen);
 static int quic_connect_server(struct connection *conn, int flags);
-static int quic_suspend_receiver(struct receiver *rx);
-static int quic_resume_receiver(struct receiver *rx);
 static void quic_enable_listener(struct listener *listener);
 static void quic_disable_listener(struct listener *listener);
 
@@ -68,8 +67,8 @@ struct protocol proto_quic4 = {
 	.connect        = quic_connect_server,
 
 	/* binding layer */
-	.rx_suspend     = quic_suspend_receiver,
-	.rx_resume      = quic_resume_receiver,
+	.rx_suspend     = udp_suspend_receiver,
+	.rx_resume      = udp_resume_receiver,
 
 	/* address family */
 	.fam            = &proto_fam_inet4,
@@ -105,8 +104,8 @@ struct protocol proto_quic6 = {
 	.connect        = quic_connect_server,
 
 	/* binding layer */
-	.rx_suspend     = quic_suspend_receiver,
-	.rx_resume      = quic_resume_receiver,
+	.rx_suspend     = udp_suspend_receiver,
+	.rx_resume      = udp_resume_receiver,
 
 	/* address family */
 	.fam            = &proto_fam_inet6,
@@ -579,53 +578,6 @@ static void quic_disable_listener(struct listener *l)
 	 */
 	if (fd_updt)
 		fd_stop_recv(l->rx.fd);
-}
-
-/* Suspend a receiver. Returns < 0 in case of failure, 0 if the receiver
- * was totally stopped, or > 0 if correctly suspended.
- * The principle is a bit ugly but works well, at least on Linux: in order to
- * suspend the receiver, we want it to stop receiving traffic, which means that
- * the socket must be unhashed from the kernel's socket table. The simple way
- * to do this is to connect to any address that is reachable and will not be
- * used by regular traffic, and a great one is reconnecting to self.
- */
-static int quic_suspend_receiver(struct receiver *rx)
-{
-	struct sockaddr_storage ss;
-	socklen_t len = sizeof(ss);
-
-	if (rx->fd < 0)
-		return 0;
-
-	if (getsockname(rx->fd, (struct sockaddr *)&ss, &len) < 0)
-		return -1;
-
-	if (connect(rx->fd, (struct sockaddr *)&ss, len) < 0)
-		return -1;
-
-	/* not necessary but may make debugging clearer */
-	fd_stop_recv(rx->fd);
-	return 1;
-}
-
-/* Resume a receiver. Returns < 0 in case of failure, 0 if the receiver
- * was totally stopped, or > 0 if correctly suspended.
- * The principle is to reverse the change above, we'll break the connection by
- * connecting to AF_UNSPEC. The association breaks and the socket starts to
- * receive from everywhere again.
- */
-static int quic_resume_receiver(struct receiver *rx)
-{
-	const struct sockaddr sa = { .sa_family = AF_UNSPEC };
-
-	if (rx->fd < 0)
-		return 0;
-
-	if (connect(rx->fd, &sa, sizeof(sa)) < 0)
-		return -1;
-
-	fd_want_recv(rx->fd);
-	return 1;
 }
 
 /*
