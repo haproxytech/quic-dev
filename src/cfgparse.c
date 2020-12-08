@@ -458,7 +458,7 @@ void init_default_instance()
 
 	defproxy.email_alert.level = LOG_ALERT;
 	defproxy.load_server_state_from_file = PR_SRV_STATE_FILE_UNSPEC;
-#if defined(USE_OPENSSL) && defined(USE_QUIC)
+#if defined(USE_QUIC)
 	quic_transport_params_init(&defproxy.defsrv.quic_params, 0);
 #endif
 
