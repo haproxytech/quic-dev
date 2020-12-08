@@ -37,6 +37,7 @@
 #include <haproxy/namespace.h>
 #include <haproxy/port_range.h>
 #include <haproxy/protocol.h>
+#include <haproxy/proto_quic.h>
 #include <haproxy/proxy-t.h>
 #include <haproxy/sock.h>
 #include <haproxy/sock_inet.h>
