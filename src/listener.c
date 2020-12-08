@@ -639,11 +639,6 @@ int create_listeners(struct bind_conf *bc, const struct sockaddr_storage *ss,
 		l->rx.owner = l;
 		l->rx.iocb = proto->default_iocb;
 		l->rx.fd = fd;
-#ifdef USE_QUIC
-		LIST_INIT(&l->rx.qpkts);
-		l->rx.odcids = EB_ROOT_UNIQUE;
-		l->rx.cids = EB_ROOT_UNIQUE;
-#endif
 
 		memcpy(&l->rx.addr, ss, sizeof(*ss));
 		if (proto->fam->set_port)
