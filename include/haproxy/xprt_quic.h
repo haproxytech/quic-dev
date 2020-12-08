@@ -1038,8 +1038,20 @@ static inline void quic_path_init(struct quic_path *path, int ipv4,
 	path->mtu = max_dgram_sz;
 	path->cwnd = min(10 * max_dgram_sz, max(max_dgram_sz << 1, 14720UL));
 	path->min_cwnd = max_dgram_sz << 1;
+	path->prep_in_flight = 0;
 	path->in_flight = 0;
 	path->in_flight_ae_pkts = 0;
+}
+
+/* Return the remaining <room> available on <path> QUIC path. In fact this this
+ *the remaining number of bytes available in the congestion controller window.
+ */
+static inline size_t quic_path_room(struct quic_path *path)
+{
+	if (path->in_flight > path->cwnd)
+		return 0;
+
+	return path->cwnd - path->in_flight;
 }
 
 /* Return 1 if <pktns> matches with the Application packet number space of
