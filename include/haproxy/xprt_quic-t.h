@@ -564,6 +564,8 @@ struct quic_path {
 	size_t cwnd;
 	/* Minimum congestion window. */
 	size_t min_cwnd;
+	/* Prepared data to be sent (in bytes). */
+	uint64_t prep_in_flight;
 	/* Outstanding data (in bytes). */
 	uint64_t in_flight;
 	/* Number of in flight ack-eliciting packets. */
@@ -631,8 +633,6 @@ struct quic_conn {
 		/* Number of received bytes. */
 		uint64_t bytes;
 	} rx;
-	/* In flight CRYPTO data counter. */
-	size_t ifcdata;
 	unsigned int max_ack_delay;
 	struct quic_path paths[1];
 	struct quic_path *path;
