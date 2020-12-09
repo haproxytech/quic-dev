@@ -1663,11 +1663,13 @@ static int qc_prep_hdshk_pkts(struct quic_conn_ctx *ctx)
 		case -2:
 			goto err;
 		case -1:
+			if (!reuse_wbuf)
+				goto out;
+
 			/* Not enough room in <wbuf>. */
 			wbuf = q_next_wbuf(qc);
-			if (reuse_wbuf)
-				continue;
-			break;
+			reuse_wbuf = 0;
+			continue;
 		case 0:
 			goto out;
 		default:
