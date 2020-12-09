@@ -140,7 +140,7 @@ SSL *ssl_sock_get_ssl_object(struct connection *conn);
 static inline
 int ssl_sock_is_ssl(struct connection *conn)
 {
-	if (!conn || conn->xprt != xprt_get(XPRT_SSL) || !conn->xprt_ctx)
+	if (!conn || (conn->xprt != xprt_get(XPRT_SSL) && conn->xprt != xprt_get(XPRT_QUIC)) || !conn->xprt_ctx)
 		return 0;
 	else
 		return 1;
