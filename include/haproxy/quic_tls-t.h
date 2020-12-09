@@ -101,7 +101,6 @@ struct quic_tls_secrets {
 };
 
 struct quic_tls_ctx {
-	unsigned char aead_iv[12];
 	struct quic_tls_secrets rx;
 	struct quic_tls_secrets tx;
 };
