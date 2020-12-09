@@ -3735,16 +3735,20 @@ out_uri_auth_compat:
 			if (!LIST_ISEMPTY(&curproxy->tcp_req.l5_rules))
 				listener->options |= LI_O_TCP_L5_RULES;
 
-			/* smart accept mode is automatic in HTTP mode */
+			/* smart accept mode is automatic in HTTP mode and with SSL */
 			if ((curproxy->options2 & PR_O2_SMARTACC) ||
-			    ((curproxy->mode == PR_MODE_HTTP || listener->bind_conf->is_ssl) &&
+			    ((curproxy->mode == PR_MODE_HTTP ||
+			      listener->bind_conf->xprt == xprt_get(XPRT_SSL) ||
+			      listener->bind_conf->xprt == xprt_get(XPRT_QUIC)) &&
 			     !(curproxy->no_options2 & PR_O2_SMARTACC)))
 				listener->options |= LI_O_NOQUICKACK;
 		}
 
 		/* Release unused SSL configs */
 		list_for_each_entry(bind_conf, &curproxy->conf.bind, by_fe) {
-			if (!bind_conf->is_ssl && bind_conf->xprt->destroy_bind_conf)
+			if (bind_conf->xprt != xprt_get(XPRT_SSL) &&
+			    bind_conf->xprt != xprt_get(XPRT_QUIC) &&
+			    bind_conf->xprt->destroy_bind_conf)
 				bind_conf->xprt->destroy_bind_conf(bind_conf);
 		}
 

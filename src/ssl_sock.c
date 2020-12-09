@@ -4716,7 +4716,7 @@ int ssl_sock_prepare_bind_conf(struct bind_conf *bind_conf)
 	int alloc_ctx;
 	int err;
 
-	if (!bind_conf->is_ssl) {
+	if (bind_conf->xprt != xprt_get(XPRT_SSL) && bind_conf->xprt != xprt_get(XPRT_QUIC)) {
 		if (bind_conf->default_ctx) {
 			ha_warning("Proxy '%s': A certificate was specified but SSL was not enabled on bind '%s' at [%s:%d] (use 'ssl').\n",
 				   px->id, bind_conf->arg, bind_conf->file, bind_conf->line);
