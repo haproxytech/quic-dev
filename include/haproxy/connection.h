@@ -332,6 +332,7 @@ static inline void conn_init(struct connection *conn, void *target)
 	conn->dst = NULL;
 	conn->proxy_authority = NULL;
 	conn->proxy_unique_id = IST_NULL;
+	conn->qc = NULL;
 }
 
 /* sets <owner> as the connection's owner */
