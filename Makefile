@@ -564,7 +564,7 @@ endif
 OPTIONS_OBJS  += src/ssl_sample.o src/ssl_sock.o src/ssl_crtlist.o src/ssl_ckch.o src/ssl_utils.o src/cfgparse-ssl.o
 endif
 ifneq ($(USE_QUIC),)
-OPTIONS_OBJS += src/proto_quic.o
+OPTIONS_OBJS += src/proto_quic.o src/quic_sock.o
 endif
 
 # The private cache option affect the way the shctx is built
