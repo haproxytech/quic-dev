@@ -304,7 +304,7 @@ static inline size_t quic_decint_size_diff(uint64_t val)
 
 
 /* Returns the maximum value of a QUIC variable-length integer with <sz> as size */
-static inline size_t quic_max_int(size_t sz)
+static inline uint64_t /*size_t*/ quic_max_int(size_t sz)
 {
 	switch (sz) {
 	case 1:
