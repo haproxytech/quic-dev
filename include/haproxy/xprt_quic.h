@@ -1030,13 +1030,13 @@ static inline void quic_pktns_discard(struct quic_pktns *pktns,
 static inline void quic_path_init(struct quic_path *path, int ipv4,
                                   struct quic_cc_algo *algo, struct quic_conn *qc)
 {
-	size_t max_dgram_sz;
+	unsigned int max_dgram_sz;
 
 	max_dgram_sz = ipv4 ? QUIC_INITIAL_IPV4_MTU : QUIC_INITIAL_IPV6_MTU;
 	quic_cc_init(&path->cc, algo, qc);
 	quic_loss_init(&path->loss);
 	path->mtu = max_dgram_sz;
-	path->cwnd = min(10 * max_dgram_sz, max(max_dgram_sz << 1, 14720UL));
+	path->cwnd = min(10 * max_dgram_sz, max(max_dgram_sz << 1, 14720U));
 	path->min_cwnd = max_dgram_sz << 1;
 	path->prep_in_flight = 0;
 	path->in_flight = 0;
