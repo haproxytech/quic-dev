@@ -182,7 +182,7 @@ static inline struct quic_connection_id *new_quic_cid(struct eb_root *root,
 /* The maximum size of a variable-length QUIC integer encoded with 4 bytes */
 #define QUIC_VARINT_4_BYTE_MAX       ((1UL <<  30) - 1)
 /* The maximum size of a variable-length QUIC integer encoded with 8 bytes */
-#define QUIC_VARINT_8_BYTE_MAX       ((1UL <<  62) - 1)
+#define QUIC_VARINT_8_BYTE_MAX       ((1ULL <<  62) - 1)
 
 /* The maximum size of a variable-length QUIC integer */
 #define QUIC_VARINT_MAX_SIZE       8
