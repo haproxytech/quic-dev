@@ -1565,7 +1565,7 @@ static int qc_parse_pkt_frms(struct quic_rx_packet *pkt, struct quic_conn_ctx *c
 			}
 			else {
 				/* XXX TO DO: <cf> is used only for the traces. */
-				struct quic_rx_crypto_frm cf = {0};
+				struct quic_rx_crypto_frm cf = { };
 
 				cf.offset_node.key = frm.crypto.offset;
 				cf.len = frm.crypto.len;
