@@ -233,7 +233,7 @@ static inline int quic_write_uint32(unsigned char **buf,
  * integers.
  * Returns -1 if <val> if out of the range of lengths supported by QUIC.
  */
-static inline int my_log2(unsigned int val)
+static inline int quic_log2(unsigned int val)
 {
 	switch (val) {
 	case 8:
@@ -428,7 +428,7 @@ static inline int quic_enc_int(unsigned char **buf, const unsigned char *end, ui
 
 	shift = (len - 1) * 8;
 	/* set the bits of byte#0 which gives the length of the encoded integer */
-	size_bits = my_log2(len) << QUIC_VARINT_BYTE_0_SHIFT;
+	size_bits = quic_log2(len) << QUIC_VARINT_BYTE_0_SHIFT;
 	head = *buf;
 	while (len--) {
 		*(*buf)++ = val >> shift;
