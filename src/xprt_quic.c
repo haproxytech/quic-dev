@@ -1706,15 +1706,17 @@ static int qc_prep_hdshk_pkts(struct quic_conn_ctx *ctx)
 		enum quic_pkt_type pkt_type;
 
 		TRACE_POINT(QUIC_EV_CONN_PHPKTS, ctx->conn, qel);
-		/* Do not build any more packet if no ACK are required
+		/* Do not build any more packet f the TX secrets are not available or
+		 * f there is nothing to send, i.e. if no ACK are required
 		 * and if there is no more packets to send upon PTO expiration
-		 * and if there is not more CRYPTO data available or in flight
-		 * congestion control limit is reached for prepared data.
+		 * and if there is no more CRYPTO data available or in flight
+		 * congestion control limit is reached for prepared data
 		 */
-		if (!(qel->pktns->flags & QUIC_FL_PKTNS_ACK_REQUIRED) &&
+		if (!(qel->tls_ctx.tx.flags & QUIC_FL_TLS_SECRETS_SET) ||
+		    (!(qel->pktns->flags & QUIC_FL_PKTNS_ACK_REQUIRED) &&
 		    !qc->tx.nb_pto_dgrams &&
 		    (LIST_ISEMPTY(&qel->pktns->tx.frms) ||
-		     qc->path->prep_in_flight >= qc->path->cwnd)) {
+		     qc->path->prep_in_flight >= qc->path->cwnd))) {
 			TRACE_DEVEL("nothing more to do", QUIC_EV_CONN_PHPKTS, ctx->conn);
 			/* Consume the buffer if we were supposed to reuse it. */
 			if (reuse_wbuf)
