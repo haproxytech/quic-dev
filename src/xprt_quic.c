@@ -423,7 +423,7 @@ static void quic_trace(enum trace_level level, uint64_t mask, const struct trace
 		}
 
 		if (mask & QUIC_EV_CONN_ENCPKT) {
-			const struct enc_debug_info *edi = a1;
+			const struct enc_debug_info *edi = a2;
 
 			if (edi)
 				chunk_appendf(&trace_buf,
