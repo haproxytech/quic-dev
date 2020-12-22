@@ -1054,6 +1054,18 @@ static inline size_t quic_path_room(struct quic_path *path)
 	return path->cwnd - path->in_flight;
 }
 
+/* Return the remaining <room> available on <path> QUIC path for prepared data
+ * (before being sent). Almost the same that for the QUIC path room, except that
+ * here this is the data which have been prepared which are taken into an account.
+ */
+static inline size_t quic_path_prep_data(struct quic_path *path)
+{
+	if (path->in_flight > path->cwnd)
+		return 0;
+
+	return path->cwnd - path->prep_in_flight;
+}
+
 /* Return 1 if <pktns> matches with the Application packet number space of
  * <conn> connection which is common to the 0-RTT and 1-RTT encryption levels, 0
  * if not (handshake packets).

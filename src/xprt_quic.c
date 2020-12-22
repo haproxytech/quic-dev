@@ -3212,7 +3212,7 @@ static inline int qc_build_cfrms(struct quic_tx_packet *pkt,
 	if (conn->tx.nb_pto_dgrams)
 		max_cdata_len = room;
 	else
-		max_cdata_len = quic_path_room(conn->path);
+		max_cdata_len = quic_path_prep_data(conn->path);
 	list_for_each_entry_safe(cf, cfbak, &qel->pktns->tx.frms, list) {
 		/* header length, data length, frame length. */
 		size_t hlen, dlen, cflen;
@@ -3315,7 +3315,7 @@ static ssize_t qc_do_build_hdshk_pkt(struct q_buf *wbuf,
 	if (!conn->tx.nb_pto_dgrams && !(qel->pktns->flags & QUIC_FL_PKTNS_ACK_REQUIRED)) {
 		size_t path_room;
 
-		path_room = quic_path_room(conn->path);
+		path_room = quic_path_prep_data(conn->path);
 		if (end - beg > path_room)
 			end = beg + path_room;
 	}
@@ -3588,7 +3588,7 @@ static ssize_t qc_do_build_phdshk_apkt(struct q_buf *wbuf,
 	if (!conn->tx.nb_pto_dgrams && !(qel->pktns->flags & QUIC_FL_PKTNS_ACK_REQUIRED)) {
 		size_t path_room;
 
-		path_room = quic_path_room(conn->path);
+		path_room = quic_path_prep_data(conn->path);
 		if (end - beg > path_room)
 			end = beg + path_room;
 	}
