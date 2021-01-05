@@ -40,6 +40,7 @@
 #include <haproxy/quic_cc.h>
 #include <haproxy/quic_frame.h>
 #include <haproxy/quic_loss.h>
+#include <haproxy/quic_stream.h>
 #include <haproxy/quic_tls.h>
 #include <haproxy/ssl_sock.h>
 #include <haproxy/stream_interface.h>
@@ -152,6 +153,10 @@ DECLARE_POOL(pool_head_quic_rx_packet, "quic_rx_packet_pool", sizeof(struct quic
 DECLARE_POOL(pool_head_quic_tx_packet, "quic_tx_packet_pool", sizeof(struct quic_tx_packet));
 
 DECLARE_STATIC_POOL(pool_head_quic_rx_crypto_frm, "quic_rx_crypto_frm_pool", sizeof(struct quic_rx_crypto_frm));
+
+DECLARE_POOL(pool_head_quic_rx_strm_frm, "quic_rx_strm_frm", sizeof(struct quic_rx_strm_frm));
+
+DECLARE_POOL(pool_head_quic_strm, "quic_strm", sizeof(struct quic_strm));
 
 DECLARE_POOL(pool_head_quic_tx_frm, "quic_tx_frm_pool", sizeof(struct quic_tx_frm));
 
@@ -1569,6 +1574,74 @@ static inline int qc_provide_cdata(struct quic_enc_level *el,
 	return 0;
 }
 
+/* Store <stream_frm> STREAM frame by its Stream ID and offset in
+ * <qc> internal structures.
+ * Return 1 if succeeded, 0 if not.
+ */
+static inline int qc_store_stream_frm(struct quic_rx_packet *pkt,
+                                      struct quic_stream *stream_frm,
+                                      struct quic_conn *qc)
+{
+	struct quic_strms *strms;
+	struct eb64_node *strm_node;
+	uint64_t sub_id;
+	struct quic_strm *strm;
+	struct eb64_node *frm_node;
+
+	strms = &qc->rx.strms[stream_frm->id & QUIC_STREAM_ID_TYPE_MASK];
+	sub_id = stream_frm->id >> QUIC_STREAM_ID_TYPE_SHIFT;
+	if (sub_id >= strms->largest_sub_id + 1) {
+		/* According to the RFC:
+		 *   "A stream ID that is used out of order results in all streams
+		 *    of that type with lower-numbered stream IDs also being opened".
+		 * So, let's "open" these streams.
+		 */
+
+		unsigned int i;
+
+		for (i = strms->largest_sub_id + 1; i <= sub_id; i++) {
+			strm = new_quic_strm(i);
+			if (!strm) {
+				TRACE_PROTO("Could not alloc a new stream",
+				            QUIC_EV_CONN_PSTRM, qc->conn);
+				return 0;
+			}
+
+			eb64_insert(&strms->root, &strm->sub_id_node);
+			strms->largest_sub_id = i;
+		}
+
+		/* From here <strm> has <sub_id> as sub ID. */
+		strm_node = &strm->sub_id_node;
+	}
+	else {
+		strm_node = eb64_lookup(&strms->root, sub_id);
+	}
+
+	/* Store the frame in <strm> stream. */
+	strm = eb64_entry(&strm_node->node, struct quic_strm, sub_id_node);
+	frm_node = eb64_lookup(&strm->frms, stream_frm->offset);
+	if (frm_node) {
+		TRACE_PROTO("Already existing stream data",
+		            QUIC_EV_CONN_PSTRM, qc->conn);
+	}
+	else {
+		struct quic_rx_strm_frm *frm;
+
+		frm = new_quic_rx_strm_frm(stream_frm, pkt);
+		if (!frm) {
+			TRACE_PROTO("Could not alloc RX STREAM frame",
+			            QUIC_EV_CONN_PSTRM, qc->conn);
+			return 0;
+		}
+
+		eb64_insert(&strm->frms, &frm->offset_node);
+		quic_rx_packet_refinc(pkt);
+	}
+
+	return 1;
+}
+
 /* Parse all the frames of <pkt> QUIC packet for QUIC connection with <ctx>
  * as I/O handler context and <qel> as encryption level.
  * Returns 1 if succeeded, 0 if failed.
@@ -1663,6 +1736,10 @@ static int qc_parse_pkt_frms(struct quic_rx_packet *pkt, struct quic_conn_ctx *c
 					goto err;
 			} else if (!(stream->id & QUIC_STREAM_FRAME_ID_INITIATOR_BIT))
 				goto err;
+
+			if (!qc_store_stream_frm(pkt, stream, ctx->conn->qc))
+				goto err;
+
 			break;
 		}
 		case QUIC_FT_NEW_CONNECTION_ID:
@@ -2588,6 +2665,10 @@ int qc_new_conn_init(struct quic_conn *qc, int ipv4,
 	qc->tx.nb_pto_dgrams = 0;
 	/* RX part. */
 	qc->rx.bytes = 0;
+	for (i = 0; i < MAX_STRM_ID_TYPES; i++) {
+		qc->rx.strms[i].largest_sub_id = (uint64_t)-1;
+		qc->rx.strms[i].root = EB_ROOT_UNIQUE;
+	}
 
 	/* XXX TO DO: Only one path at this time. */
 	qc->path = &qc->paths[0];

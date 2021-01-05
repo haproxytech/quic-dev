@@ -33,8 +33,9 @@
 
 #include <haproxy/quic_cc-t.h>
 #include <haproxy/quic_frame-t.h>
-#include <haproxy/quic_tls-t.h>
 #include <haproxy/quic_loss-t.h>
+#include <haproxy/quic_stream-t.h>
+#include <haproxy/quic_tls-t.h>
 #include <haproxy/task.h>
 
 #include <import/eb64tree.h>
@@ -624,6 +625,7 @@ struct quic_conn {
 	struct {
 		/* Number of received bytes. */
 		uint64_t bytes;
+		struct quic_strms strms[MAX_STRM_ID_TYPES];
 	} rx;
 	unsigned int max_ack_delay;
 	struct quic_path paths[1];
