@@ -371,6 +371,7 @@ static int qcc_read0_pending(struct qcc *qcc)
  * Otherwise it means some streams are waiting in the data layer and it should
  * not expire.
  */
+__maybe_unused
 static inline int qcc_may_expire(const struct qcc *qcc)
 {
 	return eb_is_empty(&qcc->streams_by_id) ||
@@ -1256,6 +1257,7 @@ static void qc_process_demux(struct qcc *qcc)
 }
 
 /* resume each qcs eligible for sending in list head <head> */
+__maybe_unused
 static void qc_resume_each_sending_qcs(struct qcc *qcc, struct list *head)
 {
 	struct qcs *qcs, *qcs_back;
@@ -1300,6 +1302,7 @@ static void qc_resume_each_sending_qcs(struct qcc *qcc, struct list *head)
 /* process Tx frames from streams to be multiplexed. Returns > 0 if it reached
  * the end.
  */
+__maybe_unused
 static int qc_process_mux(struct qcc *qcc)
 {
 	TRACE_ENTER(QC_EV_QCC_WAKE, qcc->conn);
