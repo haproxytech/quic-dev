@@ -412,6 +412,40 @@ static inline int quic_dec_int(uint64_t *val,
 	return 1;
 }
 
+/* Decode a QUIC variable-length integer from <b> buffer into <val> supporting wrapping.
+ * Note that the result is a 64-bits integer but with the less significant
+ * 62 bits as relevant information. The most significant 2 bits encode
+ * the length of the integer.
+ * Returns 1 if succeeded there was enough data in <buf>), 0 if not.
+ */
+static inline int b_quic_dec_int(uint64_t *val, struct buffer *b)
+{
+	const unsigned char *pos = (const unsigned char *)b_head(b);
+	const unsigned char *end = (const unsigned char *)b_wrap(b);
+	size_t size = b_size(b);
+	size_t data = b_data(b);
+	size_t save_len, len;
+
+	if (!data)
+		return 0;
+
+	save_len = len = 1 << (*pos >> QUIC_VARINT_BYTE_0_SHIFT);
+	if (data < len)
+		return 0;
+
+	*val = *pos & QUIC_VARINT_BYTE_0_BITMASK;
+	if (++pos == end)
+		pos -= size;
+	while (--len) {
+		*val = (*val << 8) | *pos;
+		if (++pos == end)
+			pos -= size;
+	}
+	b_del(b, save_len);
+
+	return 1;
+}
+
 /* Encode a QUIC variable-length integer from <val> into <buf> buffer with <end> as first
  * byte address after the end of this buffer.
  * Returns 1 if succeeded (there was enough room in buf), 0 if not.
