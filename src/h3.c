@@ -89,7 +89,7 @@ static int ouqcs_buf_available(void *target)
 	struct h3_ouqcs *h3_ouqcs = target;
 	struct ouqcs *qcs = h3_ouqcs->qcs;
 
-	if ((qcs->flags & OUQCS_SF_TXBUF_MALLOC) && b_alloc_margin(&qcs->txbuf, 0)) {
+	if ((qcs->flags & OUQCS_SF_TXBUF_MALLOC) && b_alloc(&qcs->txbuf)) {
 		qcs->flags &= ~OUQCS_SF_TXBUF_MALLOC;
 		tasklet_wakeup(h3_ouqcs->wait_event.tasklet);
 		return 1;
@@ -104,7 +104,7 @@ static struct buffer *h3_ouqcs_get_buf(struct h3_ouqcs *h3_ouqcs)
 	struct h3 *h3 = h3_ouqcs->qcs->qcc->ctx;
 
 	if (likely(!LIST_ADDED(&h3->buf_wait.list)) &&
-	    unlikely((buf = b_alloc_margin(&h3_ouqcs->qcs->txbuf, 0)) == NULL)) {
+	    unlikely((buf = b_alloc(&h3_ouqcs->qcs->txbuf)) == NULL)) {
 		h3->buf_wait.target = h3_ouqcs;
 		h3->buf_wait.wakeup_cb = ouqcs_buf_available;
 		LIST_ADDQ(&ti->buffer_wq, &h3->buf_wait.list);
