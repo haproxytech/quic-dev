@@ -459,7 +459,7 @@ static int qc_buf_available(void *target)
 	struct qcc *qcc = target;
 	struct qcs *qcs;
 
-	if ((qcc->flags & QC_CF_MUX_MALLOC) && b_alloc_margin(br_tail(qcc->mbuf), 0)) {
+	if ((qcc->flags & QC_CF_MUX_MALLOC) && b_alloc(br_tail(qcc->mbuf))) {
 		qcc->flags &= ~QC_CF_MUX_MALLOC;
 
 		if (qcc->flags & QC_CF_DEM_MROOM) {
@@ -487,7 +487,7 @@ struct buffer *qc_get_buf(struct qcc *qcc, struct buffer *bptr)
 	struct buffer *buf = NULL;
 
 	if (likely(!LIST_ADDED(&qcc->buf_wait.list)) &&
-	    unlikely((buf = b_alloc_margin(bptr, 0)) == NULL)) {
+	    unlikely((buf = b_alloc(bptr)) == NULL)) {
 		qcc->buf_wait.target = qcc;
 		qcc->buf_wait.wakeup_cb = qc_buf_available;
 		LIST_ADDQ(&ti->buffer_wq, &qcc->buf_wait.list);
