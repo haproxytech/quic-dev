@@ -582,7 +582,7 @@ static inline int quic_transport_param_decode(struct quic_transport_params *p,
 		if (!quic_dec_int(&p->idle_timeout, buf, end))
 			return 0;
 		break;
-	case QUIC_DFLT_MAX_UDP_PAYLOAD_SIZE:
+	case QUIC_TP_MAX_UDP_PAYLOAD_SIZE:
 		if (!quic_dec_int(&p->max_udp_payload_size, buf, end))
 			return 0;
 		break;
@@ -765,7 +765,7 @@ static inline int quic_transport_params_encode(unsigned char *buf,
 	 * of the default value.
 	 */
 	if (p->max_udp_payload_size != QUIC_DFLT_MAX_UDP_PAYLOAD_SIZE &&
-	    !quic_transport_param_enc_int(&pos, end, QUIC_DFLT_MAX_UDP_PAYLOAD_SIZE, p->max_udp_payload_size))
+	    !quic_transport_param_enc_int(&pos, end, QUIC_TP_MAX_UDP_PAYLOAD_SIZE, p->max_udp_payload_size))
 		return 0;
 
 	if (p->initial_max_data &&
