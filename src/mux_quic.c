@@ -1389,6 +1389,42 @@ leave:
 	return NULL;
 }
 
+static int qcs_push_frame(struct qcs *qcs, struct buffer *payload, int fin, uint64_t offset)
+{
+	struct quic_frame *frm;
+	struct buffer buf = BUF_NULL;
+	int total = 0;
+
+	qc_get_buf(qcs->qcc, &buf);
+	total = b_xfer(&buf, payload, b_data(payload));
+
+	frm = pool_zalloc(pool_head_quic_frame);
+	if (!frm)
+		goto err;
+
+	frm->type = QUIC_FT_STREAM_8;
+	if (fin)
+		frm->type |= QUIC_STREAM_FRAME_TYPE_FIN_BIT;
+	if (offset) {
+		frm->type |= QUIC_STREAM_FRAME_TYPE_OFF_BIT;
+		frm->stream.offset = offset;
+	}
+	frm->stream.id = qcs->by_id.key;
+	if (total) {
+		frm->type |= QUIC_STREAM_FRAME_TYPE_LEN_BIT;
+		frm->stream.len = total;
+		frm->stream.data = (unsigned char *)b_head(&buf);
+	}
+
+	struct quic_enc_level *qel = &qcs->qcc->conn->qc->els[QUIC_TLS_ENC_LEVEL_APP];
+	MT_LIST_APPEND(&qel->pktns->tx.frms, &frm->mt_list);
+	fprintf(stderr, "%s: total=%d fin=%d offset=%lu\n", __func__, total, fin, offset);
+	return total;
+
+ err:
+	return -1;
+}
+
 /* callback called on any event by the connection handler.
  * It applies changes and returns zero, or < 0 if it wants immediate
  * destruction of the connection (which normally doesn not happen in quic).
@@ -1801,7 +1837,6 @@ static size_t qc_rcv_buf(struct conn_stream *cs, struct buffer *buf, size_t coun
 	TRACE_LEAVE(QC_EV_STRM_RECV, qcc->conn, qcs);
 	return ret;
 }
-
 
 /* Called from the upper layer, to send data from buffer <buf> for no more than
  * <count> bytes. Returns the number of bytes effectively sent. Some status
