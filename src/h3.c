@@ -514,6 +514,7 @@ static int h3_resp_headers_send(struct qcs *qcs, struct htx *htx)
 	if (!b_quic_enc_int(res, b_data(&headers_buf)))
 		ABORT_NOW();
 	b_add(res, b_data(&headers_buf));
+	qcs->tx.left += 1 + frame_length_size + b_data(&headers_buf);
 
 	ret = 0;
 	blk = htx_get_head_blk(htx);
@@ -524,6 +525,9 @@ static int h3_resp_headers_send(struct qcs *qcs, struct htx *htx)
 		if (type == HTX_BLK_EOH)
 			break;
 	}
+
+	if ((htx->flags & HTX_FL_EOM) && htx_is_empty(htx) && status >= 200)
+		qcs->flags |= QC_SF_FIN_STREAM;
 
 	return ret;
 
@@ -576,12 +580,16 @@ static int h3_resp_data_send(struct qcs *qcs, struct buffer *buf, size_t count)
 	b_putblk(&outbuf, htx_get_blk_ptr(htx, blk), fsize);
 	count -= fsize;
 
-	if (fsize == bsize)
+	if (fsize == bsize) {
 		htx_remove_blk(htx, blk);
-	else
+		qcs->flags |= QC_SF_FIN_STREAM;
+	}
+	else {
 		htx_cut_data_blk(htx, blk, fsize);
+	}
 
 	b_add(res, b_data(&outbuf));
+	qcs->tx.left += b_data(&outbuf);
 	goto new_frame;
 
  end:
