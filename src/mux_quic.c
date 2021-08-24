@@ -1842,16 +1842,15 @@ static size_t qc_rcv_buf(struct conn_stream *cs, struct buffer *buf, size_t coun
  * <count> bytes. Returns the number of bytes effectively sent. Some status
  * flags may be updated on the conn_stream.
  */
-static size_t qc_snd_buf(struct conn_stream *cs, struct buffer *buf, size_t count, int flags)
+size_t qc_snd_buf(struct conn_stream *cs, struct buffer *buf, size_t count, int flags)
 {
 	struct qcs *qcs = cs->ctx;
-	size_t total = 0;
 
 	TRACE_ENTER(QC_EV_QCS_SEND|QC_EV_STRM_SEND, qcs->qcc->conn, qcs);
-	/* XXX TO DO XXX */
+
 	fprintf(stderr, "%s: count=%zu\n", __func__, count);
 	TRACE_LEAVE(QC_EV_QCS_SEND|QC_EV_STRM_SEND, qcs->qcc->conn, qcs);
-	return total;
+	return count;
 }
 
 /* Called from the upper layer, to send data from buffer <buf> for no more than
@@ -2089,7 +2088,8 @@ static int qc_takeover(struct connection *conn, int orig_tid)
 static const struct mux_ops qc_ops = {
 	.init = qc_init,
 	.wake = qc_wake,
-	.snd_buf = qc_snd_buf,
+	//.snd_buf = qc_snd_buf,
+	.snd_buf = h3_snd_buf,
 	.rcv_buf = qc_rcv_buf,
 	.subscribe = qc_subscribe,
 	.unsubscribe = qc_unsubscribe,
