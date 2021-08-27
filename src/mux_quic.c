@@ -64,23 +64,6 @@ static const struct qcs *qc_closed_stream;
 #define QC_SS_ERROR_BIT   (1UL << QC_SS_ERROR)
 #define QC_SS_CLOSED_BIT  (1UL << QC_SS_CLOSED)
 
-/* QUIC stream flags (32 bit), in qcs->flags */
-#define QC_SF_NONE              0x00000000
-
-#define QC_SF_TXBUF_MALLOC      0x00000001 // blocked on lack of TX buffer
-/* stream flags indicating the reason the stream is blocked */
-#define QC_SF_BLK_MBUSY         0x00000010 // blocked waiting for mux access (transient)
-#define QC_SF_BLK_MROOM         0x00000020 // blocked waiting for room in the mux (must be in send list)
-#define QC_SF_BLK_MFCTL         0x00000040 // blocked due to mux fctl (must be in fctl list)
-#define QC_SF_BLK_SFCTL         0x00000080 // blocked due to stream fctl (must be in blocked list)
-#define QC_SF_BLK_ANY           0x000000F0 // any of the reasons above
-
-#define QC_SF_NOTIFIED          0x00000800  // a paused stream was notified to try to send again
-
-#define QC_SF_WANT_SHUTR        0x00008000  // a stream couldn't shutr() (mux full/busy)
-#define QC_SF_WANT_SHUTW        0x00010000  // a stream couldn't shutw() (mux full/busy)
-#define QC_SF_KILL_CONN         0x00020000  // kill the whole connection with this stream
-
 
 /* trace source and events */
 static void qc_trace(enum trace_level level, uint64_t mask, \
