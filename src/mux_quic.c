@@ -1848,6 +1848,11 @@ size_t qc_snd_buf(struct conn_stream *cs, struct buffer *buf, size_t count, int 
 
 	TRACE_ENTER(QC_EV_QCS_SEND|QC_EV_STRM_SEND, qcs->qcc->conn, qcs);
 
+	if (count) {
+		if (!(qcs->qcc->wait_event.events & SUB_RETRY_SEND))
+			tasklet_wakeup(qcs->qcc->wait_event.tasklet);
+	}
+
 	fprintf(stderr, "%s: count=%zu\n", __func__, count);
 	TRACE_LEAVE(QC_EV_QCS_SEND|QC_EV_STRM_SEND, qcs->qcc->conn, qcs);
 	return count;
