@@ -1363,7 +1363,8 @@ static struct task *qc_io_cb(struct task *t, void *ctx, unsigned int status)
 	if (!(qcc->wait_event.events & SUB_RETRY_RECV))
 		ret |= qc_recv(qcc);
 #endif
-	if (ret || qcc->rx.inmux)
+	// TODO redefine the proper condition here
+	//if (ret || qcc->rx.inmux)
 		ret = qc_process(qcc);
 
 	/* If we were in an idle list, we want to add it back into it,
@@ -1432,9 +1433,33 @@ static int qcs_push_frame(struct qcs *qcs, struct buffer *payload, int fin, uint
 static int qc_process(struct qcc *qcc)
 {
 	struct connection *conn = qcc->conn;
+	struct qcs *qcs;
+	struct eb64_node *node;
 
 	TRACE_ENTER(QC_EV_QCC_WAKE, conn);
-	/* XXX TO DO XXX */
+
+	/* TODO simple loop through all streams and check if there is frames to
+	 * send
+	 */
+	node = eb64_first(&qcc->streams_by_id);
+	while (node) {
+		struct buffer *buf;
+		qcs = container_of(node, struct qcs, by_id);
+		for (buf = br_head(qcs->tx.mbuf); b_data(buf); buf = br_del_head(qcs->tx.mbuf)) {
+			if (b_data(buf)) {
+				int ret;
+				ret = qcs_push_frame(qcs, buf, 0, qcs->tx.offset);
+				if (ret <= 0)
+					ABORT_NOW();
+
+				qcs->tx.offset += ret;
+				qcs->qcc->wait_event.events &= ~SUB_RETRY_SEND;
+			}
+			b_free(buf);
+		}
+		node = eb64_next(node);
+	}
+
 	TRACE_LEAVE(QC_EV_QCC_WAKE, conn);
 	return 0;
 }
