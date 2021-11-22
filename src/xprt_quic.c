@@ -3745,9 +3745,16 @@ static ssize_t qc_lstnr_pkt_rcv(unsigned char **buf, const unsigned char *end,
 			/* Switch to the definitive tree ->cids containing the final CIDs. */
 			node = ebmb_lookup(&l->rx.cids, pkt->dcid.data, dcid_len);
 			if (node) {
+				struct quic_conn *qc;
+
 				/* If found, signal this with NULL as special value for <cids>. */
 				pkt->dcid.len = dcid_len;
 				cids = NULL;
+				qc = ebmb_entry(node, struct quic_conn, scid_node);
+				if (HA_ATOMIC_BTR(&qc->flags, QUIC_FL_CONN_ODCID_NODE_TO_DELETE_BIT)) {
+					/* Delete the ODCID from its tree */
+					ebmb_delete(&qc->odcid_node);
+				}
 			}
 		}
 		HA_RWLOCK_RDUNLOCK(OTHER_LOCK, &l->rx.cids_lock);
@@ -3806,6 +3813,7 @@ static ssize_t qc_lstnr_pkt_rcv(unsigned char **buf, const unsigned char *end,
 			HA_RWLOCK_WRLOCK(QUIC_LOCK, &l->rx.cids_lock);
 			/* Insert the DCID the QUIC client has chosen (only for listeners) */
 			n = ebmb_insert(&l->rx.odcids, &qc->odcid_node, qc->odcid.len);
+			HA_ATOMIC_OR(&qc->flags, QUIC_FL_CONN_ODCID_NODE_TO_DELETE);
 			if (n == &qc->odcid_node) {
 				/* Insert our SCID, the connection ID for the QUIC client. */
 				ebmb_insert(&l->rx.cids, &qc->scid_node, qc->scid.len);
@@ -3831,8 +3839,15 @@ static ssize_t qc_lstnr_pkt_rcv(unsigned char **buf, const unsigned char *end,
 		else {
 			if (pkt->type == QUIC_PACKET_TYPE_INITIAL && cids == &l->rx.odcids)
 				qc = ebmb_entry(node, struct quic_conn, odcid_node);
-			else
+			else {
 				qc = ebmb_entry(node, struct quic_conn, scid_node);
+				if (HA_ATOMIC_BTR(&qc->flags, QUIC_FL_CONN_ODCID_NODE_TO_DELETE_BIT)) {
+					/* Delete the ODCID from its tree */
+					HA_RWLOCK_WRLOCK(QUIC_LOCK, &l->rx.cids_lock);
+					ebmb_delete(&qc->odcid_node);
+					HA_RWLOCK_WRUNLOCK(QUIC_LOCK, &l->rx.cids_lock);
+				}
+			}
 			pkt->qc = qc;
 			conn_ctx = qc->conn->xprt_ctx;
 		}
