@@ -15,6 +15,8 @@
 #include <haproxy/xprt_quic.h>
 
 
+DECLARE_POOL(pool_head_quic_tls_key, "quic_tls_key", QUIC_TLS_KEY_SZ);
+
 __attribute__((format (printf, 3, 4)))
 void hexdump(const void *buf, size_t buflen, const char *title_fmt, ...);
 

@@ -37,9 +37,13 @@
 #endif
 #endif
 
+#define QUIC_TLS_KEY_SZ 32
+
 /* The TLS extensions for QUIC transport parameters */
 #define TLS_EXTENSION_QUIC_TRANSPORT_PARAMETERS       0x0039
 #define TLS_EXTENSION_QUIC_TRANSPORT_PARAMETERS_DRAFT 0xffa5
+
+extern struct pool_head *pool_head_quic_tls_key;
 
 /* QUIC handshake states for both clients and servers. */
 enum quic_handshake_state {
@@ -91,7 +95,6 @@ struct quic_tls_secrets {
 	const EVP_CIPHER *aead;
 	const EVP_MD *md;
 	const EVP_CIPHER *hp;
-	unsigned char key[32];
 	unsigned char iv[12];
 	/* Header protection key.
 	* Note: the header protection is applied after packet protection.
@@ -99,6 +102,8 @@ struct quic_tls_secrets {
 	* the packet protection.
 	*/
 	unsigned char hp_key[32];
+	unsigned char *key;
+	size_t keylen;
 	char flags;
 };
 
