@@ -2225,24 +2225,27 @@ static int qc_parse_pkt_frms(struct quic_rx_packet *pkt, struct ssl_sock_ctx *ct
 			break;
 		}
 		case QUIC_FT_CRYPTO:
-			if (frm.crypto.offset != qel->rx.crypto.offset) {
-				struct quic_rx_crypto_frm *cf;
-
-				cf = pool_alloc(pool_head_quic_rx_crypto_frm);
-				if (!cf) {
-					TRACE_DEVEL("CRYPTO frame allocation failed",
-					            QUIC_EV_CONN_PRSHPKT, ctx->conn);
-					goto err;
+		{
+			struct quic_rx_crypto_frm *cf;
+			if (unlikely(frm.crypto.offset < qel->rx.crypto.offset)) {
+				if (frm.crypto.offset + frm.crypto.len <= qel->rx.crypto.offset) {
+					/* Nothing to do */
+					TRACE_PROTO("Already received CRYPTO data",
+					            QUIC_EV_CONN_PSTRM, ctx->conn);
+					break;
 				}
+				else {
+					size_t diff = qel->rx.crypto.offset - frm.crypto.offset;
 
-				cf->offset_node.key = frm.crypto.offset;
-				cf->len = frm.crypto.len;
-				cf->data = frm.crypto.data;
-				cf->pkt = pkt;
-				eb64_insert(&qel->rx.crypto.frms, &cf->offset_node);
-				quic_rx_packet_refinc(pkt);
+					TRACE_PROTO("Partially already received CRYPTO data",
+					            QUIC_EV_CONN_PSTRM, ctx->conn);
+					frm.crypto.len -= diff;
+					frm.crypto.data += diff;
+					frm.crypto.offset = qel->rx.crypto.offset;
+				}
 			}
-			else {
+
+			if (frm.crypto.offset == qel->rx.crypto.offset) {
 				/* XXX TO DO: <cf> is used only for the traces. */
 				struct quic_rx_crypto_frm cf = { };
 
@@ -2252,8 +2255,26 @@ static int qc_parse_pkt_frms(struct quic_rx_packet *pkt, struct ssl_sock_ctx *ct
 				                      frm.crypto.data, frm.crypto.len,
 				                      pkt, &cf))
 					goto err;
+
+				break;
 			}
+
+			/* frm.crypto.offset > qel->rx.crypto.offset */
+			cf = pool_alloc(pool_head_quic_rx_crypto_frm);
+			if (!cf) {
+				TRACE_DEVEL("CRYPTO frame allocation failed",
+							QUIC_EV_CONN_PRSHPKT, ctx->conn);
+				goto err;
+			}
+
+			cf->offset_node.key = frm.crypto.offset;
+			cf->len = frm.crypto.len;
+			cf->data = frm.crypto.data;
+			cf->pkt = pkt;
+			eb64_insert(&qel->rx.crypto.frms, &cf->offset_node);
+			quic_rx_packet_refinc(pkt);
 			break;
+		}
 		case QUIC_FT_STREAM_8:
 		case QUIC_FT_STREAM_9:
 		case QUIC_FT_STREAM_A:
