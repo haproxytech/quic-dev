@@ -2227,6 +2227,7 @@ static int qc_parse_pkt_frms(struct quic_rx_packet *pkt, struct ssl_sock_ctx *ct
 		case QUIC_FT_CRYPTO:
 		{
 			struct quic_rx_crypto_frm *cf;
+
 			if (unlikely(frm.crypto.offset < qel->rx.crypto.offset)) {
 				if (frm.crypto.offset + frm.crypto.len <= qel->rx.crypto.offset) {
 					/* Nothing to do */
