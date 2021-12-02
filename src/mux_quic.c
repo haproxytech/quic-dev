@@ -1219,8 +1219,8 @@ static int qc_process_mux(struct qcc *qcc)
 	 * waiting there were already elected for immediate emission but were
 	 * blocked just on this.
 	 */
-	qc_resume_each_sending_qcs(qcc, &qcc->fctl_list);
-	qc_resume_each_sending_qcs(qcc, &qcc->send_list);
+	//qc_resume_each_sending_qcs(qcc, &qcc->fctl_list);
+	//qc_resume_each_sending_qcs(qcc, &qcc->send_list);
 
 	TRACE_LEAVE(QC_EV_QCC_WAKE, qcc->conn);
 	return 1;

@@ -1048,14 +1048,30 @@ static inline void quic_rx_packet_pool_purge(struct quic_conn *qc)
 	struct quic_rx_packet *pkt, *pktback;
 
 	list_for_each_entry_safe(pkt, pktback, &qc->rx.pkt_list, qc_rx_pkt_list) {
-		if (pkt->data != (unsigned char *)b_head(&qc->rx.buf))
+		if (pkt->data != (unsigned char *)b_head(&qc->rx.buf)) {
+			size_t cdata;
+
+			fprintf(stderr, "1 pkt #%llu not REM (%zu bytes) off@%ld\n",
+			        (ull)pkt->pn, pkt->raw_len, b_head(&qc->rx.buf) - b_orig(&qc->rx.buf));
+			cdata = b_contig_data(&qc->rx.buf, 0);
+			fprintf(stderr, "CONTIG_DATA=%zu\n", cdata);
+			if (cdata && !*b_head(&qc->rx.buf)) {
+				fprintf(stderr, "CONSUMING CDATA\n");
+				b_del(&qc->rx.buf, cdata);
+			}
 			break;
+		}
 
 		if (!HA_ATOMIC_LOAD(&pkt->refcnt)) {
+			fprintf(stderr, "2 REM %zu bytes off@%ld pkt #%llu @%p\n",
+			        pkt->raw_len, b_head(&qc->rx.buf) - b_orig(&qc->rx.buf), (ull)pkt->pn, pkt);
 			b_del(&qc->rx.buf, pkt->raw_len);
 			LIST_DELETE(&pkt->qc_rx_pkt_list);
 			pool_free(pool_head_quic_rx_packet, pkt);
 		}
+		else
+			fprintf(stderr, "3 pkt #%llu @%p not REM (%zu bytes) off@%ld\n",
+			        (ull)pkt->pn, pkt, pkt->raw_len, b_head(&qc->rx.buf) - b_orig(&qc->rx.buf));
 	}
 }
 
@@ -1068,6 +1084,8 @@ static inline void quic_rx_packet_refinc(struct quic_rx_packet *pkt)
 /* Decrement the reference counter of <pkt> */
 static inline void quic_rx_packet_refdec(struct quic_rx_packet *pkt)
 {
+	fprintf(stderr, "pkt #%llu @%p refcnt=%d qc@%p raw_len=%zu pktlen=%zu\n",
+	        (ull)pkt->pn, pkt, pkt->refcnt, pkt->qc, pkt->raw_len, pkt->len);
 	if (HA_ATOMIC_SUB_FETCH(&pkt->refcnt, 1))
 		return;
 
@@ -1081,11 +1099,29 @@ static inline void quic_rx_packet_refdec(struct quic_rx_packet *pkt)
 		struct quic_conn *qc = pkt->qc;
 
 		HA_RWLOCK_WRLOCK(QUIC_LOCK, &qc->rx.buf_rwlock);
+ retry:
 		if (pkt->data == (unsigned char *)b_head(&qc->rx.buf)) {
+			fprintf(stderr, "4 REM %zu bytes off@%ld pkt #%llu @%p\n",
+			        pkt->raw_len, b_head(&qc->rx.buf) - b_orig(&qc->rx.buf), (ull)pkt->pn, pkt);
 			b_del(&qc->rx.buf, pkt->raw_len);
 			LIST_DELETE(&pkt->qc_rx_pkt_list);
 			pool_free(pool_head_quic_rx_packet, pkt);
 			quic_rx_packet_pool_purge(qc);
+#if 1
+#endif
+		}
+		else {
+			size_t cdata;
+			fprintf(stderr, "5 pkt #%llu @%p not REM (%zu bytes) off@%ld\n",
+			        (ull)pkt->pn, pkt, pkt->raw_len, b_head(&qc->rx.buf) - b_orig(&qc->rx.buf));
+			cdata = b_contig_data(&qc->rx.buf, 0);
+			fprintf(stderr, "CONTIG_DATA=%zu\n", cdata);
+			if (cdata && !*b_head(&qc->rx.buf)) {
+				b_del(&qc->rx.buf, cdata);
+				fprintf(stderr, "CONSUMING CDATA b_head off@%ld\n",
+				        b_head(&qc->rx.buf) - b_orig(&qc->rx.buf));
+				goto retry;
+			}
 		}
 		HA_RWLOCK_WRUNLOCK(QUIC_LOCK, &qc->rx.buf_rwlock);
 	}
