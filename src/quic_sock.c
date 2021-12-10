@@ -93,6 +93,7 @@ static int new_quic_cli_conn(struct quic_conn *qc, struct listener *l,
 {
 	struct connection *cli_conn;
 
+	/*** TODO retarder la création connection/session pour éviter le flooding ? ***/
 	if (unlikely((cli_conn = conn_new(&l->obj_type)) == NULL))
 		goto out;
 
@@ -105,6 +106,8 @@ static int new_quic_cli_conn(struct quic_conn *qc, struct listener *l,
 
 	cli_conn->handle.fd = l->rx.fd;
 	cli_conn->target = &l->obj_type;
+
+	/*** TODO conn_ctrl_init ?? ***/
 
 	/* XXX Should not be there. */
 	l->accept = quic_session_accept;

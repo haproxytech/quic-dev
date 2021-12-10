@@ -128,6 +128,7 @@ static int h3_decode_qcs(struct qcs *qcs, int fin, void *ctx)
 			break;
 
 		b_del(rxbuf, hlen);
+		/*** TODO splitter par type de trames dans des fonctions différentes ***/
 		switch (ftype) {
 		case H3_FT_DATA:
 			break;

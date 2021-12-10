@@ -141,6 +141,10 @@ static void session_count_new(struct session *sess)
  * with the incoming connection handle (a fd), a target (the listener) and a
  * source address.
  */
+/***
+ * XXX TODO standardiser cette fonction avec l'accept QUIC
+ * sortir les elements TCP ?
+ */
 int session_accept_fd(struct connection *cli_conn)
 {
 	struct listener *l = __objt_listener(cli_conn->target);

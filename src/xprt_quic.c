@@ -1429,6 +1429,8 @@ static inline void qc_treat_acked_tx_frm(struct quic_frame *frm,
 			stream_acked = 1;
 		}
 		else {
+			/*** TODO supporter des intervalles pour optimiser
+			 * le nombre d'offset à stocker ***/
 			eb64_insert(&qcs->tx.acked_frms, &strm->offset);
 		}
 		stream_acked |= qcs_try_to_consume(qcs);
@@ -2644,6 +2646,7 @@ int qc_send_ppkts(struct qring *qr, struct ssl_sock_ctx *ctx)
 		for (pkt = first_pkt; pkt; pkt = next_pkt) {
 			pkt->time_sent = time_sent;
 			if (pkt->flags & QUIC_FL_TX_PACKET_ACK_ELICITING) {
+				/*** TODO faut-il le resetter à chaque paquet ? ***/
 				pkt->pktns->tx.time_of_last_eliciting = time_sent;
 				qc->path->ifae_pkts++;
 			}
@@ -2654,6 +2657,7 @@ int qc_send_ppkts(struct qring *qr, struct ssl_sock_ctx *ctx)
 			TRACE_PROTO("sent pkt", QUIC_EV_CONN_SPPKTS, ctx->conn, pkt);
 			next_pkt = pkt->next;
 			eb64_insert(&pkt->pktns->tx.pkts, &pkt->pn_node);
+			/*** XXX à revoir ? ***/
 			quic_tx_packet_refdec(pkt);
 		}
 	}
@@ -3005,6 +3009,7 @@ int qc_treat_rx_pkts(struct quic_enc_level *cur_el, struct quic_enc_level *next_
 	if (!qel)
 		goto out;
 
+	/*** TODO optimize the lock duration ***/
 	HA_RWLOCK_WRLOCK(QUIC_LOCK, &qel->rx.pkts_rwlock);
 	node = eb64_first(&qel->rx.pkts);
 	while (node) {
@@ -4619,6 +4624,7 @@ static int qc_do_build_pkt(unsigned char *pos, const unsigned char *end,
 				ssize_t room = end - pos;
 				TRACE_PROTO("Not enough room", QUIC_EV_CONN_HPKT,
 							conn->conn, NULL, NULL, &room);
+				/*** XXX frm perdu si on échoue ici ? remettre dans la liste originale ? ***/
 				break;
 			}
 		}
@@ -4858,6 +4864,8 @@ static size_t quic_conn_from_buf(struct connection *conn, void *xprt_ctx, const 
 		if (try < count || flags & CO_SFL_MSG_MORE)
 			send_flag |= MSG_MORE;
 
+		/*** XXX risque de splitter des paquets QUIC... XXX
+		 * TODO implémenter un send packet au niveau socket ***/
 		ret = sendto(conn->handle.fd, b_peek(buf, done), try, send_flag,
 		             (struct sockaddr *)conn->dst, get_addr_len(conn->dst));
 		if (ret > 0) {
@@ -4880,6 +4888,7 @@ static size_t quic_conn_from_buf(struct connection *conn, void *xprt_ctx, const 
 			break;
 		}
 	}
+	/*** XXX non requis pour de l'UDP XXX ***/
 	if (unlikely(conn->flags & CO_FL_WAIT_L4_CONN) && done)
 		conn->flags &= ~CO_FL_WAIT_L4_CONN;
 
