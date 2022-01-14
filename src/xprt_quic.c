@@ -6020,7 +6020,8 @@ void qc_notify_close(struct quic_conn *qc)
 static void quic_init_stdout_traces(void)
 {
 #ifdef ENABLE_QUIC_STDOUT_TRACES
-	trace_quic.sink = sink_find("stdout");
+	trace_quic.sink = sink_find("stderr");
+	trace_quic.sink->fmt = LOG_FORMAT_TIMED;
 	trace_quic.level = TRACE_LEVEL_DEVELOPER;
 	trace_quic.state = TRACE_STATE_RUNNING;
 #endif
