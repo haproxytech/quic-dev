@@ -1,0 +1,10 @@
+* voir comment purger l'arbre des acks
+* crypto : ne pas faire de crypto_ctx new + free
+* anti-replay TLS a activé ?
+* voir ce qu'il faut faire quand le build d'un packet échoue pour les trâmes,
+  peut-être ne les insérer dans le paquet que si correctement buildé (le paquet)
+* voir si le paquet Version Negotiation doit être toujours émis (ou que pour une
+  connection établie)
+* les clients qui réussissent le plus C1 interop:
+  quant kwik aioquic neqo
+* voir pb le lag avec curl, sans les patches accept-queue d'Amaury
