@@ -9,3 +9,4 @@
   quant kwik aioquic neqo
 * voir pb le lag avec curl, sans les patches accept-queue d'Amaury
 * drop des paquets 0RTT
+* limiter le boulot pour quic_lstnr_dghdlr() (nombre de dgrams à traiter ?)
