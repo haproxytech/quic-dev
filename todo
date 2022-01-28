@@ -8,3 +8,4 @@
 * les clients qui réussissent le plus C1 interop:
   quant kwik aioquic neqo
 * voir pb le lag avec curl, sans les patches accept-queue d'Amaury
+* drop des paquets 0RTT
