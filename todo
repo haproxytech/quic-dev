@@ -8,7 +8,10 @@
   quant kwik aioquic neqo
 * voir pb le lag avec curl, sans les patches accept-queue d'Amaury
 * drop des paquets 0RTT
+
 * limiter le boulot pour quic_lstnr_dghdlr() (nombre de dgrams à traiter ?)
+* diminuer le nombre de tasklet_wakeup nécessaire au traitement d'un paquet
+
 * pb sur réception d'un CC frame lorsque le mux n'est pas initialisé
   ici :
           case QUIC_FT_CONNECTION_CLOSE:
@@ -17,3 +20,6 @@
             qc->qcc->flags |= QC_CF_CC_RECV;
             tasklet_wakeup(qc->qcc->wait_event.tasklet);
             break;
+
+* Retry : revoir la génération du token
+  doit contenir des infos pour valider l'adresse client
