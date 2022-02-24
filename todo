@@ -23,3 +23,9 @@
 
 * Retry : revoir la génération du token
   doit contenir des infos pour valider l'adresse client
+
+* lorsque le CC est dans l'état recovery vérifier que :
+  An endpoint MUST NOT send a packet if it would cause bytes_in_flight (see Appendix B.2)
+  to be larger than the congestion window, unless the packet is sent on a PTO timer expiration
+  (see Section 6.2) or when entering recovery
+
