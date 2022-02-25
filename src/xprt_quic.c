@@ -4843,17 +4843,18 @@ static int quic_ack_frm_reduce_sz(struct quic_frame *ack_frm, size_t limit)
 	return 1 + ack_delay_sz + ack_frm->tx_ack.arngs->enc_sz;
 }
 
-/* Prepare as most as possible CRYPTO or STREAM frames from their prebuilt frames
- * for <qel> encryption level to be encoded in a buffer with <room> as available room,
- * and <*len> the packet Length field initialized with the number of bytes already present
- * in this buffer which must be taken into an account for the Length packet field value.
- * <headlen> is the number of bytes already present in this packet before building frames.
+/* Prepare into <outlist> as most as possible ack-eliciting frame from their
+ * <inlist> prebuilt frames for <qel> encryption level to be encoded in a buffer
+ * with <room> as available room, and <*len> the packet Length field initialized
+ * with the number of bytes already present in this buffer which must be taken
+ * into an account for the Length packet field value. <headlen> is the number of
+ * bytes already present in this packet before building frames.
  *
  * Update consequently <*len> to reflect the size of these frames built
  * by this function. Also attach these frames to <l> frame list.
  * Return 1 if succeeded, 0 if not.
  */
-static inline int qc_build_frms(struct list *l,
+static inline int qc_build_frms(struct list *outlist, struct list *inlist,
                                 size_t room, size_t *len, size_t headlen,
                                 struct quic_enc_level *qel,
                                 struct quic_conn *qc)
@@ -4879,7 +4880,7 @@ static inline int qc_build_frms(struct list *l,
 
 	TRACE_PROTO("************** frames build (headlen)",
 	            QUIC_EV_CONN_BCFRMS, qc, &headlen);
-	list_for_each_entry_safe(cf, cfbak, &qel->pktns->tx.frms, list) {
+	list_for_each_entry_safe(cf, cfbak, inlist, list) {
 		/* header length, data length, frame length. */
 		size_t hlen, dlen, dlen_sz, avail_room, flen;
 
@@ -4911,7 +4912,7 @@ static inline int qc_build_frms(struct list *l,
 			if (dlen == cf->crypto.len) {
 				/* <cf> CRYPTO data have been consumed. */
 				LIST_DELETE(&cf->list);
-				LIST_APPEND(l, &cf->list);
+				LIST_APPEND(outlist, &cf->list);
 			}
 			else {
 				struct quic_frame *new_cf;
@@ -4926,7 +4927,7 @@ static inline int qc_build_frms(struct list *l,
 				new_cf->crypto.len = dlen;
 				new_cf->crypto.offset = cf->crypto.offset;
 				new_cf->crypto.qel = qel;
-				LIST_APPEND(l, &new_cf->list);
+				LIST_APPEND(outlist, &new_cf->list);
 				/* Consume <dlen> bytes of the current frame. */
 				cf->crypto.len -= dlen;
 				cf->crypto.offset += dlen;
@@ -4974,7 +4975,7 @@ static inline int qc_build_frms(struct list *l,
 			if (dlen == cf->stream.len) {
 				/* <cf> STREAM data have been consumed. */
 				LIST_DELETE(&cf->list);
-				LIST_APPEND(l, &cf->list);
+				LIST_APPEND(outlist, &cf->list);
 			}
 			else {
 				struct quic_frame *new_cf;
@@ -4997,7 +4998,7 @@ static inline int qc_build_frms(struct list *l,
 				/* FIN bit reset */
 				new_cf->type &= ~QUIC_STREAM_FRAME_TYPE_FIN_BIT;
 				new_cf->stream.data = cf->stream.data;
-				LIST_APPEND(l, &new_cf->list);
+				LIST_APPEND(outlist, &new_cf->list);
 				cf->type |= QUIC_STREAM_FRAME_TYPE_OFF_BIT;
 				/* Consume <dlen> bytes of the current frame. */
 				cf_buf = b_make(b_orig(cf->stream.buf),
@@ -5018,7 +5019,7 @@ static inline int qc_build_frms(struct list *l,
 			*len += flen;
 			room -= flen;
 			LIST_DELETE(&cf->list);
-			LIST_APPEND(l, &cf->list);
+			LIST_APPEND(outlist, &cf->list);
 			break;
 		}
 		ret = 1;
@@ -5125,7 +5126,8 @@ static int qc_do_build_pkt(unsigned char *pos, const unsigned char *end,
 		 * we will have len_frms > len.
 		 */
 		len_frms = len;
-		if (!qc_build_frms(&frm_list, end - pos, &len_frms, pos - beg, qel, qc)) {
+		if (!qc_build_frms(&frm_list, frms,
+		                   end - pos, &len_frms, pos - beg, qel, qc)) {
 			TRACE_PROTO("Not enough room", QUIC_EV_CONN_HPKT,
 			            qc, NULL, NULL, &room);
 		}
