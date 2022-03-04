@@ -37,3 +37,10 @@ Amélioration diagnostic QUIC
   -> définir des niveaux de traces
   -> ajouter des traces dans le MUX
      réutiliser la quic_conn pour lockon sur les traces
+
+Tx transport quic-conn
+* utiliser sendmsg/sendmmsg pour support envoi datagrammes >16ko
+* gérer les cas d'erreur de sendto
+  utiliser fd_cant_recv sur EAGAIN ou autre cas d'erreur temporaire
+* faire du retry si toutes les trames n'ont pu être envoyées en un seul envoi
+  permet de supprimer la boucle opportuniste dans le qc_send du MUX
