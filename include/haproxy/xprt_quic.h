@@ -1214,5 +1214,15 @@ int quic_lstnr_dgram_dispatch(unsigned char *buf, size_t len, void *owner,
                               struct quic_dgram *new_dgram, struct list *dgrams);
 int qc_send_app_pkts(struct quic_conn *qc, struct list *frms);
 
+static inline void qc_register_mux(struct quic_conn *qc, void *mux)
+{
+	qc->mux = mux;
+}
+
+static inline void qc_unregister_mux(struct quic_conn *qc)
+{
+	qc->mux = NULL;
+}
+
 #endif /* USE_QUIC */
 #endif /* _HAPROXY_XPRT_QUIC_H */

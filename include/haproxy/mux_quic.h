@@ -9,6 +9,7 @@
 #include <haproxy/api.h>
 #include <haproxy/connection.h>
 #include <haproxy/mux_quic-t.h>
+#include <haproxy/quic_frame-t.h>
 #include <haproxy/xprt_quic-t.h>
 
 struct qcs *qcs_new(struct qcc *qcc, uint64_t id, enum qcs_type type);
@@ -22,6 +23,7 @@ void qcs_notify_send(struct qcs *qcs);
 
 int qcc_recv(struct qcc *qcc, uint64_t id, uint64_t len, uint64_t offset,
              char fin, char *data, struct qcs **out_qcs);
+int qcc_recv2(struct quic_frame *frm, void *ctx);
 int qcc_decode_qcs(struct qcc *qcc, struct qcs *qcs);
 
 /* Bit shift to get the stream sub ID for internal use which is obtained

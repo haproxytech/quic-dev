@@ -1995,18 +1995,30 @@ static int qc_handle_bidi_strm_frm(struct quic_rx_packet *pkt,
                                    struct quic_stream *strm_frm,
                                    struct quic_conn *qc)
 {
+	const struct quic_frame_parser *parser;
 	struct quic_rx_strm_frm *frm;
 	struct eb64_node *frm_node;
 	struct qcs *qcs = NULL;
 	int ret;
+	struct eb64_node *strm_node;
 
-	ret = qcc_recv(qc->qcc, strm_frm->id, strm_frm->len,
-	               strm_frm->offset.key, strm_frm->fin,
-	               (char *)strm_frm->data, &qcs);
+	struct quic_frame *frame;
+
+	frame = container_of(strm_frm, struct quic_frame, stream);
+	parser = &quic_frame_parsers[frame->type];
+	strm_node = qcc_get_qcs(qc->qcc, strm_frm->id);
+
+	//ret = qcc_recv(qc->qcc, strm_frm->id, strm_frm->len,
+	//               strm_frm->offset.key, strm_frm->fin,
+	//               (char *)strm_frm->data, &qcs);
+	//ret = strm_frm->recv_cb(frame, qc->mux);
+	ret = parser->recv_cb(frame, qc->mux);
 
 	/* invalid or already received frame */
 	if (ret == 1)
 		return 0;
+
+	qcs = eb64_entry(&strm_node->node, struct qcs, by_id);
 
 	if (ret == 2) {
 		/* frame cannot be parsed at the moment and should be

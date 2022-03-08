@@ -35,6 +35,22 @@
 
 #include <haproxy/mux_quic-t.h>
 
+struct quic_frame;
+
+typedef int (*quic_frame_recv)(struct quic_frame *frm, void *ctx);
+typedef int (*quic_frame_ack)(struct quic_frame *frm, void *ctx);
+typedef int (*quic_frame_lost)(struct quic_frame *frm, void *ctx);
+
+struct quic_frame_parser {
+	int (*func)(struct quic_frame *frm, struct quic_conn *qc,
+                const unsigned char **buf, const unsigned char *end);
+	quic_frame_recv recv_cb;
+	uint32_t mask;
+	unsigned char flags;
+};
+
+extern const struct quic_frame_parser quic_frame_parsers[];
+
 /* QUIC frame types. */
 enum quic_frame_type {
 	QUIC_FT_PADDING      = 0x00,
@@ -166,6 +182,9 @@ struct quic_stream {
 	 * for RX pointer into the packet buffer.
 	 */
 	const unsigned char *data;
+
+	quic_frame_recv recv_cb;
+	quic_frame_ack ack_cb;
 };
 
 struct quic_max_data {

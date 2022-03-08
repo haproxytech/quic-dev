@@ -8,6 +8,7 @@
  */
 
 #include <import/eb64tree.h>
+#include <haproxy/mux_quic.h>
 #include <haproxy/quic_frame.h>
 #include <haproxy/trace.h>
 #include <haproxy/xprt_quic.h>
@@ -557,6 +558,8 @@ static int quic_parse_stream_frame(struct quic_frame *frm, struct quic_conn *qc,
 	stream->data = *buf;
 	*buf += stream->len;
 
+	stream->recv_cb = qcc_recv2;
+
 	return 1;
 }
 
@@ -1037,12 +1040,9 @@ const struct quic_frame_builder quic_frame_builders[] = {
 	[QUIC_FT_HANDSHAKE_DONE]       = { .func = quic_build_handshake_done_frame,       .flags = QUIC_FL_TX_PACKET_ACK_ELICITING, .mask = QUIC_FT_PKT_TYPE____1_BITMASK, },
 };
 
-struct quic_frame_parser {
-	int (*func)(struct quic_frame *frm, struct quic_conn *qc,
-                const unsigned char **buf, const unsigned char *end);
-	uint32_t mask;
-	unsigned char flags;
-};
+typedef int (*quic_frame_recv)(struct quic_frame *frm, void *ctx);
+typedef int (*quic_frame_ack)(struct quic_frame *frm, void *ctx);
+typedef int (*quic_frame_lost)(struct quic_frame *frm, void *ctx);
 
 const struct quic_frame_parser quic_frame_parsers[] = {
 	[QUIC_FT_PADDING]              = { .func = quic_parse_padding_frame,              .flags = 0,                               .mask = QUIC_FT_PKT_TYPE_IH01_BITMASK, },
@@ -1053,14 +1053,14 @@ const struct quic_frame_parser quic_frame_parsers[] = {
 	[QUIC_FT_STOP_SENDING]         = { .func = quic_parse_stop_sending_frame,         .flags = QUIC_FL_RX_PACKET_ACK_ELICITING, .mask = QUIC_FT_PKT_TYPE___01_BITMASK, },
 	[QUIC_FT_CRYPTO]               = { .func = quic_parse_crypto_frame,               .flags = QUIC_FL_RX_PACKET_ACK_ELICITING, .mask = QUIC_FT_PKT_TYPE_IH_1_BITMASK, },
 	[QUIC_FT_NEW_TOKEN]            = { .func = quic_parse_new_token_frame,            .flags = QUIC_FL_RX_PACKET_ACK_ELICITING, .mask = QUIC_FT_PKT_TYPE____1_BITMASK, },
-	[QUIC_FT_STREAM_8]             = { .func = quic_parse_stream_frame,               .flags = QUIC_FL_RX_PACKET_ACK_ELICITING, .mask = QUIC_FT_PKT_TYPE___01_BITMASK, },
-	[QUIC_FT_STREAM_9]             = { .func = quic_parse_stream_frame,               .flags = QUIC_FL_RX_PACKET_ACK_ELICITING, .mask = QUIC_FT_PKT_TYPE___01_BITMASK, },
-	[QUIC_FT_STREAM_A]             = { .func = quic_parse_stream_frame,               .flags = QUIC_FL_RX_PACKET_ACK_ELICITING, .mask = QUIC_FT_PKT_TYPE___01_BITMASK, },
-	[QUIC_FT_STREAM_B]             = { .func = quic_parse_stream_frame,               .flags = QUIC_FL_RX_PACKET_ACK_ELICITING, .mask = QUIC_FT_PKT_TYPE___01_BITMASK, },
-	[QUIC_FT_STREAM_C]             = { .func = quic_parse_stream_frame,               .flags = QUIC_FL_RX_PACKET_ACK_ELICITING, .mask = QUIC_FT_PKT_TYPE___01_BITMASK, },
-	[QUIC_FT_STREAM_D]             = { .func = quic_parse_stream_frame,               .flags = QUIC_FL_RX_PACKET_ACK_ELICITING, .mask = QUIC_FT_PKT_TYPE___01_BITMASK, },
-	[QUIC_FT_STREAM_E]             = { .func = quic_parse_stream_frame,               .flags = QUIC_FL_RX_PACKET_ACK_ELICITING, .mask = QUIC_FT_PKT_TYPE___01_BITMASK, },
-	[QUIC_FT_STREAM_F]             = { .func = quic_parse_stream_frame,               .flags = QUIC_FL_RX_PACKET_ACK_ELICITING, .mask = QUIC_FT_PKT_TYPE___01_BITMASK, },
+	[QUIC_FT_STREAM_8]             = { .func = quic_parse_stream_frame,               .recv_cb = qcc_recv2,      .flags = QUIC_FL_RX_PACKET_ACK_ELICITING, .mask = QUIC_FT_PKT_TYPE___01_BITMASK, },
+	[QUIC_FT_STREAM_9]             = { .func = quic_parse_stream_frame,               .recv_cb = qcc_recv2,      .flags = QUIC_FL_RX_PACKET_ACK_ELICITING, .mask = QUIC_FT_PKT_TYPE___01_BITMASK, },
+	[QUIC_FT_STREAM_A]             = { .func = quic_parse_stream_frame,               .recv_cb = qcc_recv2,      .flags = QUIC_FL_RX_PACKET_ACK_ELICITING, .mask = QUIC_FT_PKT_TYPE___01_BITMASK, },
+	[QUIC_FT_STREAM_B]             = { .func = quic_parse_stream_frame,               .recv_cb = qcc_recv2,      .flags = QUIC_FL_RX_PACKET_ACK_ELICITING, .mask = QUIC_FT_PKT_TYPE___01_BITMASK, },
+	[QUIC_FT_STREAM_C]             = { .func = quic_parse_stream_frame,               .recv_cb = qcc_recv2,      .flags = QUIC_FL_RX_PACKET_ACK_ELICITING, .mask = QUIC_FT_PKT_TYPE___01_BITMASK, },
+	[QUIC_FT_STREAM_D]             = { .func = quic_parse_stream_frame,               .recv_cb = qcc_recv2,      .flags = QUIC_FL_RX_PACKET_ACK_ELICITING, .mask = QUIC_FT_PKT_TYPE___01_BITMASK, },
+	[QUIC_FT_STREAM_E]             = { .func = quic_parse_stream_frame,               .recv_cb = qcc_recv2,      .flags = QUIC_FL_RX_PACKET_ACK_ELICITING, .mask = QUIC_FT_PKT_TYPE___01_BITMASK, },
+	[QUIC_FT_STREAM_F]             = { .func = quic_parse_stream_frame,               .recv_cb = qcc_recv2,      .flags = QUIC_FL_RX_PACKET_ACK_ELICITING, .mask = QUIC_FT_PKT_TYPE___01_BITMASK, },
 	[QUIC_FT_MAX_DATA]             = { .func = quic_parse_max_data_frame,             .flags = QUIC_FL_RX_PACKET_ACK_ELICITING, .mask = QUIC_FT_PKT_TYPE___01_BITMASK, },
 	[QUIC_FT_MAX_STREAM_DATA]      = { .func = quic_parse_max_stream_data_frame,      .flags = QUIC_FL_RX_PACKET_ACK_ELICITING, .mask = QUIC_FT_PKT_TYPE___01_BITMASK, },
 	[QUIC_FT_MAX_STREAMS_BIDI]     = { .func = quic_parse_max_streams_bidi_frame,     .flags = QUIC_FL_RX_PACKET_ACK_ELICITING, .mask = QUIC_FT_PKT_TYPE___01_BITMASK, },

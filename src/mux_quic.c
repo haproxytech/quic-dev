@@ -247,6 +247,68 @@ int qcc_recv(struct qcc *qcc, uint64_t id, uint64_t len, uint64_t offset,
 	return 0;
 }
 
+int qcc_recv2(struct quic_frame *frm, void *ctx)
+{
+	struct quic_stream *strm = &frm->stream;
+	struct qcc *qcc = ctx;
+
+	struct qcs *qcs;
+	struct eb64_node *strm_node;
+	size_t total, diff;
+
+	strm_node = qcc_get_qcs(qcc, strm->id);
+	if (!strm_node) {
+		fprintf(stderr, "%s: stream not found\n", __func__);
+		return 1;
+	}
+
+	qcs = eb64_entry(&strm_node->node, struct qcs, by_id);
+	//*out_qcs = qcs;
+
+	if (strm->offset.key > qcs->rx.offset)
+		return 2;
+
+	if (strm->offset.key + strm->len <= qcs->rx.offset) {
+		fprintf(stderr, "%s: already received STREAM data\n", __func__);
+		return 1;
+	}
+
+	/* Last frame already handled for this stream. */
+	BUG_ON(qcs->flags & QC_SF_FIN_RECV);
+
+	if (!qc_get_buf(qcs, &qcs->rx.buf)) {
+		/* TODO should mark qcs as full */
+		return 2;
+	}
+
+	fprintf(stderr, "%s: new STREAM data\n", __func__);
+	diff = qcs->rx.offset - strm->offset.key;
+
+	/* TODO do not partially copy a frame if not enough size left. Maybe
+	 * this can be optimized.
+	 */
+	if (strm->len > b_room(&qcs->rx.buf)) {
+		/* TODO handle STREAM frames larger than RX buffer. */
+		BUG_ON(strm->len > b_size(&qcs->rx.buf));
+		return 2;
+	}
+
+	strm->len -= diff;
+	strm->data += diff;
+
+	total = b_putblk(&qcs->rx.buf, (char *)strm->data, strm->len);
+	/* TODO handle partial copy of a STREAM frame. */
+	BUG_ON(strm->len != total);
+
+	qcs->rx.offset += total;
+
+	if (strm->fin)
+		qcs->flags |= QC_SF_FIN_RECV;
+
+ out:
+	return 0;
+}
+
 /* Decode the content of STREAM frames already received on the stream instance
  * <qcs>.
  *
@@ -675,6 +737,7 @@ static int qc_init(struct connection *conn, struct proxy *prx,
 	}
 
 	HA_ATOMIC_STORE(&conn->qc->qcc, qcc);
+	qc_register_mux(conn->qc, qcc);
 	/* init read cycle */
 	tasklet_wakeup(qcc->wait_event.tasklet);
 

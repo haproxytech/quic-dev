@@ -748,6 +748,7 @@ struct quic_conn {
 	struct listener *li; /* only valid for frontend connections */
 	struct mt_list accept_list; /* chaining element used for accept, only valid for frontend connections */
 	/* MUX */
+	void *mux;
 	struct qcc *qcc;
 	struct task *timer_task;
 	unsigned int timer;
