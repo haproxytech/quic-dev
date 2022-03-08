@@ -44,3 +44,9 @@ Tx transport quic-conn
   utiliser fd_cant_recv sur EAGAIN ou autre cas d'erreur temporaire
 * faire du retry si toutes les trames n'ont pu être envoyées en un seul envoi
   permet de supprimer la boucle opportuniste dans le qc_send du MUX
+
+Fermeture de connexion
+* sur réception CONNECTION_CLOSE libérer le mux et la quic_conn
+  à l'heure actuel, les qcs ne sont pas toujours libérer si on n'a pas reçu
+  tous les ACKs avant le CONNECTION_CLOSE
+  implémenter le draining state en conservant la quic_conn ou juste un état
