@@ -50,3 +50,10 @@ Fermeture de connexion
   à l'heure actuel, les qcs ne sont pas toujours libérer si on n'a pas reçu
   tous les ACKs avant le CONNECTION_CLOSE
   implémenter le draining state en conservant la quic_conn ou juste un état
+
+Acquittement
+* actuellement un ACK généré à partir du 2e paquet ack-eliciting reçu
+  force le client à réemettre si celui ci n'a qu'un paquet à émettre
+  est-ce justifié ?
+  de plus nombreuses traces observés "stream not found" avec ngtcp2 à partir d'une dizaine de requêtes
+  causé par des retransmissions de ngtcp2. Est-ce que l'envoi des acquittements n'est pas trop retardé coté haproxy ?
