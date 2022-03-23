@@ -1,12 +1,8 @@
-* voir comment purger l'arbre des acks
 * crypto : ne pas faire de crypto_ctx new + free
 * anti-replay TLS a activé ?
 * voir ce qu'il faut faire quand le build d'un packet échoue pour les trâmes,
   peut-être ne les insérer dans le paquet que si correctement buildé (le paquet)
 * voir si le paquet Version Negotiation doit être toujours émis (ou que pour une connection établie)
-* les clients qui réussissent le plus C1 interop:
-  quant kwik aioquic neqo
-* voir pb le lag avec curl, sans les patches accept-queue d'Amaury
 * drop des paquets 0RTT
 
 * limiter le boulot pour quic_lstnr_dghdlr() (nombre de dgrams à traiter ?)
@@ -23,11 +19,6 @@
 
 * Retry : revoir la génération du token
   doit contenir des infos pour valider l'adresse client
-
-* lorsque le CC est dans l'état recovery vérifier que :
-  An endpoint MUST NOT send a packet if it would cause bytes_in_flight (see Appendix B.2)
-  to be larger than the congestion window, unless the packet is sent on a PTO timer expiration
-  (see Section 6.2) or when entering recovery
 
 Amélioration diagnostic QUIC
 * support pcap
@@ -57,3 +48,7 @@ Acquittement
   est-ce justifié ?
   de plus nombreuses traces observés "stream not found" avec ngtcp2 à partir d'une dizaine de requêtes
   causé par des retransmissions de ngtcp2. Est-ce que l'envoi des acquittements n'est pas trop retardé coté haproxy ?
+
+  Fred: ce point concerne le fait qu'on ne respecte pas le paramètre de transport
+        "max_ack_delay" transmis au peer : on s'engage à émettre des ACKs dans
+        un délai imparti.
