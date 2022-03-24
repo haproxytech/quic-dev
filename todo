@@ -52,3 +52,8 @@ Acquittement
   Fred: ce point concerne le fait qu'on ne respecte pas le paramètre de transport
         "max_ack_delay" transmis au peer : on s'engage à émettre des ACKs dans
         un délai imparti.
+
+* Initial pkt len check : vérifier quelle soit bien checkée (1200 octets ?)
+
+* QUIC conn. release avant mux release : ça arrive sur blocage stream, le mux
+  n'est pas tué, et xprt idle timeout expire
