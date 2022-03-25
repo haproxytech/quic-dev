@@ -663,6 +663,7 @@ enum qc_mux_state {
 #define QUIC_FL_ACCEPT_REGISTERED_BIT                  4
 #define QUIC_FL_ACCEPT_REGISTERED               (1U << QUIC_FL_ACCEPT_REGISTERED_BIT)
 #define QUIC_FL_CONN_IDLE_TIMER_RESTARTED_AFTER_READ (1U << 6)
+#define QUIC_FL_CONN_DRAINING                   (1U << 30)
 #define QUIC_FL_CONN_IMMEDIATE_CLOSE            (1U << 31)
 struct quic_conn {
 	uint32_t version;
