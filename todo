@@ -57,3 +57,6 @@ Acquittement
 
 * QUIC conn. release avant mux release : ça arrive sur blocage stream, le mux
   n'est pas tué, et xprt idle timeout expire
+
+* problème de PROXY_PROTOCOL : mauvaise adresse IP source reportée
+possiblement signe d'éléments manquants au niveau de la connection
