@@ -1,62 +1,51 @@
-* crypto : ne pas faire de crypto_ctx new + free
-* anti-replay TLS a activé ?
-* voir ce qu'il faut faire quand le build d'un packet échoue pour les trâmes,
+* anti-replay TLS à activer ?
+* voir ce qu'il faut faire quand le build d'un packet échoue pour les trames,
   peut-être ne les insérer dans le paquet que si correctement buildé (le paquet)
+  -> le MUX fait du retry opportuniste, ce serait plutôt à la quic-conn de le faire
+  -> voir les URLs des gros fichiers sur haproxy.org pour tester
+
 * voir si le paquet Version Negotiation doit être toujours émis (ou que pour une connection établie)
-* drop des paquets 0RTT
+
+DDOS -> * drop des paquets 0RTT
+ -> voir à activer l'option SSL_OP_NO_ANTI_REPLAY
+ si problématique peut être annoncer le non-support de 0RTT avec QUIC
 
 * limiter le boulot pour quic_lstnr_dghdlr() (nombre de dgrams à traiter ?)
-* diminuer le nombre de tasklet_wakeup nécessaire au traitement d'un paquet
+réutiliser le max-poll-event ou avoir un settings indépendant
 
-* pb sur réception d'un CC frame lorsque le mux n'est pas initialisé
-  ici :
-          case QUIC_FT_CONNECTION_CLOSE:
-          case QUIC_FT_CONNECTION_CLOSE_APP:
-            /* warn the mux to close the connection */
-            qc->qcc->flags |= QC_CF_CC_RECV;
-            tasklet_wakeup(qc->qcc->wait_event.tasklet);
-            break;
+OPTIM * diminuer le nombre de tasklet_wakeup nécessaire au traitement d'un paquet
 
-* Retry : revoir la génération du token
-  doit contenir des infos pour valider l'adresse client
+DDOS -> * Retry : revoir la génération du token
+  -> générer une clé random au démarrage, changer la clé toutes les 10s (invalider la clé d'avant ou garder la clé précédente)
+  -> concaténér avec l'adresse IP du client + le DCID
+  -> avoir une heuristique pour activer la validation du Retry
+      probablement un compteur de connexions en cours d'activation (quic-conn avant handshake), possiblement configuré via un settings global
 
 Amélioration diagnostic QUIC
-* support pcap
+* support pcap + keylogfile
 * support QLOG
   -> regarder intérêt du QLOG avec QVIS
 * amélioration trace
   -> définir des niveaux de traces
-  -> ajouter des traces dans le MUX
-     réutiliser la quic_conn pour lockon sur les traces
+  -> réutiliser la quic_conn pour lockon sur les traces MUX
+  -> avoir des traces H3
 
 Tx transport quic-conn
 * utiliser sendmsg/sendmmsg pour support envoi datagrammes >16ko
-* gérer les cas d'erreur de sendto
-  utiliser fd_cant_recv sur EAGAIN ou autre cas d'erreur temporaire
+URGENT -> * gérer les cas d'erreur de sendto
+            utiliser fd_cant_recv sur EAGAIN ou autre cas d'erreur temporaire
 * faire du retry si toutes les trames n'ont pu être envoyées en un seul envoi
   permet de supprimer la boucle opportuniste dans le qc_send du MUX
 
-Fermeture de connexion
-* sur réception CONNECTION_CLOSE libérer le mux et la quic_conn
-  à l'heure actuel, les qcs ne sont pas toujours libérer si on n'a pas reçu
-  tous les ACKs avant le CONNECTION_CLOSE
-  implémenter le draining state en conservant la quic_conn ou juste un état
+DDOS -> * Initial pkt len check : vérifier quelle soit bien checkée (1200 octets ?)
 
-Acquittement
-* actuellement un ACK généré à partir du 2e paquet ack-eliciting reçu
-  force le client à réemettre si celui ci n'a qu'un paquet à émettre
-  est-ce justifié ?
-  de plus nombreuses traces observés "stream not found" avec ngtcp2 à partir d'une dizaine de requêtes
-  causé par des retransmissions de ngtcp2. Est-ce que l'envoi des acquittements n'est pas trop retardé coté haproxy ?
+* la quic-conn peut être conservée le temps de la durée de vie du MUX
+  possiblement nettoyer des parties devenus inutile de la quic-conn
 
-  Fred: ce point concerne le fait qu'on ne respecte pas le paramètre de transport
-        "max_ack_delay" transmis au peer : on s'engage à émettre des ACKs dans
-        un délai imparti.
-
-* Initial pkt len check : vérifier quelle soit bien checkée (1200 octets ?)
-
-* QUIC conn. release avant mux release : ça arrive sur blocage stream, le mux
-  n'est pas tué, et xprt idle timeout expire
-
-* problème de PROXY_PROTOCOL : mauvaise adresse IP source reportée
-possiblement signe d'éléments manquants au niveau de la connection
+* fred a fait grave de la merde
+encore une fois
+problème d'initialisation des adresses des connexions dans new_quic_cli_conn()
+saddr utilisé pour conn->dst -> doit être conn->src
+ et flag TO_SET -> FROM_SET
+ et il faut récupérer l'adresse destination pour la mettre dans conn->dst
+doit fixer l'affichage dans les LOGS des adresses sur haproxy.org via PROXY_PROTOCOL
