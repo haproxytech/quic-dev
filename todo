@@ -49,3 +49,7 @@ saddr utilisé pour conn->dst -> doit être conn->src
  et flag TO_SET -> FROM_SET
  et il faut récupérer l'adresse destination pour la mettre dans conn->dst
 doit fixer l'affichage dans les LOGS des adresses sur haproxy.org via PROXY_PROTOCOL
+
+BUG -> * MUX problème flag CS_EP_EOS
+positionné trop tôt, ce qui cause l'échec d'un POST avec HTTP 400 avec abortonclose
+ne doit être mis que lorsque un stream est sur le point d'être fermé Rx+Tx
