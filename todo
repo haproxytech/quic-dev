@@ -53,3 +53,10 @@ doit fixer l'affichage dans les LOGS des adresses sur haproxy.org via PROXY_PROT
 BUG -> * MUX problème flag CS_EP_EOS
 positionné trop tôt, ce qui cause l'échec d'un POST avec HTTP 400 avec abortonclose
 ne doit être mis que lorsque un stream est sur le point d'être fermé Rx+Tx
+
+BUG/CRASH -> MUX interrompu en cours de transfer
+  0x000055555560ca60 in qcs_free (qcs=0x7ffff0049e90) at src/mux_quic.c:181
+  181             BUG_ON(qcs->endp && !(qcs->endp->flags & CS_EP_ORPHAN));
+implémenté une logique similaire au mux-h2
+envoi d'un GOAWAY ou release si aucun stream ouvert
+laisser les streams ouverts se terminés de manière habituelle
