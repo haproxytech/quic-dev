@@ -603,6 +603,7 @@ static int qcs_push_frame(struct qcs *qcs, struct buffer *out,
 	if (!frm)
 		goto err;
 
+	LIST_INIT(&frm->reflist);
 	total = b_force_xfer(out, payload, to_xfer);
 
 	frm->type = QUIC_FT_STREAM_8;
@@ -765,6 +766,7 @@ static int qc_send_max_streams(struct qcc *qcc)
 	frm = pool_zalloc(pool_head_quic_frame);
 	BUG_ON(!frm); /* TODO handle this properly */
 
+	LIST_INIT(&frm->reflist);
 	frm->type = QUIC_FT_MAX_STREAMS_BIDI;
 	frm->max_streams_bidi.max_streams = qcc->lfctl.ms_bidi +
 	                                    qcc->lfctl.cl_bidi_r;
