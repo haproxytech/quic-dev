@@ -1246,7 +1246,7 @@ struct task *quic_lstnr_dghdlr(struct task *t, void *ctx, unsigned int state);
 int quic_lstnr_dgram_dispatch(unsigned char *buf, size_t len, void *owner,
                               struct sockaddr_storage *saddr,
                               struct quic_dgram *new_dgram, struct list *dgrams);
-int qc_send_app_pkts(struct quic_conn *qc, struct list *frms);
+int qc_send_app_pkts(struct quic_conn *qc, int old_data, struct list *frms);
 
 struct qc_stream_desc *qc_stream_desc_new(uint64_t id, void *ctx);
 void qc_stream_desc_release(struct qc_stream_desc *stream, struct quic_conn *qc);
