@@ -1700,23 +1700,120 @@ static inline struct eb64_node *qc_ackrng_pkts(struct quic_conn *qc,
 	return node;
 }
 
+/* Return the descriptor of the stream with <id> as ID for <qc> QUIC connection
+ * if not already released, NULL if not.
+ */
+static struct qc_stream_desc *qc_get_stream_desc(struct quic_conn *qc, uint64_t id)
+{
+	struct qc_stream_desc *stream_desc = NULL;
+	struct eb64_node *node;
+
+	if (qc->mux_state == QC_MUX_READY)
+		stream_desc = qcc_get_stream(qc->qcc, id);
+
+	if (stream_desc)
+		return stream_desc;
+
+	node = eb64_lookup(&qc->streams_by_id, id);
+
+	return eb64_entry(node, struct qc_stream_desc, by_id);
+}
+
 /* Remove all frames from <pkt_frm_list> and reinsert them in the
  * same order they have been sent into <pktns_frm_list>.
  */
 static inline void qc_requeue_nacked_pkt_tx_frms(struct quic_conn *qc,
-                                                 struct list *pkt_frm_list,
+                                                 struct quic_tx_packet *pkt,
                                                  struct list *pktns_frm_list)
 {
 	struct quic_frame *frm, *frmbak;
 	struct list tmp = LIST_HEAD_INIT(tmp);
+	struct list *pkt_frm_list = &pkt->frms;
 
 	list_for_each_entry_safe(frm, frmbak, pkt_frm_list, list) {
+		/* Only for debug */
+		uint64_t pn;
+
+		/* First remove this frame from the packet it was attached to */
 		LIST_DELETE(&frm->list);
+		pn = frm->pkt->pn_node.key;
 		quic_tx_packet_refdec(frm->pkt);
-		/* This frame is not freed but removed from its packet */
+		/* At this time, this frame is not freed but removed from its packet */
 		frm->pkt = NULL;
-		TRACE_PROTO("to resend frame", QUIC_EV_CONN_PRSAFRM, qc, frm);
-		LIST_APPEND(&tmp, &frm->list);
+		switch (frm->type) {
+		case QUIC_FT_STREAM_8 ... QUIC_FT_STREAM_F:
+		{
+			struct quic_stream *strm_frm = &frm->stream;
+			struct qc_stream_desc *stream_desc;
+
+			stream_desc = qc_get_stream_desc(qc, strm_frm->id);
+			if (!stream_desc) {
+				TRACE_PROTO("released stream", QUIC_EV_CONN_PRSAFRM, qc, strm_frm);
+				TRACE_PROTO("freeing frame from packet", QUIC_EV_CONN_PRSAFRM,
+				            qc, frm, &pn);
+				pool_free(pool_head_quic_frame, frm);
+				continue;
+			}
+
+			/* Do not resend this frame if in the "already acked range" */
+			if (strm_frm->offset.key + strm_frm->len <= stream_desc->ack_offset) {
+				TRACE_PROTO("ignored frame in already acked range",
+				            QUIC_EV_CONN_PRSAFRM, qc, frm);
+				continue;
+			}
+
+			/* Do not resend probing packet with old data */
+			if (pkt->flags & QUIC_FL_TX_PACKET_PROBE_WITH_OLD_DATA) {
+				TRACE_PROTO("ignored frame with old data from packet", QUIC_EV_CONN_PRSAFRM,
+				            qc, frm, &pn);
+				if (frm->origin) {
+					TRACE_PROTO("freeing frame from packet", QUIC_EV_CONN_PRSAFRM,
+					            qc, frm, &pn);
+					LIST_DELETE(&frm->ref);
+					pool_free(pool_head_quic_frame, frm);
+				}
+				else if (LIST_ISEMPTY(&frm->reflist)) {
+					TRACE_PROTO("freeing frame from packet", QUIC_EV_CONN_PRSAFRM,
+					            qc, frm, &pn);
+					pool_free(pool_head_quic_frame, frm);
+				}
+				continue;
+			}
+
+			break;
+		}
+
+		default:
+			/* Do not resend probing packet with old data */
+			if (pkt->flags & QUIC_FL_TX_PACKET_PROBE_WITH_OLD_DATA) {
+				TRACE_PROTO("ignored frame with old data from packet", QUIC_EV_CONN_PRSAFRM,
+				            qc, frm, &pn);
+				if (frm->origin) {
+					TRACE_PROTO("freeing frame from packet", QUIC_EV_CONN_PRSAFRM,
+					            qc, frm, &pn);
+					LIST_DELETE(&frm->ref);
+					pool_free(pool_head_quic_frame, frm);
+				}
+				else if (LIST_ISEMPTY(&frm->reflist)) {
+					TRACE_PROTO("freeing frame from packet", QUIC_EV_CONN_PRSAFRM,
+					            qc, frm, &pn);
+					pool_free(pool_head_quic_frame, frm);
+				}
+				continue;
+			}
+			break;
+		}
+
+		if (frm->flags & QUIC_FL_TX_FRAME_ACKED) {
+			TRACE_PROTO("already acked frame", QUIC_EV_CONN_PRSAFRM, qc, frm);
+			TRACE_PROTO("freeing frame from packet", QUIC_EV_CONN_PRSAFRM,
+			            qc, frm, &pn);
+			pool_free(pool_head_quic_frame, frm);
+		}
+		else {
+			TRACE_PROTO("to resend frame", QUIC_EV_CONN_PRSAFRM, qc, frm);
+			LIST_APPEND(&tmp, &frm->list);
+		}
 	}
 
 	LIST_SPLICE(pktns_frm_list, &tmp);
@@ -1856,7 +1953,7 @@ static inline void qc_release_lost_pkts(struct quic_conn *qc,
 		if (pkt->flags & QUIC_FL_TX_PACKET_ACK_ELICITING)
 			qc->path->ifae_pkts--;
 		/* Treat the frames of this lost packet. */
-		qc_requeue_nacked_pkt_tx_frms(qc, &pkt->frms, &pktns->tx.frms);
+		qc_requeue_nacked_pkt_tx_frms(qc, pkt, &pktns->tx.frms);
 		LIST_DELETE(&pkt->list);
 		if (!oldest_lost) {
 			oldest_lost = newest_lost = pkt;
