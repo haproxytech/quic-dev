@@ -1625,12 +1625,7 @@ static inline void qc_treat_acked_tx_frm(struct quic_conn *qc,
 
 			TRACE_PROTO("stream consumed", QUIC_EV_CONN_ACKSTRM,
 			            qc, strm_frm, stream);
-			LIST_DELETE(&frm->list);
-			pn = frm->pkt->pn_node.key;
-			quic_tx_packet_refdec(frm->pkt);
-			TRACE_PROTO("freeing frame from packet",
-			            QUIC_EV_CONN_PRSAFRM, qc, frm, &pn);
-			pool_free(pool_head_quic_frame, frm);
+			qc_release_frm(qc, frm);
 		}
 		else {
 			eb64_insert(&stream->acked_frms, &strm_frm->offset);
@@ -1640,12 +1635,7 @@ static inline void qc_treat_acked_tx_frm(struct quic_conn *qc,
 	}
 	break;
 	default:
-		LIST_DELETE(&frm->list);
-		pn = frm->pkt->pn_node.key;
-		quic_tx_packet_refdec(frm->pkt);
-		TRACE_PROTO("freeing frame from packet",
-		            QUIC_EV_CONN_PRSAFRM, qc, frm, &pn);
-		pool_free(pool_head_quic_frame, frm);
+		qc_release_frm(qc, frm);
 	}
 
 	if (stream_acked && qc->mux_state == QC_MUX_READY) {
