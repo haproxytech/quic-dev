@@ -36,6 +36,9 @@ URGENT -> * gérer les cas d'erreur de sendto
             utiliser fd_cant_recv sur EAGAIN ou autre cas d'erreur temporaire
 * faire du retry si toutes les trames n'ont pu être envoyées en un seul envoi
   permet de supprimer la boucle opportuniste dans le qc_send du MUX
+=> dans un premier temps, enlever les ABORT_NOW() et ajouter une trace stderr
+   affichage de la trace limité un compteur (atleast2)
+
 
 DDOS -> * Initial pkt len check : vérifier quelle soit bien checkée (1200 octets ?)
 
