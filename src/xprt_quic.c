@@ -1951,6 +1951,7 @@ static void qc_packet_loss_lookup(struct quic_pktns *pktns,
 			(int64_t)largest_acked_pn >= pkt->pn_node.key + QUIC_LOSS_PACKET_THRESHOLD) {
 			eb64_delete(&pkt->pn_node);
 			LIST_APPEND(lost_pkts, &pkt->list);
+			qc->period_pkt_lost++;
 		}
 		else {
 			if (tick_isset(pktns->tx.loss_time))
@@ -3286,6 +3287,13 @@ int qc_send_ppkts(struct qring *qr, struct ssl_sock_ctx *ctx)
 			quic_tx_packet_refinc(pkt);
 			eb64_insert(&pkt->pktns->tx.pkts, &pkt->pn_node);
 		}
+		if (now_ms - qc->period_start >= QUIC_NETSTATS_PERIOD) {
+			fprintf(stderr, "%u %llu %llu %llu %llu\n",
+			        now_ms - qc->time_start, (ull)qc->path->cwnd, (ull)qc->tx.bytes,
+			        (ull)qc->path->ifae_pkts, (ull)qc->period_pkt_lost);
+			qc->period_start = now_ms;
+			qc->period_pkt_lost = 0;
+		}
 	}
 
 	return 1;
@@ -4422,6 +4430,10 @@ static struct quic_conn *qc_new_conn(unsigned int version, int ipv4,
 
 	qc->streams_by_id = EB_ROOT_UNIQUE;
 	qc->stream_buf_count = 0;
+
+	qc->time_start = now_ms;
+	qc->period_start = now_ms;
+	qc->period_pkt_lost = 0;
 
 	TRACE_LEAVE(QUIC_EV_CONN_INIT, qc);
 
