@@ -63,3 +63,12 @@ BUG/CRASH -> MUX interrompu en cours de transfer
 implémenté une logique similaire au mux-h2
 envoi d'un GOAWAY ou release si aucun stream ouvert
 laisser les streams ouverts se terminés de manière habituelle
+
+STREAM
+ -> erreur si réception du meme offset avec des data différentes
+   PROTOCOL_VIOLATION
+rfc9000 2.2. Sending and Receiving Data
+ The data at a given offset MUST NOT change if it is sent
+ multiple times; an endpoint MAY treat receipt of different data at
+ the same offset within a stream as a connection error of type
+ PROTOCOL_VIOLATION.
