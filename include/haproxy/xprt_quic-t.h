@@ -43,6 +43,7 @@
 
 typedef unsigned long long ull;
 
+#define QUIC_NETSTATS_PERIOD  100 /* in ms */
 #define QUIC_PROTOCOL_VERSION_DRAFT_28   0xff00001c /* draft-28 */
 #define QUIC_PROTOCOL_VERSION_DRAFT_29   0xff00001d /* draft-29 */
 #define QUIC_PROTOCOL_VERSION_1          0x00000001 /* V1 */
@@ -774,6 +775,10 @@ struct quic_conn {
 	unsigned int nb_pkt_since_cc;
 
 	const struct qcc_app_ops *app_ops;
+
+	unsigned int time_start;
+	unsigned int period_start;
+	uint64_t     period_pkt_lost;
 };
 
 #endif /* USE_QUIC */

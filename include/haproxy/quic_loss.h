@@ -57,6 +57,7 @@ static inline int quic_loss_persistent_congestion(struct quic_loss *ql,
 
 	congestion_period = (ql->srtt >> 3) +
 		QUIC_MAX(ql->rtt_var, QUIC_TIMER_GRANULARITY) + max_ack_delay;
+	fprintf(stderr, "### period=%u congestion_period=%u\n", period, congestion_period);
 	congestion_period *= QUIC_LOSS_PACKET_THRESHOLD;
 
 	return period >= congestion_period;
