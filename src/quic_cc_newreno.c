@@ -69,6 +69,7 @@ static void quic_cc_nr_ss_cb(struct quic_cc *cc, struct quic_cc_event *ev)
 		break;
 
 	case QUIC_CC_EVT_LOSS:
+		cc->algo_state.nr.recovery_start_time = now_ms;
 		path->cwnd = QUIC_MAX(path->cwnd >> 1, path->min_cwnd);
 		cc->algo_state.nr.ssthresh = path->cwnd;
 		/* Exit to congestion avoidance. */
