@@ -69,8 +69,9 @@ static void quic_cc_nr_ss_cb(struct quic_cc *cc, struct quic_cc_event *ev)
 		break;
 
 	case QUIC_CC_EVT_LOSS:
+		cc->algo_state.nr.recovery_start_time = now_ms;
 		path->cwnd = QUIC_MAX(path->cwnd >> 1, path->min_cwnd);
-		cc->algo_state.nr.ssthresh = path->cwnd;
+		cc->algo_state.nr.ssthresh = QUIC_MAX(path->cwnd >> 1, path->min_cwnd);
 		/* Exit to congestion avoidance. */
 		cc->algo_state.nr.state = QUIC_CC_ST_CA;
 		break;
@@ -93,26 +94,43 @@ static void quic_cc_nr_ca_cb(struct quic_cc *cc, struct quic_cc_event *ev)
 	case QUIC_CC_EVT_ACK:
 	{
 		uint64_t acked;
-		/* Do not increase the congestion window in recovery period. */
-		if (ev->ack.time_sent <= cc->algo_state.nr.recovery_start_time)
-			goto out;
 
-		/* Increasing the congestion window by (acked / cwnd)
-		 */
-		acked = ev->ack.acked * path->mtu + cc->algo_state.nr.remain_acked;
-		cc->algo_state.nr.remain_acked = acked % path->cwnd;
-		path->cwnd += acked / path->cwnd;
+		if (!cc->algo_state.nr.recovery_start_time) {
+			/* Increasing the congestion window by (acked / cwnd) */
+			acked = ev->ack.acked * path->mtu + cc->algo_state.nr.remain_acked;
+			cc->algo_state.nr.remain_acked = acked % path->cwnd;
+			path->cwnd += acked / path->cwnd;
+		}
+		else {
+			/* Leaving recovery period */
+			fprintf(stderr, "##CA LOSS: exiting recovery period\n");
+			path->cwnd = cc->algo_state.nr.ssthresh;
+			cc->algo_state.nr.recovery_start_time = 0;
+		}
 		break;
 	}
 
 	case QUIC_CC_EVT_LOSS:
-		/* Do not decrease the congestion window when already in recovery period. */
-		if (ev->loss.time_sent <= cc->algo_state.nr.recovery_start_time)
+		fprintf(stderr, "##CA LOSS: time_sent=%u recovery_start_time=%u srtt=%u\n",
+		        ev->loss.time_sent, (unsigned int)cc->algo_state.nr.recovery_start_time,
+		        (cc->qc->path->loss.srtt >> 3));
+		if (!cc->algo_state.nr.recovery_start_time) {
+			fprintf(stderr, "##CA LOSS: entering recovery period\n");
+			cc->algo_state.nr.recovery_start_time = now_ms;
+			cc->algo_state.nr.ssthresh = QUIC_MAX(path->cwnd >> 1, path->min_cwnd);
+		}
+		else if (ev->loss.time_sent <= cc->algo_state.nr.recovery_start_time ||
+		         now_ms - ev->loss.time_sent < (cc->qc->path->loss.srtt >> 3)) {
+			fprintf(stderr, "##CA LOSS: in recovery period\n");
+			cc->algo_state.nr.recovery_start_time = now_ms;
 			goto out;
-
-		cc->algo_state.nr.recovery_start_time = now_ms;
-		cc->algo_state.nr.ssthresh = path->cwnd;
-		path->cwnd = QUIC_MAX(path->cwnd >> 1, path->min_cwnd);
+		}
+		else {
+			fprintf(stderr, "##CA LOSS: exiting recovery period\n");
+			/* Exiting the congestion period */
+			path->cwnd = cc->algo_state.nr.ssthresh;
+			cc->algo_state.nr.recovery_start_time = 0;
+		}
 		break;
 
 	case QUIC_CC_EVT_ECN_CE:
