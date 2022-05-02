@@ -309,12 +309,14 @@ static int h3_decode_qcs(struct qcs *qcs, int fin, void *ctx)
 			/* draft-ietf-quic-http34 9. Extensions to HTTP/3
 			 * unknown frame types MUST be ignored
 			 */
-			h3_debug_printf(stderr, "ignore unknown frame type 0x%lx\n", ftype);
-			ret = MIN(b_data(rxbuf), flen);
+			if (ftype < 0x21 || ((ftype - 0x21) % 0x1f)) {
+				h3_debug_printf(stderr, "non reserved frame type %llu flen %llu", (ull)ftype, (ull)flen);
+				/* TODO: this stream should be reset */
+				ret = MIN(b_data(rxbuf), flen);
+			}
+			else
+				ret = flen;
 		}
-
-		if (!ret)
-			break;
 
 		b_del(rxbuf, ret);
 		BUG_ON(h3s->demux_frame_len < ret);
