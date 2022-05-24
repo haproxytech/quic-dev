@@ -36,6 +36,7 @@
 #include <haproxy/quic_cc-t.h>
 #include <haproxy/quic_frame-t.h>
 #include <haproxy/quic_loss-t.h>
+#include <haproxy/quic_stats-t.h>
 #include <haproxy/quic_tls-t.h>
 #include <haproxy/quic_transp_params-t.h>
 #include <haproxy/task.h>
