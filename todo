@@ -72,3 +72,5 @@ rfc9000 2.2. Sending and Receiving Data
  multiple times; an endpoint MAY treat receipt of different data at
  the same offset within a stream as a connection error of type
  PROTOCOL_VIOLATION.
+
+NCBUF -> static inline pour les fonctions les plus utilisées
