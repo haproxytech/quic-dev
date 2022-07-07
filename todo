@@ -74,3 +74,11 @@ rfc9000 2.2. Sending and Receiving Data
  PROTOCOL_VIOLATION.
 
 NCBUF -> static inline pour les fonctions les plus utilisées
+
+DISPATCH DES CONNEXIONS
+ * sur réception des premiers paquets Initial avec ODCID, s'assurer qu'on
+ redispatch sur un thread valide pour le listener
+ * sur allocation des nouveaux CID, assigner le CID sur le thread le moins
+ chargé plutôt que le thread courant. Pour éviter de locker sur création CID,
+ probablement redispatcher le paquet vers le thread le moins chargé et flagger
+ le paquet comme devant donner lieu à création de la quic_conn.
