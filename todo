@@ -94,3 +94,9 @@ https://datatracker.ietf.org/doc/html/rfc9000#section-10.2.3
   d'encryption selon le contexte du client pour garantir qu'il pourra être
   déchiffré. À l'heure actuelle cela n'est pas fait et le CONNECTION_CLOSE est
   envoyé uniquement au niveau actuel de la struct quic_conn
+
+RACE FIN DE HANDSHAKE et INIT MUX ?
+vérifier s'il est possible de recevoir des STREAM ou autres trames destinés au
+MUX avant son initialisation. Si oui, prévoir de bufferiser ces trames ou
+désactiver temporairement la lecture du Rx buf, ou au pire dropper ces trames
+en attente de réémission par le client.
