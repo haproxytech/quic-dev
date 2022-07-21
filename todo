@@ -82,3 +82,12 @@ DISPATCH DES CONNEXIONS
  chargé plutôt que le thread courant. Pour éviter de locker sur création CID,
  probablement redispatcher le paquet vers le thread le moins chargé et flagger
  le paquet comme devant donner lieu à création de la quic_conn.
+
+CONNECTION_CLOSE DURING HANDSHAKE
+cf RFC 9000 10.2.3.
+https://datatracker.ietf.org/doc/html/rfc9000#section-10.2.3
+  si envoi nécessaire d'un CONNECTION_CLOSE durant la handshake, il est parfois
+  requis de générer la trame dans plusieurs paquets à différents niveau
+  d'encryption selon le contexte du client pour garantir qu'il pourra être
+  déchiffré. À l'heure actuelle cela n'est pas fait et le CONNECTION_CLOSE est
+  envoyé uniquement au niveau actuel de la struct quic_conn
