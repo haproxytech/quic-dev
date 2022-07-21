@@ -33,7 +33,10 @@ Amélioration diagnostic QUIC
 Tx transport quic-conn
 * utiliser sendmsg/sendmmsg pour support envoi datagrammes >16ko
 URGENT -> * gérer les cas d'erreur de sendto
-            utiliser fd_cant_recv sur EAGAIN ou autre cas d'erreur temporaire
+  nécessite de gérer l'abonnemement des fds au poller via fd_cant_recv
+  abonnement des quic_conn dans des listes par threads attachés aux receivers
+  sur réveil de l'IO CB du receiver, lock ou detach de la list head par le
+  premier thread réveillé, et wakeup sur l'ensemble des listes
 * faire du retry si toutes les trames n'ont pu être envoyées en un seul envoi
   permet de supprimer la boucle opportuniste dans le qc_send du MUX
 => dans un premier temps, enlever les ABORT_NOW() et ajouter une trace stderr
