@@ -5,6 +5,8 @@
  * implementation for TCP Cubic. In fact, we have no choice if we do
  * not want to use any floating point operations to be fast!
  * (See net/ipv4/tcp_cubic.c)
+ * Support HyStart++ draft-05
+ * (see https://datatracker.ietf.org/doc/html/draft-ietf-tcpm-hystartplusplus-05).
  */
 #define TRACE_SOURCE    &trace_quic
 
@@ -20,6 +22,8 @@
 /* The maximum value which may be cubed an multiplied by CUBIC_BETA */
 #define CUBIC_DIFF_TIME_LIMIT    355535ULL  /* ms */
 
+#define CUBIC_FL_HYSTART_DONE 0x00000001
+
 /* K cube factor: (1 - beta) / c */
 struct cubic {
 	uint32_t ssthresh;
@@ -31,6 +35,7 @@ struct cubic {
 	uint32_t last_w_max;
 	uint32_t tcp_wnd;
 	uint32_t recovery_start_time;
+	unsigned int flags;
 };
 
 static void quic_cc_cubic_reset(struct quic_cc *cc)
@@ -48,6 +53,8 @@ static void quic_cc_cubic_reset(struct quic_cc *cc)
 	c->last_w_max = 0;
 	c->tcp_wnd = 0;
 	c->recovery_start_time = 0;
+	c->flags = 0;
+	quic_cc_hystart_reset(cc);
 }
 
 static int quic_cc_cubic_init(struct quic_cc *cc)
@@ -201,16 +208,94 @@ static void quic_cc_cubic_ss_cb(struct quic_cc *cc, struct quic_cc_event *ev)
 	TRACE_ENTER(QUIC_EV_CONN_CC, cc->qc, ev);
 	switch (ev->type) {
 	case QUIC_CC_EVT_ACK:
+		fprintf(stderr, "%s app? %d %u %llu %u %u\n", __func__,
+		        ev->ack.app_pkt,
+		        path->hs.rtt_sample_count,
+		        (ull)path->hs.wnd_end,
+		        path->hs.curr_rnd_min_rtt,
+		        path->hs.last_rnd_min_rtt);
+
+		if (ev->ack.app_pkt && path->hs.wnd_end != -1 &&
+		    path->hs.wnd_end <= ev->ack.pn)
+			path->hs.wnd_end = -1;
+
 		/* Do not increase the congestion window in recovery period. */
 		if (ev->ack.time_sent <= c->recovery_start_time)
 			goto out;
 
 		path->cwnd += ev->ack.acked;
+
+		/* RFC For rounds where at least N_RTT_SAMPLE RTT samples have been
+		 * obtained and currentRoundMinRTT and lastRoundMinRTT are valid,
+		 * check if delay increase triggers slow start exit
+		 */
+		if (path->hs.rtt_sample_count >= HYSTART_N_RTT_SAMPLE &&
+		    path->hs.curr_rnd_min_rtt != UINT32_MAX &&
+		    path->hs.last_rnd_min_rtt != UINT32_MAX) {
+			uint32_t rtt_thresh;
+
+			rtt_thresh = QUIC_CLAMP(HYSTART_MIN_RTT_THRESH,
+			                        path->hs.last_rnd_min_rtt / 8,
+			                        HYSTART_MAX_RTT_THRESH);
+			if (path->hs.curr_rnd_min_rtt + rtt_thresh >= path->hs.last_rnd_min_rtt) {
+				path->hs.css_min_rtt = path->hs.curr_rnd_min_rtt;
+				/* Exit slow start and enter conservative slow start */
+				cc->algo->state = QUIC_CC_ST_CS;
+				path->hs.rtt_sample_count = 0;
+			}
+		}
+
 		/* Exit to congestion avoidance if slow start threshold is reached. */
 		if (path->cwnd >= c->ssthresh)
 			cc->algo->state = QUIC_CC_ST_CA;
 		break;
 
+	case QUIC_CC_EVT_LOSS:
+		/* Do not decrease the congestion window when already in recovery period. */
+		if (ev->loss.time_sent <= c->recovery_start_time)
+			goto out;
+
+		quic_enter_recovery(cc);
+		/* Exit to congestion avoidance. */
+		cc->algo->state = QUIC_CC_ST_CA;
+		break;
+
+	case QUIC_CC_EVT_ECN_CE:
+		/* TODO */
+		break;
+	}
+
+ out:
+	TRACE_LEAVE(QUIC_EV_CONN_CC, cc->qc, NULL, cc);
+}
+
+/* Conservative slow-start callback. */
+static void quic_cc_cubic_cs_cb(struct quic_cc *cc, struct quic_cc_event *ev)
+{
+	struct quic_path *path = container_of(cc, struct quic_path, cc);
+	struct cubic *c = quic_cc_priv(cc);
+
+	TRACE_ENTER(QUIC_EV_CONN_CC, cc->qc, ev);
+	switch (ev->type) {
+	case QUIC_CC_EVT_ACK:
+		/* Do not increase the congestion window in recovery period. */
+		if (ev->ack.time_sent <= c->recovery_start_time)
+			goto out;
+
+		path->cwnd += ev->ack.acked / HYSTART_CSS_GROWTH_DIVISOR;
+		if (path->hs.curr_rnd_min_rtt < path->hs.css_min_rtt) {
+			path->hs.css_min_rtt = UINT32_MAX;
+			path->hs.rtt_sample_count = 0;
+			/* Resume slow-start */
+			cc->algo->state = QUIC_CC_ST_SS;
+			break;
+		}
+
+		/* If CSS_ROUNDS rounds are complete, enter congestion avoidance */
+		if (path->hs.rtt_sample_count >= HYSTART_CSS_ROUNDS)
+			cc->algo->state = QUIC_CC_ST_CA;
+
+		break;
 	case QUIC_CC_EVT_LOSS:
 		/* Do not decrease the congestion window when already in recovery period. */
 		if (ev->loss.time_sent <= c->recovery_start_time)
@@ -263,6 +348,7 @@ static void quic_cc_cubic_ca_cb(struct quic_cc *cc, struct quic_cc_event *ev)
 static void (*quic_cc_cubic_state_cbs[])(struct quic_cc *cc,
                                       struct quic_cc_event *ev) = {
 	[QUIC_CC_ST_SS] = quic_cc_cubic_ss_cb,
+	[QUIC_CC_ST_CS] = quic_cc_cubic_cs_cb,
 	[QUIC_CC_ST_CA] = quic_cc_cubic_ca_cb,
 };
 
@@ -281,4 +367,6 @@ struct quic_cc_algo quic_cc_algo_cubic = {
 	.event       = quic_cc_cubic_event,
 	.slow_start  = quic_cc_cubic_slow_start,
 	.state_trace = quic_cc_cubic_state_trace,
+	.hystart_sent_pkt   = quic_cc_hystart_sent_pkt,
+	.hystart_rtt_sample = quic_cc_hystart_rtt_sample,
 };

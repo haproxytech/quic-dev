@@ -70,5 +70,9 @@ static inline void *quic_cc_priv(const struct quic_cc *cc)
 	return (void *)cc->priv;
 }
 
+void quic_cc_hystart_reset(struct quic_cc *cc);
+void quic_cc_hystart_sent_pkt(struct quic_cc *cc, uint64_t pn);
+void quic_cc_hystart_rtt_sample(struct quic_cc *cc);
+
 #endif /* USE_QUIC */
 #endif /* _PROTO_QUIC_CC_H */

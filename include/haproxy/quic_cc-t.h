@@ -33,6 +33,13 @@
 
 #define QUIC_CC_INFINITE_SSTHESH ((uint32_t)-1)
 
+/* HyStart++ constants */
+#define HYSTART_MIN_RTT_THRESH      4U /* ms */
+#define HYSTART_MAX_RTT_THRESH     16U /* ms */
+#define HYSTART_N_RTT_SAMPLE         8
+#define HYSTART_CSS_GROWTH_DIVISOR   4
+#define HYSTART_CSS_ROUNDS           5
+
 extern struct quic_cc_algo quic_cc_algo_nr;
 extern struct quic_cc_algo quic_cc_algo_cubic;
 extern struct quic_cc_algo *default_quic_cc_algo;
@@ -42,6 +49,8 @@ extern unsigned long long last_ts;
 enum quic_cc_algo_state_type {
 	/* Slow start. */
 	QUIC_CC_ST_SS,
+	/* Conservative slow start (HyStart++ only) */
+	QUIC_CC_ST_CS,
 	/* Congestion avoidance. */
 	QUIC_CC_ST_CA,
 };
@@ -60,7 +69,9 @@ struct quic_cc_event {
 	union {
 		struct ack {
 			uint64_t acked;
+			uint64_t pn;
 			unsigned int time_sent;
+			int app_pkt;
 		} ack;
 		struct loss {
 			unsigned int time_sent;
@@ -80,6 +91,15 @@ struct quic_cc {
 	uint32_t priv[16];
 };
 
+/* HyStart++ */
+struct quic_hystart {
+	uint32_t curr_rnd_min_rtt;
+	uint32_t last_rnd_min_rtt;
+	uint32_t rtt_sample_count;
+	uint32_t css_min_rtt;
+	uint64_t wnd_end;
+};
+
 struct quic_cc_algo {
 	enum quic_cc_algo_type type;
 	enum quic_cc_algo_state_type state;
@@ -87,6 +107,8 @@ struct quic_cc_algo {
 	void (*event)(struct quic_cc *cc, struct quic_cc_event *ev);
 	void (*slow_start)(struct quic_cc *cc);
 	void (*state_trace)(struct buffer *buf, const struct quic_cc *cc);
+	void (*hystart_sent_pkt)(struct quic_cc *cc, uint64_t pn);
+	void (*hystart_rtt_sample)(struct quic_cc *cc);
 };
 
 #endif /* USE_QUIC */

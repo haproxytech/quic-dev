@@ -232,6 +232,14 @@ enum quic_pkt_type {
     (void) (&_a == &_b);  \
     _a > _b ? _a : _b; })
 
+#define QUIC_CLAMP(a, b, c) ({ \
+    typeof(a) _a = (a);   \
+    typeof(b) _b = (b);   \
+    typeof(c) _c = (c);   \
+    (void) (&_a == &_b);  \
+    (void) (&_b == &_c);  \
+    _b < _a ? _a : _b > _c ? _c : _b; })
+
 /* Size of the internal buffer of QUIC TX ring buffers (must be a power of 2) */
 #define QUIC_TX_RING_BUFSZ  (1UL << 12)
 /* Size of the QUIC RX buffer for the connections */
@@ -557,6 +565,8 @@ struct quic_path {
 	uint64_t in_flight;
 	/* Number of in flight ack-eliciting packets. */
 	uint64_t ifae_pkts;
+	/* HyStart++ */
+	struct quic_hystart hs;
 };
 
 /* QUIC ring buffer */

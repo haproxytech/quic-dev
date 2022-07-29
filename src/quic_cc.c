@@ -50,3 +50,41 @@ void quic_cc_state_trace(struct buffer *buf, const struct quic_cc *cc)
 {
 	cc->algo->state_trace(buf, cc);
 }
+
+void quic_cc_hystart_reset(struct quic_cc *cc)
+{
+	struct quic_path *path = container_of(cc, struct quic_path, cc);
+
+	fprintf(stderr, "%s\n", __func__);
+	path->hs.curr_rnd_min_rtt = UINT32_MAX;
+	path->hs.last_rnd_min_rtt = UINT32_MAX;
+	path->hs.css_min_rtt      = UINT32_MAX;
+	path->hs.rtt_sample_count = 0;
+	path->hs.wnd_end = (uint64_t)-1;
+}
+
+void quic_cc_hystart_sent_pkt(struct quic_cc *cc, uint64_t pn)
+{
+	struct quic_path *path = container_of(cc, struct quic_path, cc);
+
+	if (path->hs.wnd_end != -1)
+		return;
+
+	fprintf(stderr, "%s\n", __func__);
+	path->hs.wnd_end = pn;
+	path->hs.last_rnd_min_rtt = path->hs.curr_rnd_min_rtt;
+	path->hs.rtt_sample_count = 0;
+}
+
+void quic_cc_hystart_rtt_sample(struct quic_cc *cc)
+{
+	struct quic_path *path = container_of(cc, struct quic_path, cc);
+
+	fprintf(stderr, "%s\n", __func__);
+	if (path->hs.wnd_end == -1)
+		return;
+
+	path->hs.curr_rnd_min_rtt =
+		QUIC_MIN(path->hs.curr_rnd_min_rtt, path->loss.latest_rtt);
+	path->hs.rtt_sample_count++;
+}

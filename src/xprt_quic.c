@@ -1797,6 +1797,8 @@ static inline void qc_treat_newly_acked_pkts(struct quic_conn *qc,
 			qc_treat_ack_of_ack(pkt->pktns, pkt->largest_acked_pn);
 		ev.ack.acked = pkt->in_flight_len;
 		ev.ack.time_sent = pkt->time_sent;
+		ev.ack.pn = pkt->pn_node.key;
+		ev.ack.app_pkt = pkt->pktns == &qc->pktns[QUIC_TLS_PKTNS_01RTT];
 		quic_cc_event(&qc->path->cc, &ev);
 		LIST_DELETE(&pkt->list);
 		eb64_delete(&pkt->pn_node);
@@ -2415,6 +2417,8 @@ static int qc_parse_pkt_frms(struct quic_rx_packet *pkt, struct ssl_sock_ctx *ct
 					MS_TO_TICKS(QUIC_MIN(quic_ack_delay_ms(&frm.ack, qc), qc->max_ack_delay)) :
 					MS_TO_TICKS(quic_ack_delay_ms(&frm.ack, qc));
 				quic_loss_srtt_update(&qc->path->loss, rtt_sample, ack_delay, qc);
+				if (qc->path->cc.algo->hystart_rtt_sample)
+					qc->path->cc.algo->hystart_rtt_sample(&qc->path->cc);
 			}
 			break;
 		}
@@ -3101,8 +3105,21 @@ int qc_send_ppkts(struct qring *qr, struct ssl_sock_ctx *ctx)
 			}
 			qc->path->in_flight += pkt->in_flight_len;
 			pkt->pktns->tx.in_flight += pkt->in_flight_len;
-			if (pkt->in_flight_len)
+			if (pkt->in_flight_len) {
+				struct quic_cc *cc = &qc->path->cc;
+
+		fprintf(stderr, "%s app? %d %u %llu %u %u\n", __func__,
+		        pkt->pktns == &qc->pktns[QUIC_TLS_PKTNS_01RTT],
+		        qc->path->hs.rtt_sample_count,
+		        (ull)qc->path->hs.wnd_end,
+		        qc->path->hs.curr_rnd_min_rtt,
+		        qc->path->hs.last_rnd_min_rtt);
+
+				if (pkt->pktns == &qc->pktns[QUIC_TLS_PKTNS_01RTT] &&
+				    cc->algo->hystart_sent_pkt)
+					cc->algo->hystart_sent_pkt(cc, pkt->pn_node.key);
 				qc_set_timer(qc);
+			}
 			TRACE_PROTO("sent pkt", QUIC_EV_CONN_SPPKTS, qc, pkt);
 			next_pkt = pkt->next;
 			quic_tx_packet_refinc(pkt);
