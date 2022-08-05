@@ -100,3 +100,9 @@ vérifier s'il est possible de recevoir des STREAM ou autres trames destinés au
 MUX avant son initialisation. Si oui, prévoir de bufferiser ces trames ou
 désactiver temporairement la lecture du Rx buf, ou au pire dropper ces trames
 en attente de réémission par le client.
+
+MAINTIEN DE LA CONNEXION PAR LA QUIC-CONN
+la quic-conn devrait tenter de maintenir la connexion explicitement ouverte
+tant que le MUX reste actif. Pour cela il est nécessaire d'émettre des PING si
+aucune communication en cours. Cependant il faut rester économe, possiblement
+en envoyant un PING que sur expiration proche de l'idle timeout QUIC.
