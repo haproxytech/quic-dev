@@ -106,3 +106,8 @@ la quic-conn devrait tenter de maintenir la connexion explicitement ouverte
 tant que le MUX reste actif. Pour cela il est nécessaire d'émettre des PING si
 aucune communication en cours. Cependant il faut rester économe, possiblement
 en envoyant un PING que sur expiration proche de l'idle timeout QUIC.
+
+OPTIM -> émission RESET_STREAM par le MUX
+chaque stream envoie son RESET_STREAM indépendamment à la couche QUIC-CONN ce
+qui cause l'envoi d'un datagramme par RESET_STREAM. À optimiser tout en gardant
+la possibilité de savoir si un RESET_STREAM n'a pu être envoyé pour un stream.
