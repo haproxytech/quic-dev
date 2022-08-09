@@ -111,3 +111,9 @@ OPTIM -> émission RESET_STREAM par le MUX
 chaque stream envoie son RESET_STREAM indépendamment à la couche QUIC-CONN ce
 qui cause l'envoi d'un datagramme par RESET_STREAM. À optimiser tout en gardant
 la possibilité de savoir si un RESET_STREAM n'a pu être envoyé pour un stream.
+
+REFACTOR
+* qc_dup_pkt_frms(): parsing des streams à refactorer avec le recv ?
+* utiliser ncbuf pour ACK ranges
+* quic_conn_io_cb(): étendre la fonction pour pouvoir gérer plus de 2 encryption levels
+  nécessaire notamment pour l'envoi de CONNECTION_CLOSE lors de la handshake
