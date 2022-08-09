@@ -112,6 +112,12 @@ chaque stream envoie son RESET_STREAM indépendamment à la couche QUIC-CONN ce
 qui cause l'envoi d'un datagramme par RESET_STREAM. À optimiser tout en gardant
 la possibilité de savoir si un RESET_STREAM n'a pu être envoyé pour un stream.
 
+FERMETURE CONNECTION MUX
+améliorer l'envoi GOAWAY / CONNECTION_CLOSE
+à l'heure actuelle fermeture du MUX après envoi du GOAWAY
+* soit envoyer GOAWAY+CONNECTION_CLOSE si possible
+* ou graceful shutdown avec envoi GOAWAY et maintien du MUX jusqu'à envoi du CONNECTION_CLOSE
+
 REFACTOR
 * qc_dup_pkt_frms(): parsing des streams à refactorer avec le recv ?
 * utiliser ncbuf pour ACK ranges
