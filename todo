@@ -37,10 +37,11 @@ URGENT -> * gérer les cas d'erreur de sendto
   abonnement des quic_conn dans des listes par threads attachés aux receivers
   sur réveil de l'IO CB du receiver, lock ou detach de la list head par le
   premier thread réveillé, et wakeup sur l'ensemble des listes
-* faire du retry si toutes les trames n'ont pu être envoyées en un seul envoi
-  permet de supprimer la boucle opportuniste dans le qc_send du MUX
-=> dans un premier temps, enlever les ABORT_NOW() et ajouter une trace stderr
-   affichage de la trace limité un compteur (atleast2)
+URGENT -> * revue des erreurs sur envoi trames
+  trier les erreurs temporaires et les erreurs permanentes
+  permettre au maxium à la couche MUX de s'inscrire en cas d'erreur
+  nécessite que la quic-conn réveille le MUX ensuite sur la condition (réception ACK si congestion, allocation réussie si erreur alloc, ...)
+  en cas d'erreur permanente fermer la connexion voire le process
 
 
 DDOS -> * Initial pkt len check : vérifier quelle soit bien checkée (1200 octets ?)
