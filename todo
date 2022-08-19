@@ -124,3 +124,7 @@ REFACTOR
 * utiliser ncbuf pour ACK ranges
 * quic_conn_io_cb(): étendre la fonction pour pouvoir gérer plus de 2 encryption levels
   nécessaire notamment pour l'envoi de CONNECTION_CLOSE lors de la handshake
+* faire de QPACK un application protocol layer au même niveau que H3
+* identifier le code commun h3/hq-interop et le déplacer dans la couche MUX
+  par exemple h3_decode_qcs/hq_interop_decode_qcs vers qcc_decode_qcs
+    h3_snd_buf/hq_interop_snd_buf vers qc_snd_buf
