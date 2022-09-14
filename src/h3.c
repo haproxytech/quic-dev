@@ -609,12 +609,12 @@ static ssize_t h3_parse_settings_frm(struct h3c *h3c, const struct buffer *buf,
 	return ret;
 }
 
-/* Decode <qcs> remotely initiated bidi-stream. <fin> must be set to indicate
- * that we received the last data of the stream.
+/* Decode a QUIC stream <qcs> payload stored in buffer <b>. <fin> must be set
+ * to indicate the last data of the stream.
  *
  * Returns 0 on success else non-zero.
  */
-static ssize_t h3_decode_qcs(struct qcs *qcs, struct buffer *b, int fin)
+static ssize_t h3_recv(struct qcs *qcs, struct buffer *b, int fin)
 {
 	struct h3s *h3s = qcs->ctx;
 	struct h3c *h3c = h3s->h3c;
@@ -1013,10 +1013,9 @@ static int h3_resp_data_send(struct qcs *qcs, struct buffer *buf, size_t count)
 	return total;
 }
 
-size_t h3_snd_buf(struct stconn *sc, struct buffer *buf, size_t count, int flags)
+static size_t h3_send(struct qcs *qcs, struct buffer *buf, size_t count, int flags)
 {
 	size_t total = 0;
-	struct qcs *qcs = __sc_mux_strm(sc);
 	struct htx *htx;
 	enum htx_blk_type btype;
 	struct htx_blk *blk;
@@ -1127,21 +1126,6 @@ static void h3_detach(struct qcs *qcs)
 	TRACE_LEAVE(H3_EV_H3S_END, qcs->qcc->conn, qcs);
 }
 
-static int h3_finalize(void *ctx)
-{
-	struct h3c *h3c = ctx;
-	struct qcs *qcs;
-
-	qcs = qcc_init_stream_local(h3c->qcc, 0);
-	if (!qcs)
-		return 0;
-
-	h3_control_send(qcs, h3c);
-	h3c->ctrl_strm = qcs;
-
-	return 1;
-}
-
 /* Generate a GOAWAY frame for <h3c> connection on the control stream.
  *
  * Returns 0 on success else non-zero.
@@ -1174,12 +1158,12 @@ static int h3_send_goaway(struct h3c *h3c)
 }
 
 /* Initialize the HTTP/3 context for <qcc> mux.
- * Return 1 if succeeded, 0 if not.
+ *
+ * Returns the initialized context on success or NULL on error.
  */
-static int h3_init(struct qcc *qcc)
+static void *h3_init(struct qcc *qcc, struct extra_counters *counters)
 {
 	struct h3c *h3c;
-	struct quic_conn *qc = qcc->conn->handle.qc;
 
 	h3c = pool_alloc(pool_head_h3c);
 	if (!h3c)
@@ -1191,18 +1175,36 @@ static int h3_init(struct qcc *qcc)
 	h3c->flags = 0;
 	h3c->id_goaway = 0;
 
-	qcc->ctx = h3c;
-	h3c->prx_counters =
-		EXTRA_COUNTERS_GET(qc->li->bind_conf->frontend->extra_counters_fe,
-		                   &h3_stats_module);
+	h3c->prx_counters = EXTRA_COUNTERS_GET(counters, &h3_stats_module);
 	LIST_INIT(&h3c->buf_wait.list);
 
-	return 1;
+	return h3c;
 
  fail_no_h3:
-	return 0;
+	return NULL;
 }
 
+/* Open an HTTP/3 connection <ctx>. This is responsible to initialize the
+ * control stream and prepare a SETTINGS frame.
+ *
+ * Returns 0 on success else non-zero.
+ */
+static int h3_open(void *ctx)
+{
+	struct h3c *h3c = ctx;
+	struct qcs *qcs;
+
+	qcs = qcc_init_stream_local(h3c->qcc, 0);
+	if (!qcs)
+		return 0;
+
+	h3_control_send(qcs, h3c);
+	h3c->ctrl_strm = qcs;
+
+	return 1;
+}
+
+/* Send a HTTP/3 GOAWAY followed by a CONNECTION_CLOSE_APP. */
 static void h3_close(void *ctx)
 {
 	struct h3c *h3c = ctx;
@@ -1225,6 +1227,7 @@ static void h3_close(void *ctx)
 	qcc_emit_cc_app(h3c->qcc, H3_NO_ERROR, 0);
 }
 
+/* Free application protocol context <ctx>. */
 static void h3_release(void *ctx)
 {
 	struct h3c *h3c = ctx;
@@ -1265,11 +1268,11 @@ static void h3_trace(enum trace_level level, uint64_t mask,
 /* HTTP/3 application layer operations */
 const struct qcc_app_ops h3_ops = {
 	.init        = h3_init,
+	.open        = h3_open,
 	.attach      = h3_attach,
-	.decode_qcs  = h3_decode_qcs,
-	.snd_buf     = h3_snd_buf,
+	.recv        = h3_recv,
+	.send        = h3_send,
 	.detach      = h3_detach,
-	.finalize    = h3_finalize,
 	.close       = h3_close,
 	.inc_err_cnt = h3_stats_inc_err_cnt,
 	.release     = h3_release,

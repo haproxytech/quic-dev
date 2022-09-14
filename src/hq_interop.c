@@ -8,7 +8,7 @@
 #include <haproxy/http.h>
 #include <haproxy/mux_quic.h>
 
-static ssize_t hq_interop_decode_qcs(struct qcs *qcs, struct buffer *b, int fin)
+static ssize_t hq_interop_recv(struct qcs *qcs, struct buffer *b, int fin)
 {
 	struct htx *htx;
 	struct htx_sl *sl;
@@ -90,10 +90,9 @@ static struct buffer *mux_get_buf(struct qcs *qcs)
 	return &qcs->tx.buf;
 }
 
-static size_t hq_interop_snd_buf(struct stconn *sc, struct buffer *buf,
-                                 size_t count, int flags)
+static size_t hq_interop_send(struct qcs *qcs, struct buffer *buf,
+                              size_t count, int flags)
 {
-	struct qcs *qcs = __sc_mux_strm(sc);
 	struct htx *htx;
 	enum htx_blk_type btype;
 	struct htx_blk *blk;
@@ -171,7 +170,7 @@ static int hq_interop_attach(struct qcs *qcs, void *conn_ctx)
 }
 
 const struct qcc_app_ops hq_interop_ops = {
-	.decode_qcs = hq_interop_decode_qcs,
-	.snd_buf    = hq_interop_snd_buf,
-	.attach     = hq_interop_attach,
+	.attach = hq_interop_attach,
+	.recv   = hq_interop_recv,
+	.send   = hq_interop_send,
 };

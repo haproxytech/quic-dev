@@ -824,7 +824,7 @@ static int qcc_decode_qcs(struct qcc *qcc, struct qcs *qcs)
 	if (qcs->flags & QC_SF_SIZE_KNOWN && !ncb_is_fragmented(&qcs->rx.ncbuf))
 		fin = 1;
 
-	ret = qcc->app_ops->decode_qcs(qcs, &b, fin);
+	ret = qcc->app_ops->recv(qcs, &b, fin);
 	if (ret < 0) {
 		TRACE_ERROR("decoding error", QMUX_EV_QCS_RECV, qcc->conn, qcs);
 		goto err;
@@ -883,18 +883,26 @@ void qcc_reset_stream(struct qcs *qcs, int err)
 }
 
 /* Install the <app_ops> applicative layer of a QUIC connection on mux <qcc>.
+ *
  * Returns 0 on success else non-zero.
  */
 int qcc_install_app_ops(struct qcc *qcc, const struct qcc_app_ops *app_ops)
 {
+	struct quic_conn *qc = qcc->conn->handle.qc;
+	void *appctx = NULL;
+	struct extra_counters *counters;
+
 	TRACE_ENTER(QMUX_EV_QCC_NEW, qcc->conn);
 
+	counters = qc->li->bind_conf->frontend->extra_counters_fe;
+
 	qcc->app_ops = app_ops;
-	if (qcc->app_ops->init && !qcc->app_ops->init(qcc)) {
+	if (qcc->app_ops->init && !(appctx = qcc->app_ops->init(qcc, counters))) {
 		TRACE_ERROR("app ops init error", QMUX_EV_QCC_NEW, qcc->conn);
 		goto err;
 	}
 
+	qcc->ctx = appctx;
 	TRACE_PROTO("application layer initialized", QMUX_EV_QCC_NEW, qcc->conn);
 
 	TRACE_LEAVE(QMUX_EV_QCC_NEW, qcc->conn);
@@ -1607,11 +1615,11 @@ static int qc_send(struct qcc *qcc)
 		return 0;
 
 	if (!(qcc->flags & QC_CF_APP_FINAL) && !eb_is_empty(&qcc->streams_by_id) &&
-	    qcc->app_ops->finalize) {
+	    qcc->app_ops->open) {
 		/* Finalize the application layer before sending any stream.
 		 * For h3 this consists in preparing the control stream data (SETTINGS h3).
 		 */
-		qcc->app_ops->finalize(qcc->ctx);
+		qcc->app_ops->open(qcc->ctx);
 		qcc->flags |= QC_CF_APP_FINAL;
 	}
 
@@ -2225,7 +2233,7 @@ static size_t qc_snd_buf(struct stconn *sc, struct buffer *buf,
 		goto end;
 	}
 
-	ret = qcs->qcc->app_ops->snd_buf(sc, buf, count, flags);
+	ret = qcs->qcc->app_ops->send(qcs, buf, count, flags);
 
  end:
 	TRACE_LEAVE(QMUX_EV_STRM_SEND, qcs->qcc->conn, qcs);

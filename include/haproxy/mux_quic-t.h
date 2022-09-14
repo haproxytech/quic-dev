@@ -13,6 +13,7 @@
 #include <haproxy/list-t.h>
 #include <haproxy/ncbuf-t.h>
 #include <haproxy/quic_stream-t.h>
+#include <haproxy/stats-t.h>
 #include <haproxy/stconn-t.h>
 
 /* Stream types */
@@ -182,14 +183,15 @@ struct qcs {
 
 /* QUIC application layer operations */
 struct qcc_app_ops {
-	int (*init)(struct qcc *qcc);
-	int (*attach)(struct qcs *qcs, void *conn_ctx);
-	ssize_t (*decode_qcs)(struct qcs *qcs, struct buffer *b, int fin);
-	size_t (*snd_buf)(struct stconn *sc, struct buffer *buf, size_t count, int flags);
-	void (*detach)(struct qcs *qcs);
-	int (*finalize)(void *ctx);
-	void (*release)(void *ctx);
+	void* (*init)(struct qcc *qcc, struct extra_counters *counters); /* Initialize a new connection. */
+	int (*open)(void *ctx);                         /* Finalize connection initialization. */
+	int (*attach)(struct qcs *qcs, void *conn_ctx); /* Notify about a new stream creation. */
+	ssize_t (*recv)(struct qcs *qcs, struct buffer *b, int fin); /* Receive a stream payload. */
+	size_t (*send)(struct qcs *qcs, struct buffer *b, size_t count, int flags); /* Send a stream payload. */
+	void (*detach)(struct qcs *qcs);                /* Notify about a stream deletion. */
+	void (*close)(void *ctx);                       /* Close a connection. */
 	void (*inc_err_cnt)(void *ctx, int err_code);
+	void (*release)(void *ctx);                     /* Release connection context. */
 };
 
 #endif /* USE_QUIC */
