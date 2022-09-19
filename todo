@@ -128,3 +128,16 @@ REFACTOR
 * identifier le code commun h3/hq-interop et le déplacer dans la couche MUX
   par exemple h3_decode_qcs/hq_interop_decode_qcs vers qcc_decode_qcs
     h3_snd_buf/hq_interop_snd_buf vers qc_snd_buf
+
+ARCHI REVIEW
+* sur reception CONNECTION_CLOSE
+  retourner sur qc_send_mux un code d'erreur
+* avant envoi du MUX vérifier taille de window pour ne pas envoyer plus que nécessaire
+* éviter de faire du travail pour rien
+  dès qu'un datagramme est prêt par qc_prep_app_pkts, l'émettre via qc_send_ppkts
+  plutot que générer une liste de datagrammes et tout perdre si erreur sur le premier envoi
+* Nouvelle API d'envoi
+  -> appel de la quic-conn par le MUX sur chaque stream
+  -> remplissage du buffer d'envoi par la quic-conn
+  -> envoi du buffer lorsque datagramme rempli
+  -> conversation entre chaque envoi
