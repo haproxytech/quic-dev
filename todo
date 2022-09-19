@@ -119,6 +119,9 @@ améliorer l'envoi GOAWAY / CONNECTION_CLOSE
 * soit envoyer GOAWAY+CONNECTION_CLOSE si possible
 * ou graceful shutdown avec envoi GOAWAY et maintien du MUX jusqu'à envoi du CONNECTION_CLOSE
 
+H3
+* supporter les trailers HTTP/3
+
 REFACTOR
 * qc_dup_pkt_frms(): parsing des streams à refactorer avec le recv ?
 * utiliser ncbuf pour ACK ranges
