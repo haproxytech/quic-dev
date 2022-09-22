@@ -87,6 +87,21 @@ DISPATCH DES CONNEXIONS
  probablement redispatcher le paquet vers le thread le moins chargÃ© et flagger
  le paquet comme devant donner lieu Ã  crÃ©ation de la quic_conn.
 
+ Sur ce point, il serait possible de se passer de l'arbre des ODCID en assignant
+ nous-mêmes le CID à partir de l'ODCID. On le hashe avec sa source, ça nous donne
+ les 52 bits de poids fort du CID (si c'est bien du 64-bits), et on stocke l'ID
+ du thread dans les 12 bits de poids faible. Comme ça on n'utilise plus que les
+ CID finaux comme clé de stockage, et si on ne trouve pas un CID lors d'un lookup,
+ alors on considère que c'est peut-être un ODCID, on applique le calcul ci-dessus
+ (sans le thread id) et on fait un lookup_ge() dans l'arbre (les arbres?) de
+ connexions. Si on en trouve un qui correspond, c'est gagné et on a en prime le
+ thread ID associé. Donc on pourrait très bien stocker les CID finaux dans un
+ arbre locké temporaire (équivalent des ODCID actuels) tant que le client n'a
+ pas confirmé l'utilisation de notre CID, et ne les déplacer dans l'arbre du
+ thread qu'une fois que le client a confirmé avoir adopté notre CID. Ainsi, on
+ n'a jamais besoin de mémoriser l'ODCID, soit le client parle avec le CID et on
+ a l'info en direct, soit il parle avec l'ODCID et on retrouve l'info.
+
 CONNECTION_CLOSE DURING HANDSHAKE
 cf RFC 9000 10.2.3.
 https://datatracker.ietf.org/doc/html/rfc9000#section-10.2.3
@@ -144,3 +159,29 @@ ARCHI REVIEW
   -> remplissage du buffer d'envoi par la quic-conn
   -> envoi du buffer lorsque datagramme rempli
   -> conversation entre chaque envoi
+
+GESTION DE LA MIGRATION DANS LE CAS DES FD PAR CONNEXION
+ Lorsqu'on aura un FD par connexion, le trafic reçu par les FD se répartira
+ comme suit:
+   - FD du receiver: quelques occasionnels datagrammes d'une nouvelle connexion
+     auront déjà été mis en queue par le kernel s'ils sont reçus avant que
+     le bind()+connect() ne se fasse, donc ils seront reçus par ce biais et
+     il faudra maintenir le dispatch
+   - FD de la nouvelle connexion: quelques occasionnels datagrammes destinés
+     à n'importe quelle autre connexion arriveront entre le bind() et le
+     connect(). La plupart du temps il s'agira de datagrammes non mappés sur
+     une connexion, ou appartenant à une connexion non encore finalisée.
+   - dans les deux cas il faudra faire le redispatch vers la bonne queue
+     (c'est à dire qu'on retombe dans le cas actuel pour une infime part des
+     datagrammes reçus).
+   - toutefois en cas de migration d'IP et/ou de port, la connexion ne matchera
+     plus les paquets et le trafic arrivera à nouveau par le receiver global.
+     Il faudra alors être en mesure de flaguer la connexion pour dire qu'elle
+     est en cours de migration, de sorte que son I/O handler, dès qu'il aura
+     besoin d'émettre, bute la connexion en cours et la recrée vers la nouvelle
+     destination (soit avec le même FD soit avec un autre selon ce qui est
+     possible). Au moins ça se fera depuis le bon thread et on n'aura pas
+     d'autre problème que ça.
+ => il faut prévoir qu'il y aura toujours une toute petite part de trafic mal
+    aiguillé et donc qu'il faut impérativement qu'on puisse le redispatcher
+    en interne comme on le fait déjà.
