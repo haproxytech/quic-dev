@@ -185,3 +185,12 @@ GESTION DE LA MIGRATION DANS LE CAS DES FD PAR CONNEXION
  => il faut prévoir qu'il y aura toujours une toute petite part de trafic mal
     aiguillé et donc qu'il faut impérativement qu'on puisse le redispatcher
     en interne comme on le fait déjà.
+
+RECV DATAGRAM / RXBUF (QUIC_RECEIVER_BUF)
+* ne pas faire d'APPEND systématique après usage d'un rxbuf
+  plutot faire un INSERT en tête de liste, sauf si taille insuffisante pour
+  prochains recv
+  -> possiblement dépiler un nouveau rxbuf si multiple datagrammes lus
+* remplacer le fake datagram par un champ de la structure rxbuf
+  cela économiserait l'allocation d'un quic_dgram
+* faire un realign_if_empty, probablement avant de tester l'espace contigue
