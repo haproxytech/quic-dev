@@ -20,6 +20,9 @@ DDOS -> * Retry : revoir la gÃ©nÃ©ration du token
   -> concatÃ©nÃ©r avec l'adresse IP du client + le DCID
   -> avoir une heuristique pour activer la validation du Retry
       probablement un compteur de connexions en cours d'activation (quic-conn avant handshake), possiblement configurÃ© via un settings global
+* générer clé automatique si cluster-secret non défini
+  -> invalide le Retry token en cas de reload/redémarrage du process
+* erreur si cluster-secret non spécifié et quic-force-retry activé
 
 AmÃ©lioration diagnostic QUIC
 * support pcap + keylogfile
