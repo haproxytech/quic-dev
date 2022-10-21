@@ -7284,7 +7284,7 @@ struct task *quic_lstnr_dghdlr(struct task *t, void *ctx, unsigned int state)
 			dgram->qc->rx.bytes += dgram->len;
 
 		/* Mark this datagram as consumed */
-		HA_ATOMIC_STORE(&dgram->buf, NULL);
+		HA_ATOMIC_STORE(&dgram->owner, NULL);
 
 		if (--max_dgrams <= 0)
 			goto stop_here;

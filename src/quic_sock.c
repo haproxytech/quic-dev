@@ -222,8 +222,16 @@ static struct quic_dgram *quic_rxbuf_purge_dgrams(struct quic_receiver_buf *buf)
 	while (!LIST_ISEMPTY(&buf->dgram_list)) {
 		cur = LIST_ELEM(buf->dgram_list.n, struct quic_dgram *, recv_list);
 
+		if (cur->buf != (unsigned char *)b_head(&buf->buf)) {
+			/* Must not happen. */
+			//BUG_ON(b_data(&buf->buf) == b_contig_data(&buf->buf, 0));
+			BUG_ON(cur->buf != (unsigned char *)b_orig(&buf->buf));
+
+			b_del(&buf->buf, b_contig_data(&buf->buf, 0));
+		}
+
 		/* Loop until a not yet consumed datagram is found. */
-		if (HA_ATOMIC_LOAD(&cur->buf))
+		if (HA_ATOMIC_LOAD(&cur->owner))
 			break;
 
 		/* Clear buffer of current unused datagram. */
@@ -235,6 +243,9 @@ static struct quic_dgram *quic_rxbuf_purge_dgrams(struct quic_receiver_buf *buf)
 			pool_free(pool_head_quic_dgram, prev);
 		prev = cur;
 	}
+
+	if (LIST_ISEMPTY(&buf->dgram_list))
+		b_reset(&buf->buf);
 
 	/* Return last unused datagram found. */
 	return prev;
@@ -400,7 +411,6 @@ void quic_sock_fd_iocb(int fd)
 		if (cspace < max_sz) {
 			struct proxy *px = l->bind_conf->frontend;
 			struct quic_counters *prx_counters = EXTRA_COUNTERS_GET(px->extra_counters_fe, &quic_stats_module);
-			struct quic_dgram *dgram;
 
 			/* Do no mark <buf> as full, and do not try to consume it
 			 * if the contiguous remaining space is not at the end
@@ -409,21 +419,6 @@ void quic_sock_fd_iocb(int fd)
 				HA_ATOMIC_INC(&prx_counters->rxbuf_full);
 				goto out;
 			}
-
-			/* Allocate a fake datagram, without data to locate
-			 * the end of the RX buffer (required during purging).
-			 */
-			dgram = pool_alloc(pool_head_quic_dgram);
-			if (!dgram)
-				goto out;
-
-			/* Initialize only the useful members of this fake datagram. */
-			dgram->buf = NULL;
-			dgram->len = cspace;
-			/* Append this datagram only to the RX buffer list. It will
-			 * not be treated by any datagram handler.
-			 */
-			LIST_APPEND(&rxbuf->dgram_list, &dgram->recv_list);
 
 			/* Consume the remaining space */
 			b_add(buf, cspace);
