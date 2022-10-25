@@ -429,16 +429,19 @@ void quic_sock_fd_iocb(int fd)
 	                (struct sockaddr *)&saddr, sizeof(saddr),
 	                (struct sockaddr *)&daddr, sizeof(daddr),
 	                get_net_port(&l->rx.addr));
-	if (ret <= 0)
+	if (ret < 0)
 		goto out;
 
-	b_add(buf, ret);
-	if (!quic_lstnr_dgram_dispatch(dgram_buf, ret, l, &saddr, &daddr,
-	                               new_dgram, &rxbuf->dgram_list)) {
-		/* If wrong, consume this datagram */
-		b_del(buf, ret);
+	if (ret > 0) {
+		b_add(buf, ret);
+		if (!quic_lstnr_dgram_dispatch(dgram_buf, ret, l, &saddr, &daddr,
+		                               new_dgram, &rxbuf->dgram_list)) {
+			/* If wrong, consume this datagram */
+			b_del(buf, ret);
+		}
+		new_dgram = NULL;
 	}
-	new_dgram = NULL;
+
 	if (--max_dgrams > 0)
 		goto start;
  out:
