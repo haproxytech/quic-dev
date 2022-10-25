@@ -289,9 +289,11 @@ static ssize_t quic_recv(int fd, void *out, size_t len,
 		ret = recvmsg(fd, &msg, 0);
 	} while (ret < 0 && errno == EINTR);
 
-	/* TODO handle errno. On EAGAIN/EWOULDBLOCK use fd_cant_recv() if
-	 * using dedicated connection socket.
-	 */
+	if (ret < 0) {
+		if (errno == EAGAIN || errno == EWOULDBLOCK)
+			fd_cant_recv(fd);
+		goto end;
+	}
 
 	if (ret < 0)
 		goto end;
