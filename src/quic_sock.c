@@ -298,6 +298,16 @@ static ssize_t quic_recv(int fd, void *out, size_t len,
 	if (ret < 0)
 		goto end;
 
+	/* Check UDP datagram address source. If deemed invalid, returns a
+	 * non-error 0 value.
+	 */
+	if (is_inet_addr((struct sockaddr_storage *)from)) {
+		if (!get_net_port((struct sockaddr_storage *)from)) {
+			ret = 0;
+			goto end;
+		}
+	}
+
 	for (cmsg = CMSG_FIRSTHDR(&msg); cmsg; cmsg = CMSG_NXTHDR(&msg, cmsg)) {
 		switch (cmsg->cmsg_level) {
 		case IPPROTO_IP:
