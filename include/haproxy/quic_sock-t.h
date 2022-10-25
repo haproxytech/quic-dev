@@ -8,6 +8,8 @@ struct quic_accept_queue {
 	struct tasklet *tasklet;  /* task responsible to call listener_accept */
 };
 
+#define QUIC_RXBUF_FULL_BIT 1
+
 /* Buffer used to receive QUIC datagrams on random thread and redispatch them
  * to the connection thread.
  */
@@ -15,6 +17,8 @@ struct quic_receiver_buf {
 	struct buffer buf; /* storage for datagrams received. */
 	struct list dgram_list; /* datagrams received with this rxbuf. */
 	struct mt_list rxbuf_el; /* list element into receiver.rxbuf_list. */
+	struct list rxbuf_full_el;
+	int flags;
 };
 
 #endif /* USE_QUIC */

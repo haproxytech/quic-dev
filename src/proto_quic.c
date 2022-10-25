@@ -541,6 +541,7 @@ static int quic_alloc_rxbufs_listener(struct listener *l)
 	struct quic_receiver_buf *tmp;
 
 	MT_LIST_INIT(&l->rx.rxbuf_list);
+	LIST_INIT(&l->rx.rxbuf_full_list);
 	for (i = 0; i < global.nbthread; i++) {
 		struct quic_receiver_buf *rxbuf;
 		char *buf;
@@ -558,6 +559,7 @@ static int quic_alloc_rxbufs_listener(struct listener *l)
 		rxbuf->buf = b_make(buf, QUIC_RX_BUFSZ, 0, 0);
 		LIST_INIT(&rxbuf->dgram_list);
 		MT_LIST_APPEND(&l->rx.rxbuf_list, &rxbuf->rxbuf_el);
+		rxbuf->flags = 0;
 	}
 
 	return 1;

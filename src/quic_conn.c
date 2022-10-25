@@ -7284,7 +7284,19 @@ struct task *quic_lstnr_dghdlr(struct task *t, void *ctx, unsigned int state)
 			dgram->qc->rx.bytes += dgram->len;
 
 		/* Mark this datagram as consumed */
-		HA_ATOMIC_STORE(&dgram->owner, NULL);
+		{
+			struct listener *li = dgram->owner;
+			fd_want_recv(li->rx.fd);
+			HA_ATOMIC_STORE(&dgram->owner, NULL);
+
+			/* If rxbuf was marked as full, reset it to its default
+			 * state.
+			 */
+			if (HA_ATOMIC_BTR(&dgram->rxbuf->flags, QUIC_RXBUF_FULL_BIT)) {
+				LIST_DELETE(&dgram->rxbuf->rxbuf_full_el);
+				MT_LIST_INSERT(&li->rx.rxbuf_list, &dgram->rxbuf->rxbuf_el);
+			}
+		}
 
 		if (--max_dgrams <= 0)
 			goto stop_here;

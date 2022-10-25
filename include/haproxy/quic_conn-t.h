@@ -369,6 +369,7 @@ struct quic_pktns {
 
 /* QUIC datagram */
 struct quic_dgram {
+	struct quic_receiver_buf *rxbuf;
 	void *owner; /* by default listener instance; NULL when dgram can be removed. */
 	unsigned char *buf;
 	size_t len;

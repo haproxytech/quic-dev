@@ -164,7 +164,8 @@ struct connection *quic_sock_accept_conn(struct listener *l, int *status)
  * correct datagram handler.
  * Return 1 if a correct datagram could be found, 0 if not.
  */
-static int quic_lstnr_dgram_dispatch(unsigned char *buf, size_t len, void *owner,
+static int quic_lstnr_dgram_dispatch(struct quic_receiver_buf *rxbuf,
+                                     unsigned char *buf, size_t len, void *owner,
                                      struct sockaddr_storage *saddr,
                                      struct sockaddr_storage *daddr,
                                      struct quic_dgram *new_dgram, struct list *dgrams)
@@ -187,6 +188,7 @@ static int quic_lstnr_dgram_dispatch(unsigned char *buf, size_t len, void *owner
 	/* All the members must be initialized! */
 	dgram->owner = owner;
 	dgram->buf = buf;
+	dgram->rxbuf = rxbuf;
 	dgram->len = len;
 	dgram->dcid = dcid;
 	dgram->dcid_len = dcid_len;
@@ -368,6 +370,59 @@ static ssize_t quic_recv(int fd, void *out, size_t len,
 	return ret;
 }
 
+static int quic_rx_buf_fill_space(struct quic_receiver_buf *buf,
+                                  size_t udp_payload_size)
+{
+	if (!b_space_wraps(&buf->buf))
+		return -1;
+
+	b_add(&buf->buf, b_contig_space(&buf->buf));
+	if (b_room(&buf->buf) < udp_payload_size)
+		return -1;
+
+	return 0;
+}
+
+static struct quic_receiver_buf *quic_rx_buf_pop(struct receiver *rx,
+                                                 size_t udp_payload_size)
+{
+	struct quic_receiver_buf *buf;
+	size_t cspace;
+
+	buf = MT_LIST_POP(&rx->rxbuf_list, struct quic_receiver_buf *, rxbuf_el);
+	if (!buf)
+		return NULL;
+
+	quic_rxbuf_purge_dgrams(buf);
+
+	if (b_room(&buf->buf) < udp_payload_size)
+		goto err_nospace;
+
+	cspace = b_contig_space(&buf->buf);
+	if (cspace < udp_payload_size) {
+		if (quic_rx_buf_fill_space(buf, udp_payload_size))
+			goto err_nospace;
+	}
+
+	return buf;
+
+ err_nospace:
+	MT_LIST_APPEND(&rx->rxbuf_list, &buf->rxbuf_el);
+	return NULL;
+}
+
+static void quic_rx_buf_put(struct receiver *rx, struct quic_receiver_buf *buf,
+                            size_t udp_payload_size, int fd)
+{
+	if (b_room(&buf->buf) < udp_payload_size) {
+		LIST_APPEND(&rx->rxbuf_full_list, &buf->rxbuf_full_el);
+		HA_ATOMIC_BTS(&buf->flags, QUIC_RXBUF_FULL_BIT);
+		return;
+	}
+
+	MT_LIST_INSERT(&rx->rxbuf_list, &buf->rxbuf_el);
+}
+
 /* Function called on a read event from a listening socket. It tries
  * to handle as many connections as possible.
  */
@@ -383,7 +438,7 @@ void quic_sock_fd_iocb(int fd)
 	size_t max_sz, cspace;
 	struct quic_dgram *new_dgram;
 	unsigned char *dgram_buf;
-	int max_dgrams;
+	int max_dgrams, full = 0;
 
 	new_dgram = NULL;
 
@@ -393,14 +448,22 @@ void quic_sock_fd_iocb(int fd)
 	params = &l->bind_conf->quic_params;
 	max_sz = params->max_udp_payload_size;
 
-	rxbuf = MT_LIST_POP(&l->rx.rxbuf_list, typeof(rxbuf), rxbuf_el);
-	if (!rxbuf)
-		goto out;
+	rxbuf = quic_rx_buf_pop(&l->rx, max_sz);
+	if (!rxbuf) {
+		struct proxy *px = l->bind_conf->frontend;
+		struct quic_counters *prx_counters = EXTRA_COUNTERS_GET(px->extra_counters_fe, &quic_stats_module);
+
+		HA_ATOMIC_INC(&prx_counters->rxbuf_full);
+		fd_stop_recv(fd);
+
+		return;
+	}
 
 	buf = &rxbuf->buf;
+	BUG_ON(b_contig_space(buf) < max_sz);
 
 	max_dgrams = global.tune.maxpollevents;
-	while (max_dgrams-- > 0) {
+	while (max_dgrams-- > 0 && !full) {
 		/* Try to reuse an existing dgram. Note that there is always at
 		 * least one datagram to pick, except the first time we enter
 		 * this function for this <rxbuf> buffer.
@@ -409,20 +472,10 @@ void quic_sock_fd_iocb(int fd)
 
 		cspace = b_contig_space(buf);
 		if (cspace < max_sz) {
-			struct proxy *px = l->bind_conf->frontend;
-			struct quic_counters *prx_counters = EXTRA_COUNTERS_GET(px->extra_counters_fe, &quic_stats_module);
+			if (quic_rx_buf_fill_space(rxbuf, max_sz)) {
+				struct proxy *px = l->bind_conf->frontend;
+				struct quic_counters *prx_counters = EXTRA_COUNTERS_GET(px->extra_counters_fe, &quic_stats_module);
 
-			/* Do no mark <buf> as full, and do not try to consume it
-			 * if the contiguous remaining space is not at the end
-			 */
-			if (b_tail(buf) + cspace < b_wrap(buf)) {
-				HA_ATOMIC_INC(&prx_counters->rxbuf_full);
-				goto out;
-			}
-
-			/* Consume the remaining space */
-			b_add(buf, cspace);
-			if (b_contig_space(buf) < max_sz) {
 				HA_ATOMIC_INC(&prx_counters->rxbuf_full);
 				goto out;
 			}
@@ -438,18 +491,33 @@ void quic_sock_fd_iocb(int fd)
 
 		if (ret > 0) {
 			b_add(buf, ret);
-			if (!quic_lstnr_dgram_dispatch(dgram_buf, ret, l, &saddr, &daddr,
+
+			/* Insert rxbuf in full list before dispatching
+			 * datagram to another thread. This ensures that at
+			 * least one thread will be able to put back rxbuf in
+			 * default list on datagram consumption without any
+			 * race condition.
+			 */
+			if (b_room(&rxbuf->buf) < max_sz) {
+				quic_rx_buf_put(&l->rx, rxbuf, max_sz, fd);
+				full = 1;
+			}
+
+			if (!quic_lstnr_dgram_dispatch(rxbuf, dgram_buf, ret,
+				                       l, &saddr, &daddr,
 			                               new_dgram, &rxbuf->dgram_list)) {
 				/* If wrong, consume this datagram */
 				b_del(buf, ret);
 			}
 			new_dgram = NULL;
 		}
+
 	}
 
  out:
 	pool_free(pool_head_quic_dgram, new_dgram);
-	MT_LIST_APPEND(&l->rx.rxbuf_list, &rxbuf->rxbuf_el);
+	if (!full)
+		quic_rx_buf_put(&l->rx, rxbuf, max_sz, fd);
 }
 
 /* Send a datagram stored into <buf> buffer with <sz> as size.

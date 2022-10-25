@@ -66,6 +66,7 @@ struct receiver {
 	struct list proto_list;          /* list in the protocol header */
 #ifdef USE_QUIC
 	struct mt_list rxbuf_list;       /* list of buffers to receive and dispatch QUIC datagrams. */
+	struct list rxbuf_full_list;
 #endif
 	/* warning: this struct is huge, keep it at the bottom */
 	struct sockaddr_storage addr;    /* the address the socket is bound to */
