@@ -197,3 +197,8 @@ RECV DATAGRAM / RXBUF (QUIC_RECEIVER_BUF)
 * remplacer le fake datagram par un champ de la structure rxbuf
   cela économiserait l'allocation d'un quic_dgram
 * faire un realign_if_empty, probablement avant de tester l'espace contigue
+* remplacer l'io-cb par une tasklet
+  obligatoire pour supporter le polling en mode edge-triggered
+  wakeup de la tasklet si on a atteint le nombre max de dgrams à lire avant de bloquer
+  un bon compromis serait de lire maximum 2 datagrammes directement dans l'io-cb
+  si 2e datagramme lu, faire un tasklet_wakeup afin de limiter le travail dans l'io-cb
