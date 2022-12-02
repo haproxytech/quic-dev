@@ -7441,8 +7441,17 @@ int quic_dgram_parse(struct quic_dgram *dgram)
 	/* This must never happen. */
 	BUG_ON(pos > end);
 	BUG_ON(pos < end || pos > dgram->buf + dgram->len);
+
 	/* Mark this datagram as consumed */
 	HA_ATOMIC_STORE(&dgram->buf, NULL);
+
+	if (!HA_ATOMIC_SUB_FETCH(&dgram->rxbuf->bufcount, 1)) {
+		if (HA_ATOMIC_LOAD(&dgram->rxbuf->full)) {
+			HA_ATOMIC_STORE(&dgram->rxbuf->full, 0);
+			MT_LIST_APPEND(&li->rx.rxbuf_list, &dgram->rxbuf->rxbuf_el);
+			fd_want_recv(li->rx.fd);
+		}
+	}
 
 	TRACE_LEAVE(QUIC_EV_CONN_LPKT);
 	return 0;

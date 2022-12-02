@@ -234,9 +234,13 @@ static int quic_init_dgram(struct quic_dgram *dgram, void *owner,
  * <cid_tid>.
  */
 static void quic_lstnr_dgram_dispatch(struct quic_dgram *dgram,
+                                      struct quic_receiver_buf *rxbuf,
                                       struct list *dgrams, int cid_tid)
 {
 	BUG_ON(!dgram);
+
+	dgram->rxbuf = rxbuf;
+	HA_ATOMIC_INC(&rxbuf->bufcount);
 
 	/* Attached datagram to its quic_receiver_buf and quic_dghdlrs. */
 	LIST_APPEND(dgrams, &dgram->recv_list);
@@ -260,8 +264,10 @@ static int quic_check_rxbuf_space(struct quic_receiver_buf *rxbuf,
 		/* Do no mark <buf> as full, and do not try to consume it
 		 * if the contiguous remaining space is not at the end
 		 */
-		if (b_tail(buf) + cspace < b_wrap(buf))
+		if (b_tail(buf) + cspace < b_wrap(buf)) {
+			HA_ATOMIC_STORE(&rxbuf->full, 1);
 			return 1;
+		}
 
 		/* Allocate a fake datagram, without data to locate
 		 * the end of the RX buffer (required during purging).
@@ -279,8 +285,10 @@ static int quic_check_rxbuf_space(struct quic_receiver_buf *rxbuf,
 
 		/* Consume the remaining space */
 		b_add(buf, cspace);
-		if (b_contig_space(buf) < udp_payload_size)
+		if (b_contig_space(buf) < udp_payload_size) {
+			HA_ATOMIC_STORE(&rxbuf->full, 1);
 			return 1;
+		}
 	}
 	return 0;
 }
@@ -486,11 +494,10 @@ void quic_lstnr_sock_fd_iocb(int fd)
 		goto start;
 
 	b_add(buf, ret);
-	quic_lstnr_dgram_dispatch(new_dgram, &rxbuf->dgram_list,
+	quic_lstnr_dgram_dispatch(new_dgram, rxbuf, &rxbuf->dgram_list,
 	                          quic_get_cid_tid(new_dgram->dcid, l->bind_conf));
 	new_dgram = NULL;
 	if (quic_check_rxbuf_space(rxbuf, max_sz)) {
-		MT_LIST_APPEND(&l->rx.rxbuf_list, &rxbuf->rxbuf_el);
 		rxbuf = NULL;
 		goto out;
 	}
@@ -499,8 +506,13 @@ void quic_lstnr_sock_fd_iocb(int fd)
 		goto start;
  out:
 	pool_free(pool_head_quic_dgram, new_dgram);
-	if (rxbuf)
+	if (rxbuf) {
 		MT_LIST_INSERT(&l->rx.rxbuf_list, &rxbuf->rxbuf_el);
+	}
+	else {
+		if (MT_LIST_ISEMPTY(&l->rx.rxbuf_list))
+			fd_stop_recv(l->rx.fd);
+	}
 }
 
 /* FD-owned quic-conn socket callback. */
@@ -667,7 +679,7 @@ int qc_rcv_buf(struct quic_conn *qc)
 			new_dgram->saddr = qc->peer_addr;
 
 			__b_putblk(&rxbuf->buf, (char *)dgram_buf, new_dgram->len);
-			quic_lstnr_dgram_dispatch(new_dgram, &rxbuf->dgram_list,
+			quic_lstnr_dgram_dispatch(new_dgram, rxbuf, &rxbuf->dgram_list,
 			                          quic_get_cid_tid(new_dgram->dcid, l->bind_conf));
 
 			/* datagram must not be freed as it was requeued. */

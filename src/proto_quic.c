@@ -558,6 +558,8 @@ static int quic_alloc_rxbufs_listener(struct listener *l)
 		rxbuf->buf = b_make(buf, QUIC_RX_BUFSZ, 0, 0);
 		LIST_INIT(&rxbuf->dgram_list);
 		MT_LIST_APPEND(&l->rx.rxbuf_list, &rxbuf->rxbuf_el);
+		rxbuf->full = 0;
+		rxbuf->bufcount = 0;
 	}
 
 	return 1;

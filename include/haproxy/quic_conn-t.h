@@ -382,6 +382,8 @@ struct quic_dgram {
 
 	struct list recv_list; /* elemt to quic_receiver_buf <dgram_list>. */
 	struct mt_list handler_list; /* elem to quic_dghdlr <dgrams>. */
+
+	struct quic_receiver_buf *rxbuf;
 };
 
 /* The QUIC packet numbers are 62-bits integers */

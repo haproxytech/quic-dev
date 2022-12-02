@@ -15,6 +15,8 @@ struct quic_receiver_buf {
 	struct buffer buf; /* storage for datagrams received. */
 	struct list dgram_list; /* datagrams received with this rxbuf. */
 	struct mt_list rxbuf_el; /* list element into receiver.rxbuf_list. */
+	int bufcount;
+	int full;
 };
 
 #endif /* USE_QUIC */
