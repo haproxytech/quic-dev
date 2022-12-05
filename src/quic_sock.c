@@ -199,39 +199,44 @@ struct task *quic_lstnr_dghdlr(struct task *t, void *ctx, unsigned int state)
 	return t;
 }
 
-/* Retrieve the DCID from the datagram found in <buf> and deliver it to the
- * correct datagram handler.
- * Return 1 if a correct datagram could be found, 0 if not.
+/* Initialize <dgram> fields. <owner> must point to a quic-conn or a listener
+ * instance. <buf> is the datagram payload of length <len>. <saddr> and <daddr>
+ * are the datagram source and destination addresses.
+ *
+ * Once initialized, this function will automatically extract DCID from the
+ * datagram.
+ *
+ * Returns 0 on success else non-zero if DCID cannot be parsed. Datagram should
+ * be dropped.
  */
-static int quic_lstnr_dgram_dispatch(unsigned char *buf, size_t len, void *owner,
-                                     struct sockaddr_storage *saddr,
-                                     struct sockaddr_storage *daddr,
-                                     struct quic_dgram *new_dgram, struct list *dgrams)
+static int quic_init_dgram(struct quic_dgram *dgram, void *owner,
+                           unsigned char *buf, ssize_t len,
+                           struct sockaddr_storage *saddr,
+                           struct sockaddr_storage *daddr)
 {
-	struct quic_dgram *dgram;
-	const struct listener *l = owner;
-	unsigned char *dcid;
-	size_t dcid_len;
-	int cid_tid;
+	BUG_ON(!len);
 
-	if (!len || !quic_get_dgram_dcid(buf, buf + len, &dcid, &dcid_len))
-		goto err;
-
-	dgram = new_dgram ? new_dgram : pool_alloc(pool_head_quic_dgram);
-	if (!dgram)
-		goto err;
-
-	cid_tid = quic_get_cid_tid(dcid, l->bind_conf);
-
-	/* All the members must be initialized! */
 	dgram->owner = owner;
 	dgram->buf = buf;
 	dgram->len = len;
-	dgram->dcid = dcid;
-	dgram->dcid_len = dcid_len;
 	dgram->saddr = *saddr;
 	dgram->daddr = *daddr;
-	dgram->qc = NULL;
+	dgram->qc = NULL;  /* set later via quic_dgram_parse() */
+
+	if (!quic_get_dgram_dcid(buf, buf + len, &dgram->dcid, &dgram->dcid_len))
+		return 1;
+
+	return 0;
+}
+
+/* Prepare <dgram> datagram for dispatch on the receiver thread. <dgram> is
+ * attached to handler list <dgrams> and dispatch on received thread with ID
+ * <cid_tid>.
+ */
+static void quic_lstnr_dgram_dispatch(struct quic_dgram *dgram,
+                                      struct list *dgrams, int cid_tid)
+{
+	BUG_ON(!dgram);
 
 	/* Attached datagram to its quic_receiver_buf and quic_dghdlrs. */
 	LIST_APPEND(dgrams, &dgram->recv_list);
@@ -239,12 +244,6 @@ static int quic_lstnr_dgram_dispatch(unsigned char *buf, size_t len, void *owner
 
 	/* typically quic_lstnr_dghdlr() */
 	tasklet_wakeup(quic_dghdlrs[cid_tid].task);
-
-	return 1;
-
- err:
-	pool_free(pool_head_quic_dgram, new_dgram);
-	return 0;
 }
 
 /* This function is responsible to remove unused datagram attached in front of
@@ -422,7 +421,10 @@ void quic_lstnr_sock_fd_iocb(int fd)
 	 * least one datagram to pick, except the first time we enter
 	 * this function for this <rxbuf> buffer.
 	 */
-	new_dgram = quic_rxbuf_purge_dgrams(rxbuf);
+	if (!(new_dgram = quic_rxbuf_purge_dgrams(rxbuf)) &&
+	    !(new_dgram = pool_alloc(pool_head_quic_dgram))) {
+		goto out;
+	}
 
 	params = &l->bind_conf->quic_params;
 	max_sz = params->max_udp_payload_size;
@@ -471,12 +473,12 @@ void quic_lstnr_sock_fd_iocb(int fd)
 	if (ret <= 0)
 		goto out;
 
+	if (quic_init_dgram(new_dgram, l, dgram_buf, ret, &saddr, &daddr))
+		goto start;
+
 	b_add(buf, ret);
-	if (!quic_lstnr_dgram_dispatch(dgram_buf, ret, l, &saddr, &daddr,
-	                               new_dgram, &rxbuf->dgram_list)) {
-		/* If wrong, consume this datagram */
-		b_sub(buf, ret);
-	}
+	quic_lstnr_dgram_dispatch(new_dgram, &rxbuf->dgram_list,
+	                          quic_get_cid_tid(new_dgram->dcid, l->bind_conf));
 	new_dgram = NULL;
 	if (--max_dgrams > 0)
 		goto start;
@@ -606,14 +608,10 @@ int qc_rcv_buf(struct quic_conn *qc)
 
 		b_add(&buf, ret);
 
-		new_dgram->owner = (void *)qc;
-		new_dgram->buf = dgram_buf;
-		new_dgram->len = ret;
-		new_dgram->dcid_len = 0;
-		new_dgram->dcid = NULL;
-		new_dgram->saddr = saddr;
-		new_dgram->daddr = daddr;
-		new_dgram->qc = NULL;  /* set later via quic_dgram_parse() */
+		if (quic_init_dgram(new_dgram, qc, dgram_buf, ret, &saddr, &daddr)) {
+			TRACE_DEVEL("invalid datagram dropped", QUIC_EV_CONN_RCV, qc);
+			continue;
+		}
 
 		TRACE_DEVEL("read datagram", QUIC_EV_CONN_RCV, qc, new_dgram);
 
@@ -647,16 +645,17 @@ int qc_rcv_buf(struct quic_conn *qc)
 			}
 
 			rxbuf_tail = (unsigned char *)b_tail(&rxbuf->buf);
+			/* update datagram fields */
+			new_dgram->owner = (void *)l;
+			new_dgram->buf = rxbuf_tail;
+			new_dgram->saddr = qc->peer_addr;
+
 			__b_putblk(&rxbuf->buf, (char *)dgram_buf, new_dgram->len);
-			if (!quic_lstnr_dgram_dispatch(rxbuf_tail, ret, l, &qc->peer_addr, &daddr,
-			                               new_dgram, &rxbuf->dgram_list)) {
-				/* TODO count lost datagrams. */
-				b_sub(&buf, ret);
-			}
-			else {
-				/* datagram must not be freed as it was requeued. */
-				new_dgram = NULL;
-			}
+			quic_lstnr_dgram_dispatch(new_dgram, &rxbuf->dgram_list,
+			                          quic_get_cid_tid(new_dgram->dcid, l->bind_conf));
+
+			/* datagram must not be freed as it was requeued. */
+			new_dgram = NULL;
 
 			MT_LIST_APPEND(&l->rx.rxbuf_list, &rxbuf->rxbuf_el);
 			continue;
