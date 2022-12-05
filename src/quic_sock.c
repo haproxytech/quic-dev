@@ -246,6 +246,45 @@ static void quic_lstnr_dgram_dispatch(struct quic_dgram *dgram,
 	tasklet_wakeup(quic_dghdlrs[cid_tid].task);
 }
 
+/*
+ * Returns 0 if there is enough space for another datagram else non-zero.
+ */
+static int quic_check_rxbuf_space(struct quic_receiver_buf *rxbuf,
+                                  size_t udp_payload_size)
+{
+	struct buffer *buf = &rxbuf->buf;
+	struct quic_dgram *dgram;
+	const size_t cspace = b_contig_space(buf);
+
+	if (b_contig_space(buf) < udp_payload_size) {
+		/* Do no mark <buf> as full, and do not try to consume it
+		 * if the contiguous remaining space is not at the end
+		 */
+		if (b_tail(buf) + cspace < b_wrap(buf))
+			return 1;
+
+		/* Allocate a fake datagram, without data to locate
+		 * the end of the RX buffer (required during purging).
+		 */
+		dgram = pool_alloc(pool_head_quic_dgram);
+		BUG_ON(!dgram);
+
+		/* Initialize only the useful members of this fake datagram. */
+		dgram->buf = NULL;
+		dgram->len = cspace;
+		/* Append this datagram only to the RX buffer list. It will
+		 * not be treated by any datagram handler.
+		 */
+		LIST_APPEND(&rxbuf->dgram_list, &dgram->recv_list);
+
+		/* Consume the remaining space */
+		b_add(buf, cspace);
+		if (b_contig_space(buf) < udp_payload_size)
+			return 1;
+	}
+	return 0;
+}
+
 /* This function is responsible to remove unused datagram attached in front of
  * <buf>. Each instances will be freed until a not yet consumed datagram is
  * found or end of the list is hit. The last unused datagram found is not freed
@@ -395,7 +434,7 @@ void quic_lstnr_sock_fd_iocb(int fd)
 	struct quic_transport_params *params;
 	/* Source address */
 	struct sockaddr_storage saddr = {0}, daddr = {0};
-	size_t max_sz, cspace;
+	size_t max_sz;
 	struct quic_dgram *new_dgram;
 	unsigned char *dgram_buf;
 	int max_dgrams;
@@ -428,41 +467,11 @@ void quic_lstnr_sock_fd_iocb(int fd)
 
 	params = &l->bind_conf->quic_params;
 	max_sz = params->max_udp_payload_size;
-	cspace = b_contig_space(buf);
-	if (cspace < max_sz) {
+	if (b_contig_space(buf) < max_sz) {
 		struct proxy *px = l->bind_conf->frontend;
 		struct quic_counters *prx_counters = EXTRA_COUNTERS_GET(px->extra_counters_fe, &quic_stats_module);
-		struct quic_dgram *dgram;
-
-		/* Do no mark <buf> as full, and do not try to consume it
-		 * if the contiguous remaining space is not at the end
-		 */
-		if (b_tail(buf) + cspace < b_wrap(buf)) {
-			HA_ATOMIC_INC(&prx_counters->rxbuf_full);
-			goto out;
-		}
-
-		/* Allocate a fake datagram, without data to locate
-		 * the end of the RX buffer (required during purging).
-		 */
-		dgram = pool_alloc(pool_head_quic_dgram);
-		if (!dgram)
-			goto out;
-
-		/* Initialize only the useful members of this fake datagram. */
-		dgram->buf = NULL;
-		dgram->len = cspace;
-		/* Append this datagram only to the RX buffer list. It will
-		 * not be treated by any datagram handler.
-		 */
-		LIST_APPEND(&rxbuf->dgram_list, &dgram->recv_list);
-
-		/* Consume the remaining space */
-		b_add(buf, cspace);
-		if (b_contig_space(buf) < max_sz) {
-			HA_ATOMIC_INC(&prx_counters->rxbuf_full);
-			goto out;
-		}
+		HA_ATOMIC_INC(&prx_counters->rxbuf_full);
+		goto out;
 	}
 
 	dgram_buf = (unsigned char *)b_tail(buf);
@@ -480,11 +489,18 @@ void quic_lstnr_sock_fd_iocb(int fd)
 	quic_lstnr_dgram_dispatch(new_dgram, &rxbuf->dgram_list,
 	                          quic_get_cid_tid(new_dgram->dcid, l->bind_conf));
 	new_dgram = NULL;
+	if (quic_check_rxbuf_space(rxbuf, max_sz)) {
+		MT_LIST_APPEND(&l->rx.rxbuf_list, &rxbuf->rxbuf_el);
+		rxbuf = NULL;
+		goto out;
+	}
+
 	if (--max_dgrams > 0)
 		goto start;
  out:
 	pool_free(pool_head_quic_dgram, new_dgram);
-	MT_LIST_APPEND(&l->rx.rxbuf_list, &rxbuf->rxbuf_el);
+	if (rxbuf)
+		MT_LIST_INSERT(&l->rx.rxbuf_list, &rxbuf->rxbuf_el);
 }
 
 /* FD-owned quic-conn socket callback. */
@@ -657,7 +673,10 @@ int qc_rcv_buf(struct quic_conn *qc)
 			/* datagram must not be freed as it was requeued. */
 			new_dgram = NULL;
 
-			MT_LIST_APPEND(&l->rx.rxbuf_list, &rxbuf->rxbuf_el);
+			if (quic_check_rxbuf_space(rxbuf, max_sz))
+				MT_LIST_APPEND(&l->rx.rxbuf_list, &rxbuf->rxbuf_el);
+			else
+				MT_LIST_INSERT(&l->rx.rxbuf_list, &rxbuf->rxbuf_el);
 			continue;
 		}
 
