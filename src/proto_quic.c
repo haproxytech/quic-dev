@@ -53,7 +53,8 @@
 struct quic_dghdlr *quic_dghdlrs;
 
 /* Size of the internal buffer of QUIC RX buffer at the fd level */
-#define QUIC_RX_BUFSZ  (1UL << 18)
+//#define QUIC_RX_BUFSZ  (1UL << 18)
+#define QUIC_RX_BUFSZ  (1UL << 12)
 
 DECLARE_STATIC_POOL(pool_head_quic_rxbuf, "quic_rxbuf", QUIC_RX_BUFSZ);
 

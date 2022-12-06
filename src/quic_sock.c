@@ -265,6 +265,7 @@ static int quic_check_rxbuf_space(struct quic_receiver_buf *rxbuf,
 		 * if the contiguous remaining space is not at the end
 		 */
 		if (b_tail(buf) + cspace < b_wrap(buf)) {
+			fprintf(stderr, "FULL !!!\n");
 			HA_ATOMIC_STORE(&rxbuf->full, 1);
 			return 1;
 		}
@@ -286,6 +287,7 @@ static int quic_check_rxbuf_space(struct quic_receiver_buf *rxbuf,
 		/* Consume the remaining space */
 		b_add(buf, cspace);
 		if (b_contig_space(buf) < udp_payload_size) {
+			fprintf(stderr, "FULL2 !!!\n");
 			HA_ATOMIC_STORE(&rxbuf->full, 1);
 			return 1;
 		}
@@ -494,24 +496,40 @@ void quic_lstnr_sock_fd_iocb(int fd)
 		goto start;
 
 	b_add(buf, ret);
-	quic_lstnr_dgram_dispatch(new_dgram, rxbuf, &rxbuf->dgram_list,
-	                          quic_get_cid_tid(new_dgram->dcid, l->bind_conf));
-	new_dgram = NULL;
 	if (quic_check_rxbuf_space(rxbuf, max_sz)) {
+		if (MT_LIST_ISEMPTY(&l->rx.rxbuf_list)) {
+			fd_stop_recv(l->rx.fd);
+			fprintf(stderr, "FD_STOP_RECV()\n");
+		}
+		quic_lstnr_dgram_dispatch(new_dgram, rxbuf, &rxbuf->dgram_list,
+		                          quic_get_cid_tid(new_dgram->dcid, l->bind_conf));
+		new_dgram = NULL;
 		rxbuf = NULL;
-		goto out;
 	}
-
-	if (--max_dgrams > 0)
-		goto start;
+	else {
+		quic_lstnr_dgram_dispatch(new_dgram, rxbuf, &rxbuf->dgram_list,
+		                          quic_get_cid_tid(new_dgram->dcid, l->bind_conf));
+		new_dgram = NULL;
+		if (--max_dgrams > 0)
+			goto start;
+	}
  out:
 	pool_free(pool_head_quic_dgram, new_dgram);
 	if (rxbuf) {
+		//const char list_was_empty = MT_LIST_ISEMPTY(&l->rx.rxbuf_list);
 		MT_LIST_INSERT(&l->rx.rxbuf_list, &rxbuf->rxbuf_el);
+		//if (list_was_empty) {
+			fd_want_recv(l->rx.fd);
+			fprintf(stderr, "FD_WANT_RECV()\n");
+		//}
 	}
 	else {
-		if (MT_LIST_ISEMPTY(&l->rx.rxbuf_list))
+#if 0
+		if (MT_LIST_ISEMPTY(&l->rx.rxbuf_list)) {
 			fd_stop_recv(l->rx.fd);
+			fprintf(stderr, "FD_STOP_RECV()\n");
+		}
+#endif
 	}
 }
 

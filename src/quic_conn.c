@@ -7445,11 +7445,17 @@ int quic_dgram_parse(struct quic_dgram *dgram)
 	/* Mark this datagram as consumed */
 	HA_ATOMIC_STORE(&dgram->buf, NULL);
 
+	//fprintf(stderr, "COUNT %d\n", dgram->rxbuf->bufcount);
+	BUG_ON(!HA_ATOMIC_LOAD(&dgram->rxbuf->bufcount));
 	if (!HA_ATOMIC_SUB_FETCH(&dgram->rxbuf->bufcount, 1)) {
 		if (HA_ATOMIC_LOAD(&dgram->rxbuf->full)) {
 			HA_ATOMIC_STORE(&dgram->rxbuf->full, 0);
+			fprintf(stderr, "EMPTY\n");
+			//if (MT_LIST_ISEMPTY(&li->rx.rxbuf_list)) {
+				fd_want_recv(li->rx.fd);
+				fprintf(stderr, "FD_WANT_RECV2()\n");
+			//}
 			MT_LIST_APPEND(&li->rx.rxbuf_list, &dgram->rxbuf->rxbuf_el);
-			fd_want_recv(li->rx.fd);
 		}
 	}
 
