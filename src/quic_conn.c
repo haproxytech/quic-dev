@@ -4784,6 +4784,8 @@ static struct quic_conn *qc_new_conn(const struct quic_version *qv, int ipv4,
 		goto err;
 	}
 
+	qc->obj_type = OBJ_TYPE_QC_CONN;
+
 	buf_area = pool_alloc(pool_head_quic_conn_rxbuf);
 	if (!buf_area) {
 		TRACE_ERROR("Could not allocate a new RX buffer", QUIC_EV_CONN_INIT, qc);
@@ -7325,27 +7327,39 @@ REGISTER_POST_DEINIT(__quic_conn_deinit);
  * content to a quic-conn instance. The datagram content can be released after
  * this function.
  *
- * If datagram has been received on a quic-conn owned FD, <from_qc> must be set
- * to the connection instance. <li> is the attached listener. The caller is
- * responsible to ensure that the first packet is destined to this connection
- * by comparing CIDs.
+ * If datagram has been received on a quic-conn owned FD, <dgram.owner> must
+ * point to the its instance. The caller is responsible to ensure that the
+ * first packet is destined to this connection by comparing CIDs.
  *
- * If datagram has been received on a receiver FD, <from_qc> will be NULL. This
- * function will thus retrieve the connection from the CID tree or allocate a
- * new one if possible. <li> is the listener attached to the receiver.
+ * If datagram has been received on a receiver FD, <dgram.owner> must point to
+ * the listener instance. The connection will be retrieved from the CID tree or
+ * a new one allocated if possible.
  *
  * Returns 0 on success else non-zero. If an error happens, some packets from
  * the datagram may not have been parsed.
  */
-int quic_dgram_parse(struct quic_dgram *dgram, struct quic_conn *from_qc,
-                     struct listener *li)
+int quic_dgram_parse(struct quic_dgram *dgram)
 {
 	struct quic_rx_packet *pkt;
 	struct quic_conn *qc = NULL;
+	struct listener *li = NULL;
 	unsigned char *pos, *end;
 	struct list *tasklist_head = NULL;
 
 	TRACE_ENTER(QUIC_EV_CONN_LPKT);
+
+	switch (obj_type(dgram->owner)) {
+	case OBJ_TYPE_QC_CONN:
+		qc = __objt_qc_conn(dgram->owner);
+		li = qc->li;
+		break;
+	case OBJ_TYPE_LISTENER:
+		/* qc is left as a NULL */
+		li = __objt_listener(dgram->owner);
+		break;
+	default:
+		ABORT_NOW(); /* datagram must point on a quic_conn or a listener. */
+	}
 
 	pos = dgram->buf;
 	end = pos + dgram->len;
@@ -7375,7 +7389,7 @@ int quic_dgram_parse(struct quic_dgram *dgram, struct quic_conn *from_qc,
 		 * with different DCID as the first one in the same datagram.
 		 */
 		if (!qc) {
-			qc = from_qc ? from_qc : quic_rx_pkt_retrieve_conn(pkt, dgram, li);
+			qc = quic_rx_pkt_retrieve_conn(pkt, dgram, li);
 			/* qc is NULL if receiving a non Initial packet for an
 			 * unknown connection.
 			 */

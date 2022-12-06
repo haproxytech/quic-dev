@@ -31,6 +31,7 @@
 #include <haproxy/cbuf-t.h>
 #include <haproxy/list.h>
 
+#include <haproxy/obj_type-t.h>
 #include <haproxy/openssl-compat.h>
 #include <haproxy/mux_quic-t.h>
 #include <haproxy/quic_cc-t.h>
@@ -370,7 +371,7 @@ struct quic_pktns {
 
 /* QUIC datagram */
 struct quic_dgram {
-	void *owner;
+	enum obj_type *owner; /* quic_conn or listener instance */
 	unsigned char *buf;
 	size_t len;
 	unsigned char *dcid;
@@ -622,6 +623,7 @@ enum qc_mux_state {
 #define QUIC_FL_CONN_DRAINING                    (1U << 30)
 #define QUIC_FL_CONN_IMMEDIATE_CLOSE             (1U << 31)
 struct quic_conn {
+	enum obj_type obj_type;
 	const struct quic_version *original_version;
 	const struct quic_version *negotiated_version;
 	/* Negotiated version Initial TLS context */

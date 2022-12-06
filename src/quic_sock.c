@@ -178,7 +178,7 @@ struct task *quic_lstnr_dghdlr(struct task *t, void *ctx, unsigned int state)
 	TRACE_ENTER(QUIC_EV_CONN_LPKT);
 
 	while ((dgram = MT_LIST_POP(&dghdlr->dgrams, typeof(dgram), handler_list))) {
-		if (quic_dgram_parse(dgram, NULL, dgram->owner)) {
+		if (quic_dgram_parse(dgram)) {
 			/* TODO should we requeue the datagram ? */
 			break;
 		}
@@ -606,6 +606,7 @@ int qc_rcv_buf(struct quic_conn *qc)
 
 		b_add(&buf, ret);
 
+		new_dgram->owner = (void *)qc;
 		new_dgram->buf = dgram_buf;
 		new_dgram->len = ret;
 		new_dgram->dcid_len = 0;
@@ -661,7 +662,7 @@ int qc_rcv_buf(struct quic_conn *qc)
 			continue;
 		}
 
-		quic_dgram_parse(new_dgram, qc, qc->li);
+		quic_dgram_parse(new_dgram);
 		/* A datagram must always be consumed after quic_parse_dgram(). */
 		BUG_ON(new_dgram->buf);
 	} while (ret > 0);

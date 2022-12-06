@@ -756,8 +756,7 @@ void qc_check_close_on_released_mux(struct quic_conn *qc);
 
 void quic_conn_release(struct quic_conn *qc);
 
-int quic_dgram_parse(struct quic_dgram *dgram, struct quic_conn *qc,
-                     struct listener *li);
+int quic_dgram_parse(struct quic_dgram *dgram);
 
 #endif /* USE_QUIC */
 #endif /* _HAPROXY_QUIC_CONN_H */
