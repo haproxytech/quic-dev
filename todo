@@ -101,6 +101,11 @@ qui cause l'envoi d'un datagramme par RESET_STREAM. À optimiser tout en gardant
 la possibilité de savoir si un RESET_STREAM n'a pu être envoyé pour un stream.
 => MEDIUM
 
+BUG -> revoir la priorisation des streams
+* avoir une liste des qcs prêt à émettre
+* gérer les priorités pour garantir l'envoi des SETTINGS en premier
+=> MAJOR NUMERO 1
+
 FERMETURE CONNECTION MUX
 améliorer l'envoi GOAWAY / CONNECTION_CLOSE
 => MINOR
@@ -151,6 +156,10 @@ GESTION DE LA MIGRATION DANS LE CAS DES FD PAR CONNEXION
     en interne comme on le fait déjà.
 => MINOR
 
+- annoncer le non-support de la migration via le TP pour le moment
+  à rendre configurable par la suite une fois implémenté
+=> MAJOR
+
 RECV DATAGRAM / RXBUF (QUIC_RECEIVER_BUF)
 * ne pas faire d'APPEND systématique après usage d'un rxbuf
   plutot faire un INSERT en tête de liste, sauf si taille insuffisante pour
@@ -159,9 +168,27 @@ RECV DATAGRAM / RXBUF (QUIC_RECEIVER_BUF)
 * remplacer le fake datagram par un champ de la structure rxbuf
   cela économiserait l'allocation d'un quic_dgram
 * faire un realign_if_empty, probablement avant de tester l'espace contigue
+* aligner les datagrammes buffer sur la ligne de cache
 * remplacer l'io-cb par une tasklet
   obligatoire pour supporter le polling en mode edge-triggered
   wakeup de la tasklet si on a atteint le nombre max de dgrams à lire avant de bloquer
   un bon compromis serait de lire maximum 2 datagrammes directement dans l'io-cb
   si 2e datagramme lu, faire un tasklet_wakeup afin de limiter le travail dans l'io-cb
+* impossible d'utiliser des fd_stop_recv : dans ce cas, peut etre drop un datagramme
+  pour eviter de consommer du CPU. Dans ce cas, peut etre ne le faire qu'à partir
+  d'un certain nombre d'échecs successifs pour éviter de dropper trop vite.
 => MEDIUM
+
+* nettoyage des structures avec pa_hole
+
+* ackranges
+  nombre d'éléments alloués importants ?
+  à déterminer si cela est justifié ou non
+=> MEDIUM
+
+* implémentation BBR
+=> MINOR
+
+* SSL asynchrone
+=> MINOR
+   mais MEDIUM pour le travail d'analyse et savoir les changements d'archi à faire
