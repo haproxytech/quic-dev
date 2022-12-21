@@ -1,16 +1,22 @@
-* anti-replay TLS à activer ?
+DDOS -> * anti-replay TLS à activer ?
+ -> drop des paquets 0RTT
+ -> voir à activer l'option SSL_OP_NO_ANTI_REPLAY
+ si problématique peut être annoncer le non-support de 0RTT avec QUIC
+
+DDOS -> * Retry : revoir la génération du token
+  -> générer une clé random au démarrage, changer la clé toutes les 10s (invalider la clé d'avant ou garder la clé précédente)
+
 * voir ce qu'il faut faire quand le build d'un packet échoue pour les trames,
   peut-être ne les insérer dans le paquet que si correctement buildé (le paquet)
   -> le MUX fait du retry opportuniste, ce serait plutôt à la quic-conn de le faire
   -> voir les URLs des gros fichiers sur haproxy.org pour tester
+=> MINOR: à revoir en 2.9 avec la gestion des buffers dynamiques
 
 * voir si le paquet Version Negotiation doit être toujours émis (ou que pour une connection établie)
-
-DDOS -> * drop des paquets 0RTT
- -> voir à activer l'option SSL_OP_NO_ANTI_REPLAY
- si problématique peut être annoncer le non-support de 0RTT avec QUIC
+=> ???
 
 OPTIM * diminuer le nombre de tasklet_wakeup nécessaire au traitement d'un paquet
+=> MINOR
 
 Amélioration diagnostic QUIC
 * support pcap + keylogfile
@@ -19,42 +25,50 @@ Amélioration diagnostic QUIC
 * amélioration trace
   -> définir des niveaux de traces
   -> réutiliser la quic_conn pour lockon sur les traces MUX
+* avoir compteurs par connexion : paquet émis, paquet retransmis, ...
+  addition de ces compteurs sur free de la connexion vers les compteurs globaux
+* avoir un "show quic" ?
 
 Tx transport quic-conn
 * utiliser sendmsg/sendmmsg pour support envoi datagrammes >16ko
-URGENT -> * gérer les cas d'erreur de sendto
+=> MINOR
+* gérer les cas d'erreur de sendto
   nécessite de gérer l'abonnemement des fds au poller via fd_cant_recv
   abonnement des quic_conn dans des listes par threads attachés aux receivers
   sur réveil de l'IO CB du receiver, lock ou detach de la list head par le
   premier thread réveillé, et wakeup sur l'ensemble des listes
-URGENT -> * revue des erreurs sur envoi trames
+=> MINOR : rendu obsolète suite aux fd par connexion
+MAINTENANCE -> * revue des erreurs sur envoi trames
   trier les erreurs temporaires et les erreurs permanentes
   permettre au maxium à la couche MUX de s'inscrire en cas d'erreur
   nécessite que la quic-conn réveille le MUX ensuite sur la condition (réception ACK si congestion, allocation réussie si erreur alloc, ...)
   en cas d'erreur permanente fermer la connexion voire le process
+=> MINOR
 
 * la quic-conn peut être conservée le temps de la durée de vie du MUX
   possiblement nettoyer des parties devenus inutile de la quic-conn
+=> MINOR
 
 DISPATCH DES CONNEXIONS
  * sur allocation des nouveaux CID, assigner le CID sur le thread le moins
  chargé plutôt que le thread courant. Pour éviter de locker sur création CID,
  probablement redispatcher le paquet vers le thread le moins chargé et flagger
  le paquet comme devant donner lieu à création de la quic_conn.
+=> MEDIUM
 
  Sur ce point, il serait possible de se passer de l'arbre des ODCID en assignant
- nous-m�mes le CID � partir de l'ODCID. On le hashe avec sa source, �a nous donne
+ nous-mêmes le CID à partir de l'ODCID. On le hashe avec sa source, ça nous donne
  les 52 bits de poids fort du CID (si c'est bien du 64-bits), et on stocke l'ID
- du thread dans les 12 bits de poids faible. Comme �a on n'utilise plus que les
- CID finaux comme cl� de stockage, et si on ne trouve pas un CID lors d'un lookup,
- alors on consid�re que c'est peut-�tre un ODCID, on applique le calcul ci-dessus
+ du thread dans les 12 bits de poids faible. Comme ça on n'utilise plus que les
+ CID finaux comme clé de stockage, et si on ne trouve pas un CID lors d'un lookup,
+ alors on considère que c'est peut-être un ODCID, on applique le calcul ci-dessus
  (sans le thread id) et on fait un lookup_ge() dans l'arbre (les arbres?) de
- connexions. Si on en trouve un qui correspond, c'est gagn� et on a en prime le
- thread ID associ�. Donc on pourrait tr�s bien stocker les CID finaux dans un
- arbre lock� temporaire (�quivalent des ODCID actuels) tant que le client n'a
- pas confirm� l'utilisation de notre CID, et ne les d�placer dans l'arbre du
- thread qu'une fois que le client a confirm� avoir adopt� notre CID. Ainsi, on
- n'a jamais besoin de m�moriser l'ODCID, soit le client parle avec le CID et on
+ connexions. Si on en trouve un qui correspond, c'est gagné et on a en prime le
+ thread ID associé. Donc on pourrait très bien stocker les CID finaux dans un
+ arbre locké temporaire (équivalent des ODCID actuels) tant que le client n'a
+ pas confirmé l'utilisation de notre CID, et ne les déplacer dans l'arbre du
+ thread qu'une fois que le client a confirmé avoir adopté notre CID. Ainsi, on
+ n'a jamais besoin de mémoriser l'ODCID, soit le client parle avec le CID et on
  a l'info en direct, soit il parle avec l'ODCID et on retrouve l'info.
 
 CONNECTION_CLOSE DURING HANDSHAKE
@@ -65,29 +79,36 @@ https://datatracker.ietf.org/doc/html/rfc9000#section-10.2.3
   d'encryption selon le contexte du client pour garantir qu'il pourra être
   déchiffré. À l'heure actuelle cela n'est pas fait et le CONNECTION_CLOSE est
   envoyé uniquement au niveau actuel de la struct quic_conn
+=> MINOR
 
 RACE FIN DE HANDSHAKE et INIT MUX ?
 vérifier s'il est possible de recevoir des STREAM ou autres trames destinés au
 MUX avant son initialisation. Si oui, prévoir de bufferiser ces trames ou
 désactiver temporairement la lecture du Rx buf, ou au pire dropper ces trames
 en attente de réémission par le client.
+=> MINOR
 
 MAINTIEN DE LA CONNEXION PAR LA QUIC-CONN
 la quic-conn devrait tenter de maintenir la connexion explicitement ouverte
 tant que le MUX reste actif. Pour cela il est nécessaire d'émettre des PING si
 aucune communication en cours. Cependant il faut rester économe, possiblement
 en envoyant un PING que sur expiration proche de l'idle timeout QUIC.
+=> MINOR
 
 OPTIM -> émission RESET_STREAM par le MUX
 chaque stream envoie son RESET_STREAM indépendamment à la couche QUIC-CONN ce
 qui cause l'envoi d'un datagramme par RESET_STREAM. À optimiser tout en gardant
 la possibilité de savoir si un RESET_STREAM n'a pu être envoyé pour un stream.
+=> MEDIUM
 
 FERMETURE CONNECTION MUX
 améliorer l'envoi GOAWAY / CONNECTION_CLOSE
+=> MINOR
 
 H3
-* supporter les trailers HTTP/3
+* supporter les trailers HTTP/3 (surtout sur les réponses HTTP !!)
+  utilisé par GRPC
+=> MEDIUM
 
 REFACTOR
 * qc_dup_pkt_frms(): parsing des streams à refactorer avec le recv ?
@@ -98,6 +119,7 @@ REFACTOR
 * identifier le code commun h3/hq-interop et le déplacer dans la couche MUX
   par exemple h3_decode_qcs/hq_interop_decode_qcs vers qcc_decode_qcs
     h3_snd_buf/hq_interop_snd_buf vers qc_snd_buf
+=> MINOR
 
 ARCHI REVIEW
 * sur reception CONNECTION_CLOSE
@@ -114,30 +136,32 @@ ARCHI REVIEW
 => MINOR
 
 GESTION DE LA MIGRATION DANS LE CAS DES FD PAR CONNEXION
- Lorsqu'on aura un FD par connexion, le trafic re�u par les FD se r�partira
+ Lorsqu'on aura un FD par connexion, le trafic reçu par les FD se répartira
  comme suit:
    - toutefois en cas de migration d'IP et/ou de port, la connexion ne matchera
-     plus les paquets et le trafic arrivera � nouveau par le receiver global.
-     Il faudra alors �tre en mesure de flaguer la connexion pour dire qu'elle
-     est en cours de migration, de sorte que son I/O handler, d�s qu'il aura
-     besoin d'�mettre, bute la connexion en cours et la recr�e vers la nouvelle
-     destination (soit avec le m�me FD soit avec un autre selon ce qui est
-     possible). Au moins �a se fera depuis le bon thread et on n'aura pas
-     d'autre probl�me que �a.
- => il faut pr�voir qu'il y aura toujours une toute petite part de trafic mal
-    aiguill� et donc qu'il faut imp�rativement qu'on puisse le redispatcher
-    en interne comme on le fait d�j�.
+     plus les paquets et le trafic arrivera à nouveau par le receiver global.
+     Il faudra alors être en mesure de flaguer la connexion pour dire qu'elle
+     est en cours de migration, de sorte que son I/O handler, dès qu'il aura
+     besoin d'émettre, bute la connexion en cours et la recrée vers la nouvelle
+     destination (soit avec le même FD soit avec un autre selon ce qui est
+     possible). Au moins ça se fera depuis le bon thread et on n'aura pas
+     d'autre problème que ça.
+ => il faut prévoir qu'il y aura toujours une toute petite part de trafic mal
+    aiguillé et donc qu'il faut impérativement qu'on puisse le redispatcher
+    en interne comme on le fait déjà.
+=> MINOR
 
 RECV DATAGRAM / RXBUF (QUIC_RECEIVER_BUF)
-* ne pas faire d'APPEND syst�matique apr�s usage d'un rxbuf
-  plutot faire un INSERT en t�te de liste, sauf si taille insuffisante pour
+* ne pas faire d'APPEND systématique après usage d'un rxbuf
+  plutot faire un INSERT en tête de liste, sauf si taille insuffisante pour
   prochains recv
-  -> possiblement d�piler un nouveau rxbuf si multiple datagrammes lus
+  -> possiblement dépiler un nouveau rxbuf si multiple datagrammes lus
 * remplacer le fake datagram par un champ de la structure rxbuf
-  cela �conomiserait l'allocation d'un quic_dgram
+  cela économiserait l'allocation d'un quic_dgram
 * faire un realign_if_empty, probablement avant de tester l'espace contigue
 * remplacer l'io-cb par une tasklet
   obligatoire pour supporter le polling en mode edge-triggered
-  wakeup de la tasklet si on a atteint le nombre max de dgrams � lire avant de bloquer
+  wakeup de la tasklet si on a atteint le nombre max de dgrams à lire avant de bloquer
   un bon compromis serait de lire maximum 2 datagrammes directement dans l'io-cb
   si 2e datagramme lu, faire un tasklet_wakeup afin de limiter le travail dans l'io-cb
+=> MEDIUM
