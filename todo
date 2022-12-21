@@ -10,19 +10,7 @@ DDOS -> * drop des paquets 0RTT
  -> voir à activer l'option SSL_OP_NO_ANTI_REPLAY
  si problématique peut être annoncer le non-support de 0RTT avec QUIC
 
-* limiter le boulot pour quic_lstnr_dghdlr() (nombre de dgrams à traiter ?)
-réutiliser le max-poll-event ou avoir un settings indépendant
-
 OPTIM * diminuer le nombre de tasklet_wakeup nécessaire au traitement d'un paquet
-
-DDOS -> * Retry : revoir la génération du token
-  -> générer une clé random au démarrage, changer la clé toutes les 10s (invalider la clé d'avant ou garder la clé précédente)
-  -> concaténér avec l'adresse IP du client + le DCID
-  -> avoir une heuristique pour activer la validation du Retry
-      probablement un compteur de connexions en cours d'activation (quic-conn avant handshake), possiblement configuré via un settings global
-* g�n�rer cl� automatique si cluster-secret non d�fini
-  -> invalide le Retry token en cas de reload/red�marrage du process
-* erreur si cluster-secret non sp�cifi� et quic-force-retry activ�
 
 Amélioration diagnostic QUIC
 * support pcap + keylogfile
@@ -31,7 +19,6 @@ Amélioration diagnostic QUIC
 * amélioration trace
   -> définir des niveaux de traces
   -> réutiliser la quic_conn pour lockon sur les traces MUX
-  -> avoir des traces H3
 
 Tx transport quic-conn
 * utiliser sendmsg/sendmmsg pour support envoi datagrammes >16ko
@@ -46,45 +33,10 @@ URGENT -> * revue des erreurs sur envoi trames
   nécessite que la quic-conn réveille le MUX ensuite sur la condition (réception ACK si congestion, allocation réussie si erreur alloc, ...)
   en cas d'erreur permanente fermer la connexion voire le process
 
-
-DDOS -> * Initial pkt len check : vérifier quelle soit bien checkée (1200 octets ?)
-
 * la quic-conn peut être conservée le temps de la durée de vie du MUX
   possiblement nettoyer des parties devenus inutile de la quic-conn
 
-* fred a fait grave de la merde
-encore une fois
-problème d'initialisation des adresses des connexions dans new_quic_cli_conn()
-saddr utilisé pour conn->dst -> doit être conn->src
- et flag TO_SET -> FROM_SET
- et il faut récupérer l'adresse destination pour la mettre dans conn->dst
-doit fixer l'affichage dans les LOGS des adresses sur haproxy.org via PROXY_PROTOCOL
-
-BUG -> * MUX problème flag CS_EP_EOS
-positionné trop tôt, ce qui cause l'échec d'un POST avec HTTP 400 avec abortonclose
-ne doit être mis que lorsque un stream est sur le point d'être fermé Rx+Tx
-
-BUG/CRASH -> MUX interrompu en cours de transfer
-  0x000055555560ca60 in qcs_free (qcs=0x7ffff0049e90) at src/mux_quic.c:181
-  181             BUG_ON(qcs->endp && !(qcs->endp->flags & CS_EP_ORPHAN));
-implémenté une logique similaire au mux-h2
-envoi d'un GOAWAY ou release si aucun stream ouvert
-laisser les streams ouverts se terminés de manière habituelle
-
-STREAM
- -> erreur si réception du meme offset avec des data différentes
-   PROTOCOL_VIOLATION
-rfc9000 2.2. Sending and Receiving Data
- The data at a given offset MUST NOT change if it is sent
- multiple times; an endpoint MAY treat receipt of different data at
- the same offset within a stream as a connection error of type
- PROTOCOL_VIOLATION.
-
-NCBUF -> static inline pour les fonctions les plus utilisées
-
 DISPATCH DES CONNEXIONS
- * sur réception des premiers paquets Initial avec ODCID, s'assurer qu'on
- redispatch sur un thread valide pour le listener
  * sur allocation des nouveaux CID, assigner le CID sur le thread le moins
  chargé plutôt que le thread courant. Pour éviter de locker sur création CID,
  probablement redispatcher le paquet vers le thread le moins chargé et flagger
@@ -133,9 +85,6 @@ la possibilité de savoir si un RESET_STREAM n'a pu être envoyé pour un stream
 
 FERMETURE CONNECTION MUX
 améliorer l'envoi GOAWAY / CONNECTION_CLOSE
-à l'heure actuelle fermeture du MUX après envoi du GOAWAY
-* soit envoyer GOAWAY+CONNECTION_CLOSE si possible
-* ou graceful shutdown avec envoi GOAWAY et maintien du MUX jusqu'à envoi du CONNECTION_CLOSE
 
 H3
 * supporter les trailers HTTP/3
@@ -162,21 +111,11 @@ ARCHI REVIEW
   -> remplissage du buffer d'envoi par la quic-conn
   -> envoi du buffer lorsque datagramme rempli
   -> conversation entre chaque envoi
+=> MINOR
 
 GESTION DE LA MIGRATION DANS LE CAS DES FD PAR CONNEXION
  Lorsqu'on aura un FD par connexion, le trafic re�u par les FD se r�partira
  comme suit:
-   - FD du receiver: quelques occasionnels datagrammes d'une nouvelle connexion
-     auront d�j� �t� mis en queue par le kernel s'ils sont re�us avant que
-     le bind()+connect() ne se fasse, donc ils seront re�us par ce biais et
-     il faudra maintenir le dispatch
-   - FD de la nouvelle connexion: quelques occasionnels datagrammes destin�s
-     � n'importe quelle autre connexion arriveront entre le bind() et le
-     connect(). La plupart du temps il s'agira de datagrammes non mapp�s sur
-     une connexion, ou appartenant � une connexion non encore finalis�e.
-   - dans les deux cas il faudra faire le redispatch vers la bonne queue
-     (c'est � dire qu'on retombe dans le cas actuel pour une infime part des
-     datagrammes re�us).
    - toutefois en cas de migration d'IP et/ou de port, la connexion ne matchera
      plus les paquets et le trafic arrivera � nouveau par le receiver global.
      Il faudra alors �tre en mesure de flaguer la connexion pour dire qu'elle
