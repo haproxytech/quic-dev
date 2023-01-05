@@ -20,14 +20,22 @@ OPTIM * diminuer le nombre de tasklet_wakeup nécessaire au traitement d'un paqu
 
 Amélioration diagnostic QUIC
 * support pcap + keylogfile
+=> MINOR
 * support QLOG
   -> regarder intérêt du QLOG avec QVIS
+=> MINOR
 * amélioration trace
   -> définir des niveaux de traces
   -> réutiliser la quic_conn pour lockon sur les traces MUX
+=> MEDIUM
 * avoir compteurs par connexion : paquet émis, paquet retransmis, ...
   addition de ces compteurs sur free de la connexion vers les compteurs globaux
-* avoir un "show quic" ?
+  à implémenter via un "show quic" équivalent au "show fd" ?
+  peut etre ajouter les clés de session pour déchiffrer le trafic
+* compléter dev/flags pour QUIC
+* avoir un "show listener" ? permettrait de diagnostiquer la partie quic-sock/quic-receiver-buf
+  faire comme "show activity" pour des compteurs par thread ?
+=> MEDIUM
 
 Tx transport quic-conn
 * utiliser sendmsg/sendmmsg pour support envoi datagrammes >16ko
@@ -190,5 +198,26 @@ RECV DATAGRAM / RXBUF (QUIC_RECEIVER_BUF)
 => MINOR
 
 * SSL asynchrone
+=> MEDIUM: travail d'analyse pour déterminer si l'archi est compatible
 => MINOR
-   mais MEDIUM pour le travail d'analyse et savoir les changements d'archi à faire
+
+* analyse remontée des erreurs via CONNECTION_CLOSE
+* remontée des erreurs H3 via "show error". Et aussi erreurs QUIC ?
+  générer une représentation textuelle des trames binaires pour les dumper dans les captures d'erreur
+  -> et remplacer le buffer unique par un ring pour dumper plusieurs erreurs
+=> MEDIUM
+
+* mécanisme pour facilement ignorer le QUIC de la config
+  -> avoir un global statement 'no-quic' et ignorer les listeners QUIC + sample fetch quic-enabled pour les lignes alt-svc
+     possiblement créer les listeners mais ne rien faire concrètement pour ne pas décaler les IDs des listeners
+=> MAJOR
+
+* ajouter une stat sur la version HTTP utilisée + clear/SSL
+=> MAJOR
+
+* QUIC coté backend
+=> MINOR
+
+* manque d'outillages
+  regtest, benchmark, ...
+=> MINOR
