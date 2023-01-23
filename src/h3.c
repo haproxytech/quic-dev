@@ -1624,6 +1624,22 @@ static int h3_attach(struct qcs *qcs, void *conn_ctx)
 	return 0;
 }
 
+static void h3_reset(struct qcs *qcs)
+{
+	TRACE_ENTER(H3_EV_H3S_END, qcs->qcc->conn, qcs);
+
+	if (!b_data(&qcs->tx.buf) && !qcs->tx.offset) {
+		TRACE_STATE("no response received, reject stream", H3_EV_H3S_END, qcs->qcc->conn, qcs);
+		qcc_reset_stream(qcs, H3_REQUEST_REJECTED);
+	}
+	else if (qcs->flags & QC_SF_MORE_HTX_DATA) {
+		TRACE_STATE("stream resetted before end of data", H3_EV_H3S_END, qcs->qcc->conn, qcs);
+		qcc_reset_stream(qcs, H3_REQUEST_CANCELLED);
+	}
+
+	TRACE_LEAVE(H3_EV_H3S_END, qcs->qcc->conn, qcs);
+}
+
 static void h3_detach(struct qcs *qcs)
 {
 	struct h3s *h3s = qcs->ctx;
@@ -1779,6 +1795,7 @@ const struct qcc_app_ops h3_ops = {
 	.attach      = h3_attach,
 	.decode_qcs  = h3_decode_qcs,
 	.snd_buf     = h3_snd_buf,
+	.reset       = h3_reset,
 	.detach      = h3_detach,
 	.finalize    = h3_finalize,
 	.shutdown    = h3_shutdown,

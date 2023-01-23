@@ -122,6 +122,7 @@ struct qcc {
 #define QC_SF_TO_RESET          0x00000080  /* a RESET_STREAM must be sent */
 #define QC_SF_HREQ_RECV         0x00000100  /* a full HTTP request has been received */
 #define QC_SF_TO_STOP_SENDING   0x00000200  /* a STOP_SENDING must be sent */
+#define QC_SF_MORE_HTX_DATA     0x00000400  /* more HTX data expected from upper stream layer */
 
 /* Maximum size of stream Rx buffer. */
 #define QC_S_RX_BUF_SZ   (global.tune.bufsize - NCB_RESERVED_SZ)
@@ -192,6 +193,7 @@ struct qcc_app_ops {
 	int (*attach)(struct qcs *qcs, void *conn_ctx);
 	ssize_t (*decode_qcs)(struct qcs *qcs, struct buffer *b, int fin);
 	size_t (*snd_buf)(struct qcs *qcs, struct htx *htx, size_t count);
+	void (*reset)(struct qcs *qcs);
 	void (*detach)(struct qcs *qcs);
 	int (*finalize)(void *ctx);
 	void (*shutdown)(void *ctx);                    /* Close a connection. */

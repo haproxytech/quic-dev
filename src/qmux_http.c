@@ -81,6 +81,11 @@ size_t qcs_http_snd_buf(struct qcs *qcs, struct buffer *buf, size_t count,
 	ret = qcs->qcc->app_ops->snd_buf(qcs, htx, count);
 	*fin = (htx->flags & HTX_FL_EOM) && htx_is_empty(htx);
 
+	if (htx->extra && htx->extra != HTX_UNKOWN_PAYLOAD_LENGTH)
+		qcs->flags |= QC_SF_MORE_HTX_DATA;
+	else
+		qcs->flags &= ~QC_SF_MORE_HTX_DATA;
+
 	htx_to_buf(htx, buf);
 
 	TRACE_LEAVE(QMUX_EV_STRM_SEND, qcs->qcc->conn, qcs);
