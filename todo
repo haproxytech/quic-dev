@@ -221,3 +221,13 @@ RECV DATAGRAM / RXBUF (QUIC_RECEIVER_BUF)
 * manque d'outillages
   regtest, benchmark, ...
 => MINOR
+
+* durée de vie des connexions QUIC et retransmissions
+  définir un paramètre max-age pour les connexions QUIC
+  si dépassement de ce paramètre, considérer la connexion comme malade et devant être fermée
+  équivalent au paramètre tcp-ut de la config haproxy
+  age de la connexion basée sur le paquet le plus ancien non acquité
+=> MAJOR
+  empêcher la fermeture du process en soft-stop si données restantes émises non acquittées
+  incrémenter la variable haproxy jobs pour chaque quic-conn
+=> MEDIUM
