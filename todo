@@ -12,9 +12,6 @@ DDOS -> * Retry : revoir la génération du token
   -> voir les URLs des gros fichiers sur haproxy.org pour tester
 => MINOR: à revoir en 2.9 avec la gestion des buffers dynamiques
 
-* voir si le paquet Version Negotiation doit être toujours émis (ou que pour une connection établie)
-=> ???
-
 OPTIM * diminuer le nombre de tasklet_wakeup nécessaire au traitement d'un paquet
 => MINOR
 
@@ -41,11 +38,8 @@ Tx transport quic-conn
 * utiliser sendmsg/sendmmsg pour support envoi datagrammes >16ko
 => MINOR
 * gérer les cas d'erreur de sendto
-  nécessite de gérer l'abonnemement des fds au poller via fd_cant_recv
-  abonnement des quic_conn dans des listes par threads attachés aux receivers
-  sur réveil de l'IO CB du receiver, lock ou detach de la list head par le
-  premier thread réveillé, et wakeup sur l'ensemble des listes
-=> MINOR : rendu obsolète suite aux fd par connexion
+  uniquement pour les quic-conn avec socket dédiée
+=> MEDIUM
 MAINTENANCE -> * revue des erreurs sur envoi trames
   trier les erreurs temporaires et les erreurs permanentes
   permettre au maxium à la couche MUX de s'inscrire en cas d'erreur
@@ -109,19 +103,9 @@ qui cause l'envoi d'un datagramme par RESET_STREAM. À optimiser tout en gardant
 la possibilité de savoir si un RESET_STREAM n'a pu être envoyé pour un stream.
 => MEDIUM
 
-BUG -> revoir la priorisation des streams
-* avoir une liste des qcs prêt à émettre
-* gérer les priorités pour garantir l'envoi des SETTINGS en premier
-=> MAJOR NUMERO 1
-
 FERMETURE CONNECTION MUX
 améliorer l'envoi GOAWAY / CONNECTION_CLOSE
 => MINOR
-
-H3
-* supporter les trailers HTTP/3 (surtout sur les réponses HTTP !!)
-  utilisé par GRPC
-=> MEDIUM
 
 REFACTOR
 * qc_dup_pkt_frms(): parsing des streams à refactorer avec le recv ?
@@ -164,10 +148,6 @@ GESTION DE LA MIGRATION DANS LE CAS DES FD PAR CONNEXION
     en interne comme on le fait déjà.
 => MINOR
 
-- annoncer le non-support de la migration via le TP pour le moment
-  à rendre configurable par la suite une fois implémenté
-=> MAJOR
-
 RECV DATAGRAM / RXBUF (QUIC_RECEIVER_BUF)
 * ne pas faire d'APPEND systématique après usage d'un rxbuf
   plutot faire un INSERT en tête de liste, sauf si taille insuffisante pour
@@ -207,11 +187,6 @@ RECV DATAGRAM / RXBUF (QUIC_RECEIVER_BUF)
   -> et remplacer le buffer unique par un ring pour dumper plusieurs erreurs
 => MEDIUM
 
-* mécanisme pour facilement ignorer le QUIC de la config
-  -> avoir un global statement 'no-quic' et ignorer les listeners QUIC + sample fetch quic-enabled pour les lignes alt-svc
-     possiblement créer les listeners mais ne rien faire concrètement pour ne pas décaler les IDs des listeners
-=> MAJOR
-
 * ajouter une stat sur la version HTTP utilisée + clear/SSL
 => MAJOR
 
@@ -230,4 +205,8 @@ RECV DATAGRAM / RXBUF (QUIC_RECEIVER_BUF)
 => MAJOR
   empêcher la fermeture du process en soft-stop si données restantes émises non acquittées
   incrémenter la variable haproxy jobs pour chaque quic-conn
+=> MEDIUM
+
+* isoler le handshake SSL dans une task HEAVY
+  pour garantir qu'on ne sature pas un thread avec une handshake SSL
 => MEDIUM
