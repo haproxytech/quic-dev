@@ -4248,6 +4248,8 @@ static inline void qc_handle_spin_bit(struct quic_conn *qc, struct quic_rx_packe
 {
 	uint64_t largest_pn = qel->pktns->rx.largest_pn;
 
+	return;
+
 	if (qel != &qc->els[QUIC_TLS_ENC_LEVEL_APP] || largest_pn == -1 ||
 	    pkt->pn <= largest_pn)
 		return;
