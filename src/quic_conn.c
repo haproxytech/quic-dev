@@ -3370,8 +3370,10 @@ static void qc_txb_store(struct buffer *buf, uint16_t length,
 static int qc_may_build_pkt(struct quic_conn *qc, struct list *frms,
                             struct quic_enc_level *qel, int cc, int probe, int force_ack)
 {
+#if 0
 	unsigned int must_ack = force_ack ||
 		(LIST_ISEMPTY(frms) && (qel->pktns->flags & QUIC_FL_PKTNS_ACK_REQUIRED));
+#endif
 
 	/* Do not build any more packet if the TX secrets are not available or
 	 * if there is nothing to send, i.e. if no CONNECTION_CLOSE or ACK are required
@@ -3380,7 +3382,7 @@ static int qc_may_build_pkt(struct quic_conn *qc, struct list *frms,
 	 * congestion control limit is reached for prepared data
 	 */
 	if (!quic_tls_has_tx_sec(qel) ||
-	    (!cc && !probe && !must_ack &&
+	    (!cc && !probe && !force_ack &&
 	     (LIST_ISEMPTY(frms) || qc->path->prep_in_flight >= qc->path->cwnd))) {
 		return 0;
 	}
