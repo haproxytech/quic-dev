@@ -622,6 +622,7 @@ enum qc_mux_state {
 /* gap here */
 #define QUIC_FL_CONN_HALF_OPEN_CNT_DECREMENTED   (1U << 11) /* The half-open connection counter was decremented */
 #define QUIC_FL_CONN_HANDSHAKE_SPEED_UP          (1U << 12) /* Handshake speeding up was done */
+#define QUIC_FL_CONN_ACK_TIMER_FIRED             (1U << 13) /* idle timer triggered for acknowledgements */
 #define QUIC_FL_CONN_TO_KILL                     (1U << 24) /* Unusable connection, to be killed */
 #define QUIC_FL_CONN_TX_TP_RECEIVED              (1U << 25) /* Peer transport parameters have been received (used for the transmitting part) */
 #define QUIC_FL_CONN_FINALIZED                   (1U << 26) /* QUIC connection finalized (functional, ready to send/receive) */
@@ -729,6 +730,8 @@ struct quic_conn {
 	unsigned int timer;
 	/* Idle timer task */
 	struct task *idle_timer_task;
+	unsigned int idle_expire;
+	unsigned int ack_expire;
 	unsigned int flags;
 
 	/* When in closing state, number of packet before sending CC */
