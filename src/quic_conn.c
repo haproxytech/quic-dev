@@ -4465,24 +4465,24 @@ static int qc_qel_may_rm_hp(struct quic_conn *qc, struct quic_enc_level *qel)
 
 	/* check if tls secrets are available */
 	if (qel->tls_ctx.flags & QUIC_FL_TLS_SECRETS_DCD) {
-		TRACE_DEVEL("Discarded keys", QUIC_EV_CONN_TRMHP, qc);
+		TRACE_PROTO("Discarded keys", QUIC_EV_CONN_TRMHP, qc);
 		goto cant_rm_hp;
 	}
 
 	if (!quic_tls_has_rx_sec(qel)) {
-		TRACE_DEVEL("non available secrets", QUIC_EV_CONN_TRMHP, qc);
+		TRACE_PROTO("non available secrets", QUIC_EV_CONN_TRMHP, qc);
 		goto cant_rm_hp;
 	}
 
 	if (tel == QUIC_TLS_ENC_LEVEL_APP && qc->state < QUIC_HS_ST_COMPLETE) {
-		TRACE_DEVEL("handshake not complete", QUIC_EV_CONN_TRMHP, qc);
+		TRACE_PROTO("handshake not complete", QUIC_EV_CONN_TRMHP, qc);
 		goto cant_rm_hp;
 	}
 
 	/* check if the connection layer is ready before using app level */
 	if ((tel == QUIC_TLS_ENC_LEVEL_APP || tel == QUIC_TLS_ENC_LEVEL_EARLY_DATA) &&
 	    qc->mux_state == QC_MUX_NULL) {
-		TRACE_DEVEL("connection layer not ready", QUIC_EV_CONN_TRMHP, qc);
+		TRACE_PROTO("connection layer not ready", QUIC_EV_CONN_TRMHP, qc);
 		goto cant_rm_hp;
 	}
 
