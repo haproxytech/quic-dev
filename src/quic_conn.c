@@ -3247,7 +3247,7 @@ static int qc_parse_pkt_frms(struct quic_conn *qc, struct quic_rx_packet *pkt,
 				TRACE_ERROR("CID allocation error", QUIC_EV_CONN_IO_CB, qc);
 			}
 			else {
-				struct quic_cid_tree *tree = &quic_cid_trees[tid];
+				struct quic_cid_tree *tree = &quic_cid_trees[conn_id->cid.data[0]];
 				HA_RWLOCK_WRLOCK(QC_CID_LOCK, &tree->lock);
 				ebmb_insert(&tree->root, &conn_id->node, conn_id->cid.len);
 				HA_RWLOCK_WRUNLOCK(QC_CID_LOCK, &tree->lock);
@@ -3884,8 +3884,7 @@ static int quic_stateless_reset_token_init(struct quic_connection_id *quic_cid)
 	return ret;
 }
 
-/* Generate a CID directly derived from <orig> CID and <addr> address. The CID
- * is then marked with the current thread ID.
+/* Generate a CID directly derived from <orig> CID and <addr> address.
  *
  * Returns a new 64-bits CID value.
  */
@@ -3935,9 +3934,6 @@ static uint64_t quic_derive_cid(const struct quic_cid *orig,
 	/* Hash the final buffer content. */
 	hash = XXH64(buf, idx, 0);
 
-	/* Mark the current thread id in the CID. */
-	quic_pin_cid_to_tid((uchar *)&hash, tid);
-
 	return hash;
 }
 
@@ -3975,7 +3971,6 @@ static struct quic_connection_id *new_quic_cid(struct eb_root *root,
 			TRACE_ERROR("RAND_bytes() failed", QUIC_EV_CONN_TXPKT, qc);
 			goto err;
 		}
-		quic_pin_cid_to_tid(conn_id->cid.data, tid);
 	}
 	else {
 		/* Derive the new CID value from original CID. */
@@ -4059,7 +4054,7 @@ static int quic_build_post_handshake_frames(struct quic_conn *qc)
 		/* TODO To remove this lock, all CIDs created on post-handshake
 		 * should be allocated at the same time as the first one.
 		 */
-		tree = &quic_cid_trees[tid];
+		tree = &quic_cid_trees[conn_id->cid.data[0]];
 		HA_RWLOCK_WRLOCK(QC_CID_LOCK, &tree->lock);
 		ebmb_insert(&tree->root, &conn_id->node, conn_id->cid.len);
 		HA_RWLOCK_WRUNLOCK(QC_CID_LOCK, &tree->lock);
@@ -4087,13 +4082,19 @@ static int quic_build_post_handshake_frames(struct quic_conn *qc)
 	node = eb64_lookup_ge(&qc->cids, 1);
 	while (node) {
 		struct quic_connection_id *cid;
+		struct quic_cid_tree *tree;
 
 		cid = eb64_entry(node, struct quic_connection_id, seq_num);
 		if (cid->seq_num.key >= max)
 			break;
 
 		node = eb64_next(node);
+
+		tree = &quic_cid_trees[cid->cid.data[0]];
+		HA_RWLOCK_WRLOCK(QC_CID_LOCK, &tree->lock);
 		ebmb_delete(&cid->node);
+		HA_RWLOCK_WRUNLOCK(QC_CID_LOCK, &tree->lock);
+
 		eb64_delete(&cid->seq_num);
 		pool_free(pool_head_quic_connection_id, cid);
 	}
@@ -5572,9 +5573,7 @@ static struct quic_conn *qc_new_conn(const struct quic_version *qv, int ipv4,
 	qc->wait_event.tasklet->process = quic_conn_io_cb;
 	qc->wait_event.tasklet->context = qc;
 	qc->wait_event.events = 0;
-	/* Set tasklet tid based on the SCID selected by us for this
-	 * connection. The upper layer will also be binded on the same thread.
-	 */
+
 	HA_ATOMIC_STORE(&qc->tid, tid);
 	qc->wait_event.tasklet->tid = tid;
 	qc->subs = NULL;
@@ -5595,7 +5594,7 @@ static struct quic_conn *qc_new_conn(const struct quic_version *qv, int ipv4,
 	 * must be done only after at least qc.tid is set.
 	 */
 	if (server) {
-		struct quic_cid_tree *tree = &quic_cid_trees[tid];
+		struct quic_cid_tree *tree = &quic_cid_trees[conn_id->cid.data[0]];
 		HA_RWLOCK_WRLOCK(QC_CID_LOCK, &tree->lock);
 		ebmb_insert(&tree->root, &conn_id->node, conn_id->cid.len);
 		HA_RWLOCK_WRUNLOCK(QC_CID_LOCK, &tree->lock);
@@ -5629,7 +5628,6 @@ void quic_conn_release(struct quic_conn *qc)
 	struct eb64_node *node;
 	struct quic_tls_ctx *app_tls_ctx;
 	struct quic_rx_packet *pkt, *pktback;
-	struct quic_cid_tree *tree;
 
 	TRACE_ENTER(QUIC_EV_CONN_CLOSE, qc);
 
@@ -5682,10 +5680,7 @@ void quic_conn_release(struct quic_conn *qc)
 		tasklet_free(qc->wait_event.tasklet);
 
 	/* remove the connection from receiver cids trees */
-	tree = &quic_cid_trees[tid];
-	HA_RWLOCK_WRLOCK(QC_CID_LOCK, &tree->lock);
 	free_quic_conn_cids(qc);
-	HA_RWLOCK_WRUNLOCK(QC_CID_LOCK, &tree->lock);
 
 	conn_ctx = qc->xprt_ctx;
 	if (conn_ctx) {
@@ -6501,7 +6496,7 @@ static struct quic_conn *retrieve_qc_conn_from_cid(struct quic_rx_packet *pkt,
 	struct quic_conn *qc = NULL;
 	struct ebmb_node *node;
 	struct quic_connection_id *id;
-	struct quic_cid_tree *tree = &quic_cid_trees[tid];
+	struct quic_cid_tree *tree = &quic_cid_trees[pkt->dcid.data[0]];
 
 	TRACE_ENTER(QUIC_EV_CONN_RXPKT);
 	*new_tid = -1;
@@ -8251,7 +8246,7 @@ int qc_check_dcid(struct quic_conn *qc, unsigned char *dcid, size_t dcid_len)
 {
 	struct ebmb_node *node;
 	struct quic_connection_id *id;
-	struct quic_cid_tree *tree = &quic_cid_trees[tid];
+	struct quic_cid_tree *tree = &quic_cid_trees[dcid[0]];
 
 	/* Test against our default CID or client ODCID. */
 	if ((qc->scid.len == dcid_len &&

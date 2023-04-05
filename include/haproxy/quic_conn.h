@@ -38,6 +38,7 @@
 #include <haproxy/ticks.h>
 
 #include <haproxy/listener.h>
+#include <haproxy/proto_quic.h>
 #include <haproxy/quic_cc.h>
 #include <haproxy/quic_conn-t.h>
 #include <haproxy/quic_enc.h>
@@ -142,6 +143,7 @@ static inline void quic_cid_dump(struct buffer *buf,
  */
 static inline void free_quic_conn_cids(struct quic_conn *conn)
 {
+	struct quic_cid_tree *tree;
 	struct eb64_node *node;
 
 	node = eb64_first(&conn->cids);
@@ -151,7 +153,10 @@ static inline void free_quic_conn_cids(struct quic_conn *conn)
 		conn_id = eb64_entry(node, struct quic_connection_id, seq_num);
 
 		/* remove the CID from the receiver tree */
+		tree = &quic_cid_trees[conn_id->cid.data[0]];
+		HA_RWLOCK_WRLOCK(QC_CID_LOCK, &tree->lock);
 		ebmb_delete(&conn_id->node);
+		HA_RWLOCK_WRUNLOCK(QC_CID_LOCK, &tree->lock);
 
 		/* remove the CID from the quic_conn tree */
 		node = eb64_next(node);
@@ -206,17 +211,6 @@ static inline uint quic_get_cid_tid(const unsigned char *cid, const struct recei
 	id = mask_find_rank_bit(id, rx->bind_thread);
 	id += base;
 	return id;
-}
-
-/* Modify <cid> to have a CID linked to the thread ID <target_tid> that
- * quic_get_cid_tid() will be able to extract return.
- */
-static inline void quic_pin_cid_to_tid(unsigned char *cid, uint target_tid)
-{
-	uint16_t prev_id;
-
-	prev_id = read_n16(cid);
-	write_n16(cid, (prev_id & ~4095) | target_tid);
 }
 
 /* Return a 32-bits integer in <val> from QUIC packet with <buf> as address.

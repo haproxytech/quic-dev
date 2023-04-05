@@ -209,10 +209,12 @@ static int quic_lstnr_dgram_dispatch(unsigned char *buf, size_t len, void *owner
                                      struct quic_dgram *new_dgram, struct list *dgrams)
 {
 	struct quic_dgram *dgram;
-	const struct listener *l = owner;
+	struct ebmb_node *node;
+	struct quic_connection_id *id;
 	unsigned char *dcid;
 	size_t dcid_len;
 	int cid_tid;
+	struct quic_cid_tree *tree;
 
 	if (!len || !quic_get_dgram_dcid(buf, buf + len, &dcid, &dcid_len))
 		goto err;
@@ -221,7 +223,21 @@ static int quic_lstnr_dgram_dispatch(unsigned char *buf, size_t len, void *owner
 	if (!dgram)
 		goto err;
 
-	cid_tid = quic_get_cid_tid(dcid, &l->rx);
+	/* Retrieve the thread ID of the connection to insert the datagram in
+	 * the corresponding dgram handler.
+	 */
+	tree = &quic_cid_trees[dcid[0]];
+	HA_RWLOCK_RDLOCK(QC_CID_LOCK, &tree->lock);
+	node = ebmb_lookup(&tree->root, dcid, dcid_len);
+	if (node) {
+		id = ebmb_entry(node, struct quic_connection_id, node);
+		cid_tid = HA_ATOMIC_LOAD(&id->qc->tid);
+	}
+	else {
+		/* CID not found, dispatch it to the default thread linked to CID. */
+		cid_tid = dcid[0] % global.nbthread;
+	}
+	HA_RWLOCK_RDUNLOCK(QC_CID_LOCK, &tree->lock);
 
 	/* All the members must be initialized! */
 	dgram->owner = owner;
@@ -892,8 +908,9 @@ struct quic_accept_queue *quic_accept_queues;
  */
 void quic_accept_push_qc(struct quic_conn *qc)
 {
-	struct quic_accept_queue *queue = &quic_accept_queues[qc->tid];
-	struct li_per_thread *lthr = &qc->li->per_thr[qc->tid];
+	const uint conn_tid = HA_ATOMIC_LOAD(&qc->tid);
+	struct quic_accept_queue *queue = &quic_accept_queues[conn_tid];
+	struct li_per_thread *lthr = &qc->li->per_thr[conn_tid];
 
 	/* early return if accept is already in progress/done for this
 	 * connection
@@ -917,7 +934,7 @@ void quic_accept_push_qc(struct quic_conn *qc)
 	MT_LIST_APPEND(&lthr->quic_accept.conns, &qc->accept_list);
 
 	/* 3. wake up the queue tasklet */
-	tasklet_wakeup(quic_accept_queues[qc->tid].tasklet);
+	tasklet_wakeup(quic_accept_queues[conn_tid].tasklet);
 }
 
 /* Tasklet handler to accept QUIC connections. Call listener_accept on every
