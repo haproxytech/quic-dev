@@ -4876,15 +4876,35 @@ static int qc_dgrams_retransmit(struct quic_conn *qc)
 	return ret;
 }
 
+/* Common operation for both quic_conn_io_cb/quic_conn_app_io_cb.
+ *
+ * Returns 0 on success else non-zero. In the latter case, tasklet must not be
+ * requeued.
+ */
+static int qc_process(struct quic_conn *qc)
+{
+	/* Context is NULL when running on older thread after migration. */
+	if (!qc)
+		return 1;
+
+	return 0;
+}
+
 /* QUIC connection packet handler task (post handshake) */
 struct task *quic_conn_app_io_cb(struct task *t, void *context, unsigned int state)
 {
 	struct quic_conn *qc = context;
 	struct quic_enc_level *qel;
 
-	qel = &qc->els[QUIC_TLS_ENC_LEVEL_APP];
-
 	TRACE_ENTER(QUIC_EV_CONN_IO_CB, qc);
+	if (qc_process(qc)) {
+		TRACE_DEVEL("qc_process early return", QUIC_EV_CONN_IO_CB, qc);
+		tasklet_free((struct tasklet *)t);
+		t = NULL;
+		goto out;
+	}
+
+	qel = &qc->els[QUIC_TLS_ENC_LEVEL_APP];
 	TRACE_STATE("connection handshake state", QUIC_EV_CONN_IO_CB, qc, &qc->state);
 
 	if (qc_test_fd(qc))
@@ -4955,6 +4975,13 @@ struct task *quic_conn_io_cb(struct task *t, void *context, unsigned int state)
 	int st, zero_rtt;
 
 	TRACE_ENTER(QUIC_EV_CONN_IO_CB, qc);
+	if (qc_process(qc)) {
+		TRACE_DEVEL("qc_process early return", QUIC_EV_CONN_IO_CB, qc);
+		tasklet_free((struct tasklet *)t);
+		t = NULL;
+		goto out;
+	}
+
 	eqel = &qc->els[QUIC_TLS_ENC_LEVEL_EARLY_DATA];
 	st = qc->state;
 	TRACE_PROTO("connection state", QUIC_EV_CONN_IO_CB, qc, &st);
@@ -5478,14 +5505,6 @@ static struct quic_conn *qc_new_conn(const struct quic_version *qv, int ipv4,
 			_HA_ATOMIC_INC(&jobs);
 	}
 
-	/* insert the allocated CID in the receiver datagram handler tree */
-	if (server) {
-		struct quic_cid_tree *tree = &quic_cid_trees[tid];
-		HA_RWLOCK_WRLOCK(QC_CID_LOCK, &tree->lock);
-		ebmb_insert(&tree->root, &conn_id->node, conn_id->cid.len);
-		HA_RWLOCK_WRUNLOCK(QC_CID_LOCK, &tree->lock);
-	}
-
 	/* Select our SCID which is the first CID with 0 as sequence number. */
 	qc->scid = conn_id->cid;
 
@@ -5556,8 +5575,8 @@ static struct quic_conn *qc_new_conn(const struct quic_version *qv, int ipv4,
 	/* Set tasklet tid based on the SCID selected by us for this
 	 * connection. The upper layer will also be binded on the same thread.
 	 */
-	qc->tid = quic_get_cid_tid(qc->scid.data, &l->rx);
-	qc->wait_event.tasklet->tid = qc->tid;
+	HA_ATOMIC_STORE(&qc->tid, tid);
+	qc->wait_event.tasklet->tid = tid;
 	qc->subs = NULL;
 
 	if (qc_conn_alloc_ssl_ctx(qc) ||
@@ -5571,6 +5590,17 @@ static struct quic_conn *qc_new_conn(const struct quic_version *qv, int ipv4,
 
 	LIST_APPEND(&th_ctx->quic_conns, &qc->el_th_ctx);
 	qc->qc_epoch = HA_ATOMIC_LOAD(&qc_epoch);
+
+	/* Insert the allocated CID in the receiver datagram handler tree. This
+	 * must be done only after at least qc.tid is set.
+	 */
+	if (server) {
+		struct quic_cid_tree *tree = &quic_cid_trees[tid];
+		HA_RWLOCK_WRLOCK(QC_CID_LOCK, &tree->lock);
+		ebmb_insert(&tree->root, &conn_id->node, conn_id->cid.len);
+		HA_RWLOCK_WRUNLOCK(QC_CID_LOCK, &tree->lock);
+	}
+
 
 	TRACE_LEAVE(QUIC_EV_CONN_INIT, qc);
 
@@ -5698,7 +5728,7 @@ static int quic_conn_init_timer(struct quic_conn *qc)
 	/* Attach this task to the same thread ID used for the connection */
 	TRACE_ENTER(QUIC_EV_CONN_NEW, qc);
 
-	qc->timer_task = task_new_on(qc->tid);
+	qc->timer_task = task_new_on(tid);
 	if (!qc->timer_task) {
 		TRACE_ERROR("timer task allocation failed", QUIC_EV_CONN_NEW, qc);
 		goto leave;
@@ -6459,22 +6489,24 @@ static int send_retry(int fd, struct sockaddr_storage *addr,
  * INITIAL or 0RTT type, we may have to use client address <saddr> if an ODCID
  * is used.
  *
+ * This function must be called under the correct quic_cid_tree lock.
+ *
  * Returns the instance or NULL if not found.
  */
 static struct quic_conn *retrieve_qc_conn_from_cid(struct quic_rx_packet *pkt,
                                                    struct listener *l,
-                                                   struct sockaddr_storage *saddr)
+                                                   struct sockaddr_storage *saddr,
+                                                   int *new_tid)
 {
 	struct quic_conn *qc = NULL;
 	struct ebmb_node *node;
 	struct quic_connection_id *id;
-	struct quic_cid_tree *tree;
-	/* set if the quic_conn is found in the second DCID tree */
+	struct quic_cid_tree *tree = &quic_cid_trees[tid];
 
 	TRACE_ENTER(QUIC_EV_CONN_RXPKT);
+	*new_tid = -1;
 
 	/* First look into DCID tree. */
-	tree = &quic_cid_trees[tid];
 	HA_RWLOCK_RDLOCK(QC_CID_LOCK, &tree->lock);
 	node = ebmb_lookup(&tree->root, pkt->dcid.data, pkt->dcid.len);
 
@@ -6484,14 +6516,29 @@ static struct quic_conn *retrieve_qc_conn_from_cid(struct quic_rx_packet *pkt,
 	 */
 	if (!node && (pkt->type == QUIC_PACKET_TYPE_INITIAL ||
 	     pkt->type == QUIC_PACKET_TYPE_0RTT)) {
+		struct quic_cid cid;
 		uint64_t hash = quic_derive_cid(&pkt->dcid, saddr);
-		node = ebmb_lookup(&tree->root, &hash, sizeof(hash));
+
+		HA_RWLOCK_RDUNLOCK(QC_CID_LOCK, &tree->lock);
+
+		memcpy(cid.data, &hash, sizeof(hash));
+		cid.len = QUIC_HAP_CID_LEN;
+		BUG_ON(sizeof(hash) != cid.len);
+
+		tree = &quic_cid_trees[cid.data[0]];
+		HA_RWLOCK_RDLOCK(QC_CID_LOCK, &tree->lock);
+		node = ebmb_lookup(&tree->root, cid.data, cid.len);
 	}
 
 	if (!node)
 		goto end;
 
 	id = ebmb_entry(node, struct quic_connection_id, node);
+	if (id->tid != tid) {
+		*new_tid = id->tid;
+		goto end;
+	}
+
 	qc = id->qc;
 
  end:
@@ -6618,23 +6665,33 @@ static inline int quic_padding_check(const unsigned char *buf,
  * this is an Initial packet. <dgram> is the datagram containing the packet and
  * <l> is the listener instance on which it was received.
  *
- * Returns the quic-conn instance or NULL.
+ * By default, <new_tid> is set to -1. However, if the connection has been
+ * migrated to another thread, it will be set to its new thread ID.
+ *
+ * Returns the quic-conn instance or NULL if not found or connection migrated.
  */
 static struct quic_conn *quic_rx_pkt_retrieve_conn(struct quic_rx_packet *pkt,
                                                    struct quic_dgram *dgram,
-                                                   struct listener *l)
+                                                   struct listener *l,
+                                                   int *new_tid)
 {
 	struct quic_cid token_odcid = { .len = 0 };
 	struct quic_conn *qc = NULL;
 	struct proxy *prx;
 	struct quic_counters *prx_counters;
+	struct quic_cid_tree *tree;
 
 	TRACE_ENTER(QUIC_EV_CONN_LPKT);
 
 	prx = l->bind_conf->frontend;
 	prx_counters = EXTRA_COUNTERS_GET(prx->extra_counters_fe, &quic_stats_module);
 
-	qc = retrieve_qc_conn_from_cid(pkt, l, &dgram->saddr);
+	tree = &quic_cid_trees[pkt->dcid.data[0]];
+	qc = retrieve_qc_conn_from_cid(pkt, l, &dgram->saddr, new_tid);
+
+	/* If connection migrated return NULL with new_tid set. */
+	if (!qc && *new_tid != -1 && tid != *new_tid)
+		return NULL;
 
 	if (pkt->type == QUIC_PACKET_TYPE_INITIAL) {
 		BUG_ON(!pkt->version); /* This must not happen. */
@@ -8112,11 +8169,21 @@ int quic_dgram_parse(struct quic_dgram *dgram, struct quic_conn *from_qc,
 		 * with different DCID as the first one in the same datagram.
 		 */
 		if (!qc) {
-			qc = from_qc ? from_qc : quic_rx_pkt_retrieve_conn(pkt, dgram, li);
+			int new_tid = -1;
+
+			qc = from_qc ? from_qc : quic_rx_pkt_retrieve_conn(pkt, dgram, li, &new_tid);
 			/* qc is NULL if receiving a non Initial packet for an
-			 * unknown connection.
+			 * unknown connection or on connection migration.
 			 */
 			if (!qc) {
+				/* Check for possible connection migration. */
+				if (new_tid != -1) {
+					MT_LIST_APPEND(&quic_dghdlrs[new_tid].dgrams,
+						       &dgram->handler_list);
+					tasklet_wakeup(quic_dghdlrs[new_tid].task);
+					return 0;
+				}
+
 				/* Skip the entire datagram. */
 				pkt->len = end - pos;
 				goto next;
@@ -8303,6 +8370,92 @@ int qc_notify_send(struct quic_conn *qc)
 	return 0;
 }
 
+/* Move a <qc> QUIC connection and its resources from the current thread to the
+ * new one <new_tid>. After this call, the connection cannot be dereferenced
+ * anymore on the current thread.
+ *
+ * Returns 0 on success else non-zero.
+ */
+int qc_migrate_tid(struct quic_conn *qc, uint new_tid)
+{
+	struct task * (*io_cb_func)(struct task *t, void *context, unsigned int state);
+	struct task *t1 = NULL, *t2 = NULL;
+	struct tasklet *t3 = NULL;
+
+	/* Pre-allocate all required resources. This ensures we do not left a
+	 * connection with only some of its field migrated.
+	 */
+	if (((t1 = task_new_on(new_tid)) == NULL) ||
+	    (qc->timer_task && (t2 = task_new_on(new_tid)) == NULL) ||
+	    (t3 = tasklet_new()) == NULL) {
+		goto err;
+	}
+
+	/* Mark the quic-conn as inaccessible during migration. */
+	HA_ATOMIC_STORE(&qc->tid, -1);
+
+	/* Store current quic-conn I/O callback. In most cases it will be
+	 * quic_conn_app_io_cb but for 0-RTT it will be quic_conn_io_cb.
+	 */
+	io_cb_func = qc->wait_event.tasklet->process;
+
+	/* Destroy tasks and tasklet and reinit them. */
+	qc->wait_event.tasklet->context = NULL;
+	tasklet_wakeup(qc->wait_event.tasklet);
+	qc->idle_timer_task->context = NULL;
+	task_kill(qc->idle_timer_task);
+
+	if (qc->timer_task) {
+		qc->timer_task->context = NULL;
+		task_kill(qc->timer_task);
+	}
+
+	qc->idle_timer_task = t1;
+	qc->idle_timer_task->process = qc_idle_timer_task;
+	qc->idle_timer_task->context = qc;
+
+	if (qc->timer_task) {
+		qc->timer_task = t2;
+		qc->timer_task->process = qc_process_timer;
+		qc->timer_task->context = qc;
+	}
+
+	qc->wait_event.tasklet = t3;
+	qc->wait_event.tasklet->tid = new_tid;
+	qc->wait_event.tasklet->process = io_cb_func;
+	qc->wait_event.tasklet->context = qc;
+	qc->wait_event.events = 0;
+
+	qc_detach_th_ctx_list(qc, 0);
+
+	/* Migrate the connection FD. */
+	if (qc_test_fd(qc))
+		fd_migrate_on(qc->fd, new_tid);
+
+	/* Connection must not be closing as this implies it was stored in the
+	 * quic_conns_clo list.
+	 */
+	BUG_ON(qc->flags & (QUIC_FL_CONN_CLOSING|QUIC_FL_CONN_DRAINING));
+	LIST_APPEND(&ha_thread_ctx[new_tid].quic_conns, &qc->el_th_ctx);
+	qc->qc_epoch = HA_ATOMIC_LOAD(&qc_epoch);
+
+	/* Mark the migration as finished. */
+	HA_ATOMIC_STORE(&qc->tid, new_tid);
+
+	return 0;
+
+ err:
+	/* Migration must always be mark as completed even on error. */
+	BUG_ON(HA_ATOMIC_LOAD(&qc->fd) == -1);
+
+	task_destroy(t1);
+	task_destroy(t2);
+	if (t3)
+		tasklet_free(t3);
+
+	return 1;
+}
+
 
 /* appctx context used by "show quic" command */
 struct show_quic_ctx {
@@ -8410,7 +8563,7 @@ static int cli_io_handler_dump_quic(struct appctx *appctx)
 		}
 
 		/* CIDs */
-		chunk_appendf(&trash, "* %p[%02u]: scid=", qc, qc->tid);
+		chunk_appendf(&trash, "* %p[%02u]: scid=", qc, HA_ATOMIC_LOAD(&qc->tid));
 		for (cid_len = 0; cid_len < qc->scid.len; ++cid_len)
 			chunk_appendf(&trash, "%02x", qc->scid.data[cid_len]);
 		while (cid_len++ < 20)

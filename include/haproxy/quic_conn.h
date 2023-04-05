@@ -704,5 +704,7 @@ static inline void quic_handle_stopping(void)
 	}
 }
 
+int qc_migrate_tid(struct quic_conn *qc, uint tid);
+
 #endif /* USE_QUIC */
 #endif /* _HAPROXY_QUIC_CONN_H */

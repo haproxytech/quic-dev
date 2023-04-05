@@ -492,6 +492,10 @@ void quic_conn_sock_fd_iocb(int fd)
 
 	TRACE_ENTER(QUIC_EV_CONN_RCV, qc);
 
+	/* Wait if connection is in the process of being migrated. */
+	while (HA_ATOMIC_LOAD(&qc->tid) == -1)
+		__ha_cpu_relax();
+
 	if (fd_send_active(fd) && fd_send_ready(fd)) {
 		TRACE_DEVEL("send ready", QUIC_EV_CONN_RCV, qc);
 		fd_stop_send(fd);
