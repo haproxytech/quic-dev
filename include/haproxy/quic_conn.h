@@ -151,7 +151,7 @@ static inline void free_quic_conn_cids(struct quic_conn *conn)
 		conn_id = eb64_entry(node, struct quic_connection_id, seq_num);
 
 		/* remove the CID from the receiver tree */
-		ebmb_delete(&conn_id->cid.node);
+		ebmb_delete(&conn_id->node);
 
 		/* remove the CID from the quic_conn tree */
 		node = eb64_next(node);

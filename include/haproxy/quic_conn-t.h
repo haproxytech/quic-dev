@@ -442,7 +442,6 @@ struct quic_rx_packet {
 struct quic_dghdlr {
 	struct mt_list dgrams;
 	struct tasklet *task;
-	struct eb_root cids;
 };
 
 /* Structure to store enough information about the RX CRYPTO frames. */
