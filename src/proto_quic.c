@@ -62,7 +62,6 @@ struct quic_cid_tree *quic_cid_trees;
 
 DECLARE_STATIC_POOL(pool_head_quic_rxbuf, "quic_rxbuf", QUIC_RX_BUFSZ);
 
-static void quic_add_listener(struct protocol *proto, struct listener *listener);
 static int quic_bind_listener(struct listener *listener, char *errmsg, int errlen);
 static int quic_connect_server(struct connection *conn, int flags);
 static int quic_migrate(struct connection *conn, int new_tid);
