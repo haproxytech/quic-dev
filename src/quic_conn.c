@@ -2451,6 +2451,7 @@ static inline int qc_provide_cdata(struct quic_enc_level *el,
 		}
 		/* I/O callback switch */
 		qc->wait_event.tasklet->process = quic_conn_app_io_cb;
+		qc->flags |= QUIC_FL_CONN_NEED_POST_HANDSHAKE_FRMS;
 		if (qc_is_listener(ctx->qc)) {
 			qc->state = QUIC_HS_ST_CONFIRMED;
 			/* The connection is ready to be accepted. */
@@ -4060,7 +4061,7 @@ static int quic_build_post_handshake_frames(struct quic_conn *qc)
 	}
 
 	LIST_SPLICE(&qel->pktns->tx.frms, &frm_list);
-	qc->flags |= QUIC_FL_CONN_POST_HANDSHAKE_FRAMES_BUILT;
+	qc->flags &= ~QUIC_FL_CONN_NEED_POST_HANDSHAKE_FRMS;
 
 	ret = 1;
  leave:
@@ -4881,6 +4882,11 @@ struct task *quic_conn_app_io_cb(struct task *t, void *context, unsigned int sta
 	if (qc_test_fd(qc))
 		qc_rcv_buf(qc);
 
+	if ((qc->flags & QUIC_FL_CONN_NEED_POST_HANDSHAKE_FRMS) && qc->conn &&
+	    qc->state >= QUIC_HS_ST_COMPLETE) {
+		quic_build_post_handshake_frames(qc);
+	}
+
 	/* Retranmissions */
 	if (qc->flags & QUIC_FL_CONN_RETRANS_NEEDED) {
 		TRACE_STATE("retransmission needed", QUIC_EV_CONN_IO_CB, qc);
@@ -5004,10 +5010,6 @@ struct task *quic_conn_io_cb(struct task *t, void *context, unsigned int state)
 
 	st = qc->state;
 	if (st >= QUIC_HS_ST_COMPLETE) {
-		if (!(qc->flags & QUIC_FL_CONN_POST_HANDSHAKE_FRAMES_BUILT) &&
-		    !quic_build_post_handshake_frames(qc))
-			goto out;
-
 		if (!(qc->els[QUIC_TLS_ENC_LEVEL_HANDSHAKE].tls_ctx.flags &
 		           QUIC_FL_TLS_SECRETS_DCD)) {
 			/* Discard the Handshake keys. */
