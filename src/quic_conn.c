@@ -8381,6 +8381,7 @@ int qc_migrate_tid(struct quic_conn *qc, uint new_tid)
 	struct task * (*io_cb_func)(struct task *t, void *context, unsigned int state);
 	struct task *t1 = NULL, *t2 = NULL;
 	struct tasklet *t3 = NULL;
+	uchar need_requeue = 0;
 
 	/* Pre-allocate all required resources. This ensures we do not left a
 	 * connection with only some of its field migrated.
@@ -8398,10 +8399,13 @@ int qc_migrate_tid(struct quic_conn *qc, uint new_tid)
 	 * quic_conn_app_io_cb but for 0-RTT it will be quic_conn_io_cb.
 	 */
 	io_cb_func = qc->wait_event.tasklet->process;
+	need_requeue = qc->wait_event.tasklet->state & TASK_IN_LIST;
 
 	/* Destroy tasks and tasklet and reinit them. */
 	qc->wait_event.tasklet->context = NULL;
 	tasklet_wakeup(qc->wait_event.tasklet);
+
+	t1->expire = qc->idle_timer_task->expire;
 	qc->idle_timer_task->context = NULL;
 	task_kill(qc->idle_timer_task);
 
@@ -8441,6 +8445,8 @@ int qc_migrate_tid(struct quic_conn *qc, uint new_tid)
 
 	/* Mark the migration as finished. */
 	HA_ATOMIC_STORE(&qc->tid, new_tid);
+	if (need_requeue)
+		tasklet_wakeup_on(qc->wait_event.tasklet, new_tid);
 
 	return 0;
 
@@ -8456,6 +8462,14 @@ int qc_migrate_tid(struct quic_conn *qc, uint new_tid)
 	return 1;
 }
 
+/* Must be called after qc_migrate_tid() on the new thread. */
+void qc_finalize_migration(struct quic_conn *qc)
+{
+	/* After connection migration, qc tasks and FD polling must be manually reactived. */
+	qc_want_recv(qc);
+	qc_set_timer(qc);
+	task_queue(qc->idle_timer_task);
+}
 
 /* appctx context used by "show quic" command */
 struct show_quic_ctx {

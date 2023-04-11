@@ -131,6 +131,8 @@ static int qc_xprt_start(struct connection *conn, void *ctx)
 	qc = conn->handle.qc;
 	TRACE_ENTER(QUIC_EV_CONN_NEW, qc);
 
+	qc_finalize_migration(qc);
+
 	/* mux-quic can now be considered ready. */
 	qc->mux_state = QC_MUX_READY;
 
