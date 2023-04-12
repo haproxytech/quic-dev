@@ -3228,27 +3228,28 @@ static int qc_parse_pkt_frms(struct quic_conn *qc, struct quic_rx_packet *pkt,
 			break;
 		case QUIC_FT_RETIRE_CONNECTION_ID:
 		{
-			struct quic_connection_id *cid = NULL;
+			struct quic_connection_id *conn_id = NULL;
+			struct quic_cid cid;
 
-			if (!qc_handle_retire_connection_id_frm(qc, &frm, &pkt->dcid, &cid))
+			if (!qc_handle_retire_connection_id_frm(qc, &frm, &pkt->dcid, &conn_id))
 				goto leave;
 
-			if (!cid)
+			if (!conn_id)
 				break;
 
-			ebmb_delete(&cid->node);
-			eb64_delete(&cid->seq_num);
-			pool_free(pool_head_quic_connection_id, cid);
+			ebmb_delete(&conn_id->node);
+			eb64_delete(&conn_id->seq_num);
+			pool_free(pool_head_quic_connection_id, conn_id);
 			TRACE_PROTO("CID retired", QUIC_EV_CONN_PSTRM, qc);
 
-			cid = new_quic_cid(&qc->cids, qc, NULL, NULL);
-			if (!cid) {
+			conn_id = new_quic_cid(&qc->cids, qc, NULL, NULL);
+			if (!conn_id) {
 				TRACE_ERROR("CID allocation error", QUIC_EV_CONN_IO_CB, qc);
 			}
 			else {
 				/* insert the allocated CID in the receiver datagram handler tree */
-				ebmb_insert(&quic_dghdlrs[tid].cids, &cid->node, cid->cid.len);
-				qc_build_new_connection_id_frm(qc, cid);
+				ebmb_insert(&quic_dghdlrs[tid].cids, &conn_id->node, conn_id->cid.len);
+				qc_build_new_connection_id_frm(qc, conn_id);
 			}
 			break;
 		}
@@ -3950,52 +3951,52 @@ static struct quic_connection_id *new_quic_cid(struct eb_root *root,
                                                const struct quic_cid *orig,
                                                const struct sockaddr_storage *addr)
 {
-	struct quic_connection_id *cid;
+	struct quic_connection_id *conn_id;
 
 	TRACE_ENTER(QUIC_EV_CONN_TXPKT, qc);
 
 	/* Caller must set either none or both values. */
 	BUG_ON(!!orig != !!addr);
 
-	cid = pool_alloc(pool_head_quic_connection_id);
-	if (!cid) {
+	conn_id = pool_alloc(pool_head_quic_connection_id);
+	if (!conn_id) {
 		TRACE_ERROR("cid allocation failed", QUIC_EV_CONN_TXPKT, qc);
 		goto err;
 	}
 
-	cid->cid.len = QUIC_HAP_CID_LEN;
+	conn_id->cid.len = QUIC_HAP_CID_LEN;
 
 	if (!orig) {
 		/* TODO: RAND_bytes() should be replaced */
-		if (RAND_bytes(cid->cid.data, cid->cid.len) != 1) {
+		if (RAND_bytes(conn_id->cid.data, conn_id->cid.len) != 1) {
 			TRACE_ERROR("RAND_bytes() failed", QUIC_EV_CONN_TXPKT, qc);
 			goto err;
 		}
-		quic_pin_cid_to_tid(cid->cid.data, tid);
+		quic_pin_cid_to_tid(conn_id->cid.data, tid);
 	}
 	else {
 		/* Derive the new CID value from original CID. */
 		const uint64_t hash = quic_derive_cid(orig, addr);
-		memcpy(cid->cid.data, &hash, sizeof(hash));
+		memcpy(conn_id->cid.data, &hash, sizeof(hash));
 	}
 
-	if (quic_stateless_reset_token_init(cid) != 1) {
+	if (quic_stateless_reset_token_init(conn_id) != 1) {
 		TRACE_ERROR("quic_stateless_reset_token_init() failed", QUIC_EV_CONN_TXPKT, qc);
 		goto err;
 	}
 
-	cid->qc = qc;
+	conn_id->qc = qc;
 
-	cid->seq_num.key = qc->next_cid_seq_num++;
-	cid->retire_prior_to = 0;
+	conn_id->seq_num.key = qc->next_cid_seq_num++;
+	conn_id->retire_prior_to = 0;
 	/* insert the allocated CID in the quic_conn tree */
-	eb64_insert(root, &cid->seq_num);
+	eb64_insert(root, &conn_id->seq_num);
 
 	TRACE_LEAVE(QUIC_EV_CONN_TXPKT, qc);
-	return cid;
+	return conn_id;
 
  err:
-	pool_free(pool_head_quic_connection_id, cid);
+	pool_free(pool_head_quic_connection_id, conn_id);
 	TRACE_LEAVE(QUIC_EV_CONN_TXPKT, qc);
 	return NULL;
 }
@@ -4036,7 +4037,7 @@ static int quic_build_post_handshake_frames(struct quic_conn *qc)
 	 */
 	max = QUIC_MIN(qc->tx.params.active_connection_id_limit - 1, (uint64_t)3);
 	while (max--) {
-		struct quic_connection_id *cid;
+		struct quic_connection_id *conn_id;
 
 		frm = qc_frm_alloc(QUIC_FT_NEW_CONNECTION_ID);
 		if (!frm) {
@@ -4044,17 +4045,17 @@ static int quic_build_post_handshake_frames(struct quic_conn *qc)
 			goto err;
 		}
 
-		cid = new_quic_cid(&qc->cids, qc, NULL, NULL);
-		if (!cid) {
+		conn_id = new_quic_cid(&qc->cids, qc, NULL, NULL);
+		if (!conn_id) {
 			qc_frm_free(&frm);
 			TRACE_ERROR("CID allocation error", QUIC_EV_CONN_IO_CB, qc);
 			goto err;
 		}
 
 		/* insert the allocated CID in the receiver datagram handler tree */
-		ebmb_insert(&quic_dghdlrs[tid].cids, &cid->node, cid->cid.len);
+		ebmb_insert(&quic_dghdlrs[tid].cids, &conn_id->node, conn_id->cid.len);
 
-		quic_connection_id_to_frm_cpy(frm, cid);
+		quic_connection_id_to_frm_cpy(frm, conn_id);
 		LIST_APPEND(&frm_list, &frm->list);
 	}
 
@@ -5372,7 +5373,7 @@ static struct quic_conn *qc_new_conn(const struct quic_version *qv, int ipv4,
 	int i;
 	struct quic_conn *qc;
 	/* Initial CID. */
-	struct quic_connection_id *icid;
+	struct quic_connection_id *conn_id;
 	char *buf_area = NULL;
 	struct listener *l = NULL;
 	struct quic_cc_algo *cc_algo = NULL;
@@ -5449,8 +5450,8 @@ static struct quic_conn *qc_new_conn(const struct quic_version *qv, int ipv4,
 	 * optimization as the client is expected to stop using its ODCID in
 	 * favor of our generated value.
 	 */
-	icid = new_quic_cid(&qc->cids, qc, dcid, peer_addr);
-	if (!icid) {
+	conn_id = new_quic_cid(&qc->cids, qc, dcid, peer_addr);
+	if (!conn_id) {
 		TRACE_ERROR("Could not allocate a new connection ID", QUIC_EV_CONN_INIT, qc);
 		goto err;
 	}
@@ -5469,10 +5470,10 @@ static struct quic_conn *qc_new_conn(const struct quic_version *qv, int ipv4,
 
 	/* insert the allocated CID in the receiver datagram handler tree */
 	if (server)
-		ebmb_insert(&quic_dghdlrs[tid].cids, &icid->node, icid->cid.len);
+		ebmb_insert(&quic_dghdlrs[tid].cids, &conn_id->node, conn_id->cid.len);
 
 	/* Select our SCID which is the first CID with 0 as sequence number. */
-	qc->scid = icid->cid;
+	qc->scid = conn_id->cid;
 
 	/* Packet number spaces initialization. */
 	for (i = 0; i < QUIC_TLS_PKTNS_MAX; i++)
@@ -5521,7 +5522,7 @@ static struct quic_conn *qc_new_conn(const struct quic_version *qv, int ipv4,
 	memcpy(&qc->peer_addr, peer_addr, sizeof qc->peer_addr);
 
 	if (server && !qc_lstnr_params_init(qc, &l->bind_conf->quic_params,
-	                                    icid->stateless_reset_token,
+	                                    conn_id->stateless_reset_token,
 	                                    dcid->data, dcid->len,
 	                                    qc->scid.data, qc->scid.len, token_odcid))
 		goto err;
