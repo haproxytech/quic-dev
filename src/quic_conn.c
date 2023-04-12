@@ -6012,9 +6012,6 @@ static inline int qc_parse_hd_form(struct quic_rx_packet *pkt,
 
 	(*buf)++;
 	if (byte0 & QUIC_PACKET_LONG_HEADER_BIT) {
-		unsigned char type =
-			(byte0 >> QUIC_PACKET_TYPE_SHIFT) & QUIC_PACKET_TYPE_BITMASK;
-
 		*long_header = 1;
 		/* Version */
 		if (!quic_read_uint32(version, (const unsigned char **)buf, end)) {
@@ -6022,25 +6019,7 @@ static inline int qc_parse_hd_form(struct quic_rx_packet *pkt,
 			goto out;
 		}
 
-		if (*version != QUIC_PROTOCOL_VERSION_2) {
-			pkt->type = type;
-		}
-		else {
-			switch (type) {
-			case 0:
-				pkt->type = QUIC_PACKET_TYPE_RETRY;
-				break;
-			case 1:
-				pkt->type = QUIC_PACKET_TYPE_INITIAL;
-				break;
-			case 2:
-				pkt->type = QUIC_PACKET_TYPE_0RTT;
-				break;
-			case 3:
-				pkt->type = QUIC_PACKET_TYPE_HANDSHAKE;
-				break;
-			}
-		}
+		pkt->type = quic_parse_long_pkt_type(byte0, *version);
 	}
 	else {
 		if (byte0 & QUIC_PACKET_SPIN_BIT)
@@ -8041,6 +8020,29 @@ static void __quic_conn_deinit(void)
 	BIO_meth_free(ha_quic_meth);
 }
 REGISTER_POST_DEINIT(__quic_conn_deinit);
+
+uchar quic_parse_long_pkt_type(uint8_t byte0, uint32_t version)
+{
+	uchar type = (byte0 >> QUIC_PACKET_TYPE_SHIFT) & QUIC_PACKET_TYPE_BITMASK;
+
+	if (version != QUIC_PROTOCOL_VERSION_2) {
+		return type;
+	}
+	else {
+		switch (type) {
+		case 0:
+			return QUIC_PACKET_TYPE_RETRY;
+		case 1:
+			return QUIC_PACKET_TYPE_INITIAL;
+		case 2:
+			return QUIC_PACKET_TYPE_0RTT;
+		case 3:
+			return QUIC_PACKET_TYPE_HANDSHAKE;
+		}
+	}
+
+	my_unreachable();
+}
 
 /* Handle a new <dgram> received. Parse each QUIC packets and copied their
  * content to a quic-conn instance. The datagram content can be released after

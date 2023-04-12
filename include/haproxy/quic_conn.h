@@ -686,6 +686,7 @@ void quic_conn_release(struct quic_conn *qc);
 
 void qc_kill_conn(struct quic_conn *qc);
 
+uchar quic_parse_long_pkt_type(uint8_t byte0, uint32_t version);
 int quic_dgram_parse(struct quic_dgram *dgram, struct quic_conn *qc,
                      struct listener *li);
 

@@ -300,6 +300,7 @@ struct quic_connection_id {
 	struct quic_cid cid;   /* CID data */
 
 	struct quic_conn *qc;  /* QUIC connection using this CID */
+	uint tid;
 };
 
 /* Structure to hold a range of ACKs sent in ACK frames. */
