@@ -5425,7 +5425,7 @@ static struct quic_conn *qc_new_conn(const struct quic_version *qv, int ipv4,
 	struct quic_cc_algo *cc_algo = NULL;
 	struct quic_tls_ctx *ictx;
 	TRACE_ENTER(QUIC_EV_CONN_INIT);
-	fprintf(stderr, "[%u] %s\n", tid, __func__);
+	//fprintf(stderr, "[%u] %s\n", tid, __func__);
 	/* TODO replace pool_zalloc by pool_alloc(). This requires special care
 	 * to properly initialized internal quic_conn members to safely use
 	 * quic_conn_release() on alloc failure.
@@ -6735,7 +6735,7 @@ static struct quic_conn *quic_rx_pkt_retrieve_conn(struct quic_rx_packet *pkt,
 			HA_RWLOCK_WRLOCK(QC_CID_LOCK, &tree->lock);
 			node = ebmb_insert(&tree->root, &conn_id->node, conn_id->cid.len);
 			if (node != &conn_id->node) {
-				fprintf(stderr, "Duplicate CID node creation\n");
+				//fprintf(stderr, "Duplicate CID node creation\n");
 				conn_id = ebmb_entry(node, struct quic_connection_id, node);
 				*new_tid = conn_id->tid;
 				HA_RWLOCK_WRUNLOCK(QC_CID_LOCK, &tree->lock);
@@ -6763,7 +6763,7 @@ static struct quic_conn *quic_rx_pkt_retrieve_conn(struct quic_rx_packet *pkt,
 
 			HA_ATOMIC_INC(&prx_counters->half_open_conn);
 			//BUG_ON(!retrieve_qc_conn_from_cid(pkt, l, &dgram->saddr));
-			fprintf(stderr, "\n");
+			//fprintf(stderr, "\n");
 		}
 	}
 	else if (!qc) {
@@ -8471,7 +8471,7 @@ int qc_migrate_tid(struct quic_conn *qc, uint new_tid)
 
 	/* Mark the migration as finished. */
 	node = eb64_first(&qc->cids);
-	fprintf(stderr, "eb64_first on %p\n", &qc->cids);
+	//fprintf(stderr, "eb64_first on %p\n", &qc->cids);
 	BUG_ON(!node);
 	conn_id = eb64_entry(node, struct quic_connection_id, seq_num);
 	//HA_ATOMIC_STORE(&conn_id->qc->tid, new_tid);

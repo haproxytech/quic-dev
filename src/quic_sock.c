@@ -269,7 +269,7 @@ static int quic_lstnr_dgram_dispatch(unsigned char *buf, size_t len, void *owner
 	else {
 		/* CID not found, use current thread. */
 		cid_tid = tid;
-		fprintf(stderr, "USE DEFAULT THREAD\n");
+		//fprintf(stderr, "USE DEFAULT THREAD\n");
 	}
 
 	/* All the members must be initialized! */
