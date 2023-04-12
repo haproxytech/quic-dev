@@ -210,7 +210,7 @@ static int quic_lstnr_dgram_dispatch(unsigned char *buf, size_t len, void *owner
 {
 	struct quic_dgram *dgram;
 	struct ebmb_node *node;
-	struct quic_connection_id *id;
+	struct quic_connection_id *conn_id;
 	unsigned char *dcid;
 	size_t dcid_len;
 	int cid_tid;
@@ -229,15 +229,47 @@ static int quic_lstnr_dgram_dispatch(unsigned char *buf, size_t len, void *owner
 	tree = &quic_cid_trees[dcid[0]];
 	HA_RWLOCK_RDLOCK(QC_CID_LOCK, &tree->lock);
 	node = ebmb_lookup(&tree->root, dcid, dcid_len);
+	HA_RWLOCK_RDUNLOCK(QC_CID_LOCK, &tree->lock);
+
+	if (!node) {
+		uint32_t version;
+		uint8_t type;
+		int ret __maybe_unused;
+
+		ret = quic_read_uint32(&version, &tmp_buf, buf + len);
+		BUG_ON(!ret); /* Should not happen as packet is big enough for DCID parsing. */
+		type = quic_parse_long_pkt_type(buf[0], version);
+
+		if (type == QUIC_PACKET_TYPE_INITIAL || type == QUIC_PACKET_TYPE_0RTT) {
+			/* TODO save the hashed value to avoid same recalculation for
+			 * the same datagram later.
+			 */
+			struct quic_cid orig_cid, new_cid;
+			uint64_t hash;
+			const unsigned char *tmp_buf = buf;
+
+			memcpy(orig_cid.data, dcid, dcid_len);
+			orig_cid.len = dcid_len;
+
+			hash = quic_derive_cid(&orig_cid, saddr);
+			memcpy(new_cid.data, &hash, sizeof(hash));
+			new_cid.len = QUIC_HAP_CID_LEN;
+
+			tree = &quic_cid_trees[new_cid.data[0]];
+			HA_RWLOCK_RDLOCK(QC_CID_LOCK, &tree->lock);
+			node = ebmb_lookup(&tree->root, new_cid.data, new_cid.len);
+			HA_RWLOCK_RDUNLOCK(QC_CID_LOCK, &tree->lock);
+		}
+	}
+
 	if (node) {
-		id = ebmb_entry(node, struct quic_connection_id, node);
-		cid_tid = HA_ATOMIC_LOAD(&id->qc->tid);
+		conn_id = ebmb_entry(node, struct quic_connection_id, node);
+		cid_tid = HA_ATOMIC_LOAD(&conn_id->tid);
 	}
 	else {
-		/* CID not found, dispatch it to the default thread linked to CID. */
-		cid_tid = dcid[0] % global.nbthread;
+		/* CID not found, use current thread. */
+		cid_tid = tid;
 	}
-	HA_RWLOCK_RDUNLOCK(QC_CID_LOCK, &tree->lock);
 
 	/* All the members must be initialized! */
 	dgram->owner = owner;
