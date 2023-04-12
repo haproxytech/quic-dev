@@ -701,5 +701,7 @@ static inline void quic_handle_stopping(void)
 int qc_migrate_tid(struct quic_conn *qc, uint tid);
 void qc_finalize_migration(struct quic_conn *qc);
 
+uint64_t quic_derive_cid(const struct quic_cid *orig, const struct sockaddr_storage *addr);
+
 #endif /* USE_QUIC */
 #endif /* _HAPROXY_QUIC_CONN_H */

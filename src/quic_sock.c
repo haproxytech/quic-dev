@@ -235,6 +235,7 @@ static int quic_lstnr_dgram_dispatch(unsigned char *buf, size_t len, void *owner
 		uint32_t version;
 		uint8_t type;
 		int ret __maybe_unused;
+		const unsigned char *tmp_buf = buf;
 
 		ret = quic_read_uint32(&version, &tmp_buf, buf + len);
 		BUG_ON(!ret); /* Should not happen as packet is big enough for DCID parsing. */
@@ -246,7 +247,6 @@ static int quic_lstnr_dgram_dispatch(unsigned char *buf, size_t len, void *owner
 			 */
 			struct quic_cid orig_cid, new_cid;
 			uint64_t hash;
-			const unsigned char *tmp_buf = buf;
 
 			memcpy(orig_cid.data, dcid, dcid_len);
 			orig_cid.len = dcid_len;
@@ -269,6 +269,7 @@ static int quic_lstnr_dgram_dispatch(unsigned char *buf, size_t len, void *owner
 	else {
 		/* CID not found, use current thread. */
 		cid_tid = tid;
+		fprintf(stderr, "USE DEFAULT THREAD\n");
 	}
 
 	/* All the members must be initialized! */

@@ -3893,7 +3893,7 @@ static int quic_stateless_reset_token_init(struct quic_connection_id *quic_cid)
  *
  * Returns a new 64-bits CID value.
  */
-static uint64_t quic_derive_cid(const struct quic_cid *orig,
+uint64_t quic_derive_cid(const struct quic_cid *orig,
                                 const struct sockaddr_storage *addr)
 {
 	const struct sockaddr_in *in;
@@ -3989,11 +3989,14 @@ static struct quic_connection_id *new_quic_cid(struct eb_root *root,
 	}
 
 	conn_id->qc = qc;
+	conn_id->tid = tid;
 
-	conn_id->seq_num.key = qc->next_cid_seq_num++;
+	conn_id->seq_num.key = qc ? qc->next_cid_seq_num++ : 0;
+
 	conn_id->retire_prior_to = 0;
 	/* insert the allocated CID in the quic_conn tree */
-	eb64_insert(root, &conn_id->seq_num);
+	if (root)
+		eb64_insert(root, &conn_id->seq_num);
 
 	TRACE_LEAVE(QUIC_EV_CONN_TXPKT, qc);
 	return conn_id;
@@ -5409,6 +5412,7 @@ static int parse_retry_token(struct quic_conn *qc,
 static struct quic_conn *qc_new_conn(const struct quic_version *qv, int ipv4,
                                      struct quic_cid *dcid, struct quic_cid *scid,
                                      const struct quic_cid *token_odcid,
+                                     struct quic_connection_id *conn_id,
                                      struct sockaddr_storage *local_addr,
                                      struct sockaddr_storage *peer_addr,
                                      int server, int token, void *owner)
@@ -5416,12 +5420,12 @@ static struct quic_conn *qc_new_conn(const struct quic_version *qv, int ipv4,
 	int i;
 	struct quic_conn *qc;
 	/* Initial CID. */
-	struct quic_connection_id *conn_id;
 	char *buf_area = NULL;
 	struct listener *l = NULL;
 	struct quic_cc_algo *cc_algo = NULL;
 	struct quic_tls_ctx *ictx;
 	TRACE_ENTER(QUIC_EV_CONN_INIT);
+	fprintf(stderr, "[%u] %s\n", tid, __func__);
 	/* TODO replace pool_zalloc by pool_alloc(). This requires special care
 	 * to properly initialized internal quic_conn members to safely use
 	 * quic_conn_release() on alloc failure.
@@ -5452,6 +5456,9 @@ static struct quic_conn *qc_new_conn(const struct quic_version *qv, int ipv4,
 	}
 
 	qc->cids = EB_ROOT;
+	conn_id->qc = qc;
+	eb64_insert(&qc->cids, &conn_id->seq_num);
+
 	/* QUIC Server (or listener). */
 	if (server) {
 		struct proxy *prx;
@@ -5487,17 +5494,7 @@ static struct quic_conn *qc_new_conn(const struct quic_version *qv, int ipv4,
 
 	/* Initialize the next CID sequence number to be used for this connection. */
 	qc->next_cid_seq_num = 0;
-	/* Generate the first connection CID. This is derived from the client
-	 * ODCID and address. This allows to retrieve the connection from the
-	 * ODCID without storing it in the CID tree. This is an interesting
-	 * optimization as the client is expected to stop using its ODCID in
-	 * favor of our generated value.
-	 */
-	conn_id = new_quic_cid(&qc->cids, qc, dcid, peer_addr);
-	if (!conn_id) {
-		TRACE_ERROR("Could not allocate a new connection ID", QUIC_EV_CONN_INIT, qc);
-		goto err;
-	}
+	++qc->next_cid_seq_num;
 
 	if ((global.tune.options & GTUNE_QUIC_SOCK_PER_CONN) &&
 	    is_addr(local_addr)) {
@@ -5595,17 +5592,6 @@ static struct quic_conn *qc_new_conn(const struct quic_version *qv, int ipv4,
 	LIST_APPEND(&th_ctx->quic_conns, &qc->el_th_ctx);
 	qc->qc_epoch = HA_ATOMIC_LOAD(&qc_epoch);
 
-	/* Insert the allocated CID in the receiver datagram handler tree. This
-	 * must be done only after at least qc.tid is set.
-	 */
-	if (server) {
-		struct quic_cid_tree *tree = &quic_cid_trees[conn_id->cid.data[0]];
-		HA_RWLOCK_WRLOCK(QC_CID_LOCK, &tree->lock);
-		ebmb_insert(&tree->root, &conn_id->node, conn_id->cid.len);
-		HA_RWLOCK_WRUNLOCK(QC_CID_LOCK, &tree->lock);
-	}
-
-
 	TRACE_LEAVE(QUIC_EV_CONN_INIT, qc);
 
 	return qc;
@@ -5633,6 +5619,7 @@ void quic_conn_release(struct quic_conn *qc)
 	struct eb64_node *node;
 	struct quic_tls_ctx *app_tls_ctx;
 	struct quic_rx_packet *pkt, *pktback;
+	//struct quic_cid_tree *tree;
 
 	TRACE_ENTER(QUIC_EV_CONN_CLOSE, qc);
 
@@ -5685,6 +5672,9 @@ void quic_conn_release(struct quic_conn *qc)
 		tasklet_free(qc->wait_event.tasklet);
 
 	/* remove the connection from receiver cids trees */
+	//tree = &quic_cid_trees[qc->scid.data[0]];
+	//HA_RWLOCK_WRLOCK(QC_CID_LOCK, &tree->lock);
+	//HA_RWLOCK_WRUNLOCK(QC_CID_LOCK, &tree->lock);
 	free_quic_conn_cids(qc);
 
 	conn_ctx = qc->xprt_ctx;
@@ -6702,6 +6692,8 @@ static struct quic_conn *quic_rx_pkt_retrieve_conn(struct quic_rx_packet *pkt,
 		}
 
 		if (!qc) {
+			struct quic_connection_id *conn_id;
+			struct ebmb_node *node;
 			int ipv4;
 
 			if (global.cluster_secret && !pkt->token_len && !(l->bind_conf->options & BC_O_QUIC_FORCE_RETRY) &&
@@ -6730,16 +6722,48 @@ static struct quic_conn *quic_rx_pkt_retrieve_conn(struct quic_rx_packet *pkt,
 				goto err;
 			}
 
+			/* Generate the first connection CID. This is derived from the client
+			 * ODCID and address. This allows to retrieve the connection from the
+			 * ODCID without storing it in the CID tree. This is an interesting
+			 * optimization as the client is expected to stop using its ODCID in
+			 * favor of our generated value.
+			 */
+			conn_id = new_quic_cid(NULL, NULL, &pkt->dcid, &dgram->saddr);
+			BUG_ON(!conn_id); /* TODO */
+
+			tree = &quic_cid_trees[conn_id->cid.data[0]];
+			HA_RWLOCK_WRLOCK(QC_CID_LOCK, &tree->lock);
+			node = ebmb_insert(&tree->root, &conn_id->node, conn_id->cid.len);
+			if (node != &conn_id->node) {
+				fprintf(stderr, "Duplicate CID node creation\n");
+				conn_id = ebmb_entry(node, struct quic_connection_id, node);
+				*new_tid = conn_id->tid;
+				HA_RWLOCK_WRUNLOCK(QC_CID_LOCK, &tree->lock);
+				return NULL;
+			}
+			//fprintf(stderr, "[%u] Inserted CID node (%d/%u/%p) %02x%02x%02x%02x%02x%02x%02x%02x\n", tid, cid.data[0], cid.len, tree, cid.data[0], cid.data[1], cid.data[2], cid.data[3], cid.data[4], cid.data[5], cid.data[6], cid.data[7]);
+			//BUG_ON(!ebmb_lookup(&tree->root, cid.data, cid.len));
+			//BUG_ON(!retrieve_qc_conn_from_cid(pkt, l, &dgram->saddr));
+
+			//{
+			//FILE *f = fopen("/tmp/tree.dot", "w+");
+			//ebmb_to_file(f, &tree->root, NULL, 0, NULL);
+			//fclose(f);
+			//}
+			HA_RWLOCK_WRUNLOCK(QC_CID_LOCK, &tree->lock);
+
 			pkt->saddr = dgram->saddr;
 			ipv4 = dgram->saddr.ss_family == AF_INET;
 
 			qc = qc_new_conn(pkt->version, ipv4, &pkt->dcid, &pkt->scid, &token_odcid,
-			                 &dgram->daddr, &pkt->saddr, 1,
+			                 conn_id, &dgram->daddr, &pkt->saddr, 1,
 			                 !!pkt->token_len, l);
 			if (qc == NULL)
 				goto err;
 
 			HA_ATOMIC_INC(&prx_counters->half_open_conn);
+			//BUG_ON(!retrieve_qc_conn_from_cid(pkt, l, &dgram->saddr));
+			fprintf(stderr, "\n");
 		}
 	}
 	else if (!qc) {
@@ -8378,6 +8402,8 @@ int qc_notify_send(struct quic_conn *qc)
  */
 int qc_migrate_tid(struct quic_conn *qc, uint new_tid)
 {
+	struct eb64_node *node;
+	struct quic_connection_id *conn_id;
 	struct task * (*io_cb_func)(struct task *t, void *context, unsigned int state);
 	struct task *t1 = NULL, *t2 = NULL;
 	struct tasklet *t3 = NULL;
@@ -8444,7 +8470,14 @@ int qc_migrate_tid(struct quic_conn *qc, uint new_tid)
 	qc->qc_epoch = HA_ATOMIC_LOAD(&qc_epoch);
 
 	/* Mark the migration as finished. */
+	node = eb64_first(&qc->cids);
+	fprintf(stderr, "eb64_first on %p\n", &qc->cids);
+	BUG_ON(!node);
+	conn_id = eb64_entry(node, struct quic_connection_id, seq_num);
+	//HA_ATOMIC_STORE(&conn_id->qc->tid, new_tid);
+	HA_ATOMIC_STORE(&conn_id->tid, new_tid);
 	HA_ATOMIC_STORE(&qc->tid, new_tid);
+
 	if (need_requeue)
 		tasklet_wakeup_on(qc->wait_event.tasklet, new_tid);
 
