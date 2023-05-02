@@ -68,7 +68,9 @@ static const struct trace_event h3_trace_events[] = {
 	{ .mask = H3_EV_H3S_NEW,      .name = "h3s_new",     .desc = "new H3 stream" },
 #define           H3_EV_H3S_END       (1ULL <<  8)
 	{ .mask = H3_EV_H3S_END,      .name = "h3s_end",     .desc = "H3 stream terminated" },
-#define           H3_EV_H3C_END       (1ULL <<  9)
+#define           H3_EV_H3C_NEW       (1ULL <<  9)
+	{ .mask = H3_EV_H3C_NEW,      .name = "h3c_new",     .desc = "new H3 connection" },
+#define           H3_EV_H3C_END       (1ULL <<  10)
 	{ .mask = H3_EV_H3C_END,      .name = "h3c_end",     .desc = "H3 connection terminated" },
 	{ }
 };
@@ -545,6 +547,7 @@ static ssize_t h3_headers_to_htx(struct qcs *qcs, const struct buffer *buf,
 
 	sl = htx_add_stline(htx, HTX_BLK_REQ_SL, flags, meth, path, ist("HTTP/3.0"));
 	if (!sl) {
+		TRACE_ERROR("cannot allocate HTX status line", H3_EV_RX_FRAME, qcs->qcc->conn, qcs);
 		h3c->err = H3_INTERNAL_ERROR;
 		len = -1;
 		goto out;
@@ -557,6 +560,7 @@ static ssize_t h3_headers_to_htx(struct qcs *qcs, const struct buffer *buf,
 
 	if (isttest(authority)) {
 		if (!htx_add_header(htx, ist("host"), authority)) {
+			TRACE_ERROR("cannot add HTX host header", H3_EV_RX_FRAME|H3_EV_RX_HDR, qcs->qcc->conn, qcs);
 			h3c->err = H3_INTERNAL_ERROR;
 			len = -1;
 			goto out;
@@ -648,6 +652,7 @@ static ssize_t h3_headers_to_htx(struct qcs *qcs, const struct buffer *buf,
 		}
 
 		if (!htx_add_header(htx, list[hdr_idx].n, list[hdr_idx].v)) {
+			TRACE_ERROR("cannot convert header to HTX", H3_EV_RX_FRAME|H3_EV_RX_HDR, qcs->qcc->conn, qcs);
 			h3c->err = H3_INTERNAL_ERROR;
 			len = -1;
 			goto out;
@@ -657,6 +662,7 @@ static ssize_t h3_headers_to_htx(struct qcs *qcs, const struct buffer *buf,
 
 	if (cookie >= 0) {
 		if (http_cookie_merge(htx, list, cookie)) {
+			TRACE_ERROR("error while merging cookie headers", H3_EV_RX_FRAME|H3_EV_RX_HDR, qcs->qcc->conn, qcs);
 			h3c->err = H3_INTERNAL_ERROR;
 			len = -1;
 			goto out;
@@ -664,6 +670,7 @@ static ssize_t h3_headers_to_htx(struct qcs *qcs, const struct buffer *buf,
 	}
 
 	if (!htx_add_endof(htx, HTX_BLK_EOH)) {
+		TRACE_ERROR("cannot add HTX EOF", H3_EV_RX_FRAME, qcs->qcc->conn, qcs);
 		h3c->err = H3_INTERNAL_ERROR;
 		len = -1;
 		goto out;
@@ -676,6 +683,7 @@ static ssize_t h3_headers_to_htx(struct qcs *qcs, const struct buffer *buf,
 	htx = NULL;
 
 	if (!qc_attach_sc(qcs, &htx_buf)) {
+		TRACE_ERROR("cannot attach stream endpoint", H3_EV_RX_FRAME, qcs->qcc->conn, qcs);
 		h3c->err = H3_INTERNAL_ERROR;
 		len = -1;
 		goto out;
@@ -1759,14 +1767,21 @@ static void h3_detach(struct qcs *qcs)
 static int h3_finalize(void *ctx)
 {
 	struct h3c *h3c = ctx;
+	struct qcc *qcc = h3c->qcc;
 	struct qcs *qcs;
 
-	qcs = qcc_init_stream_local(h3c->qcc, 0);
-	if (!qcs)
+	TRACE_ENTER(H3_EV_H3C_NEW, qcc->conn);
+
+	qcs = qcc_init_stream_local(qcc, 0);
+	if (!qcs) {
+		TRACE_DEVEL("leaving in error", H3_EV_H3C_NEW, qcc->conn);
 		return 1;
+	}
 
 	h3_control_send(qcs, h3c);
 	h3c->ctrl_strm = qcs;
+
+	TRACE_LEAVE(H3_EV_H3C_NEW, qcc->conn);
 
 	return 0;
 }
