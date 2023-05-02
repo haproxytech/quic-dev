@@ -540,7 +540,7 @@ struct qcs *qcc_init_stream_local(struct qcc *qcc, int bidi)
 
 	qcs = qcs_new(qcc, *next, type);
 	if (!qcs) {
-		TRACE_LEAVE(QMUX_EV_QCS_NEW, qcc->conn);
+		TRACE_DEVEL("leaving in error", QMUX_EV_QCS_NEW, qcc->conn);
 		qcc_set_error(qcc, QC_ERR_INTERNAL_ERROR);
 		return NULL;
 	}
@@ -755,6 +755,7 @@ static void qcs_consume(struct qcs *qcs, uint64_t bytes)
 		TRACE_DATA("increase stream credit via MAX_STREAM_DATA", QMUX_EV_QCS_RECV, qcc->conn, qcs);
 		frm = qc_frm_alloc(QUIC_FT_MAX_STREAM_DATA);
 		if (!frm) {
+			TRACE_ERROR("cannot allocate MAX_STREAM_DATA frame", QMUX_EV_QCS_RECV, qcc->conn, qcs);
 			qcc_set_error(qcc, QC_ERR_INTERNAL_ERROR);
 			return;
 		}
@@ -774,6 +775,7 @@ static void qcs_consume(struct qcs *qcs, uint64_t bytes)
 		TRACE_DATA("increase conn credit via MAX_DATA", QMUX_EV_QCS_RECV, qcc->conn, qcs);
 		frm = qc_frm_alloc(QUIC_FT_MAX_DATA);
 		if (!frm) {
+			TRACE_ERROR("cannot allocate MAX_DATA frame", QMUX_EV_QCS_RECV, qcc->conn, qcs);
 			qcc_set_error(qcc, QC_ERR_INTERNAL_ERROR);
 			return;
 		}
@@ -1341,6 +1343,7 @@ static int qcc_release_remote_stream(struct qcc *qcc, uint64_t id)
 			TRACE_DATA("increase max stream limit with MAX_STREAMS_BIDI", QMUX_EV_QCC_SEND, qcc->conn);
 			frm = qc_frm_alloc(QUIC_FT_MAX_STREAMS_BIDI);
 			if (!frm) {
+				TRACE_ERROR("cannot allocate MAX_STREAMS_BIDI frame", QMUX_EV_QCC_SEND, qcc->conn);
 				qcc_set_error(qcc, QC_ERR_INTERNAL_ERROR);
 				goto err;
 			}
