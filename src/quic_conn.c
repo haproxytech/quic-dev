@@ -5204,7 +5204,7 @@ struct task *quic_conn_io_cb(struct task *t, void *context, unsigned int state)
 	}
 
  out:
-	TRACE_PROTO("ssl error", QUIC_EV_CONN_IO_CB, qc, &st, &ssl_err);
+	TRACE_PROTO("ssl status", QUIC_EV_CONN_IO_CB, qc, &st, &ssl_err);
 	TRACE_LEAVE(QUIC_EV_CONN_IO_CB, qc);
 	return t;
 }
