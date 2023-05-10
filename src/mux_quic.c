@@ -205,6 +205,13 @@ static forceinline void qcc_rm_hreq(struct qcc *qcc)
 		qcc_reset_idle_start(qcc);
 }
 
+/* Returns true if lower layer is shut due to a transport fatal error. */
+static inline int qcc_conn_is_shut(const struct qcc *qcc)
+{
+	return (qcc->flags & (QC_CF_ERR_CONN|QC_CF_CONN_SHUT)) ==
+	       (QC_CF_ERR_CONN|QC_CF_CONN_SHUT);
+}
+
 static inline int qcc_is_dead(const struct qcc *qcc)
 {
 	/* Maintain connection if stream endpoints are still active. */
@@ -216,7 +223,7 @@ static inline int qcc_is_dead(const struct qcc *qcc)
 	 * - error detected locally
 	 * - MUX timeout expired or unset
 	 */
-	if (qcc->flags & (QC_CF_ERR_CONN|QC_CF_ERRL_DONE) ||
+	if (qcc_conn_is_shut(qcc) || qcc->flags & QC_CF_ERRL_DONE ||
 	    !qcc->task) {
 		return 1;
 	}
@@ -1096,6 +1103,12 @@ int qcc_recv(struct qcc *qcc, uint64_t id, uint64_t len, uint64_t offset,
 		qcc_decode_qcs(qcc, qcs);
 		qcc_refresh_timeout(qcc);
 	}
+
+	/* If on error wakeup tasklet to mark read as done via qc_recv().
+	 * TODO should non-contiguous data be counted to prevent shut ?
+	 */
+	if (!ncb_data(&qcs->rx.ncbuf, 0) && (qcc->flags & QC_CF_ERR_CONN))
+		tasklet_wakeup(qcc->wait_event.tasklet);
 
  out:
 	TRACE_LEAVE(QMUX_EV_QCC_RECV, qcc->conn);
@@ -2064,6 +2077,7 @@ static int qc_recv(struct qcc *qcc)
 {
 	struct eb64_node *node;
 	struct qcs *qcs;
+	int read_done = 1;
 
 	TRACE_ENTER(QMUX_EV_QCC_RECV, qcc->conn);
 
@@ -2092,6 +2106,18 @@ static int qc_recv(struct qcc *qcc)
 
 		qcc_decode_qcs(qcc, qcs);
 		node = eb64_next(node);
+
+		/* At least one stream with data left to read.
+		 * TODO should non-contiguous data be counted to prevent shut ?
+		 */
+		if (ncb_data(&qcs->rx.ncbuf, 0))
+			read_done = 0;
+	}
+
+	/* Consider connection as closed on a read0 following a send fatal error. */
+	if (read_done && (qcc->flags & QC_CF_ERR_CONN)) {
+		TRACE_STATE("read done after transport error", QMUX_EV_QCC_RECV, qcc->conn);
+		qcc->flags |= QC_CF_CONN_SHUT;
 	}
 
 	TRACE_LEAVE(QMUX_EV_QCC_RECV, qcc->conn);
@@ -2195,7 +2221,7 @@ static int qc_wake_some_streams(struct qcc *qcc)
 		if (!qcs_sc(qcs))
 			continue;
 
-		if (qcc->flags & (QC_CF_ERR_CONN|QC_CF_ERRL)) {
+		if (qcc_conn_is_shut(qcc) || qcc->flags & QC_CF_ERRL) {
 			TRACE_POINT(QMUX_EV_QCC_WAKE, qcc->conn, qcs);
 			se_fl_set_error(qcs->sd);
 			qcs_alert(qcs);
@@ -2255,7 +2281,7 @@ static int qc_process(struct qcc *qcc)
 	}
 
 	/* Report error if set on stream endpoint layer. */
-	if (qcc->flags & (QC_CF_ERR_CONN|QC_CF_ERRL))
+	if (qcc_conn_is_shut(qcc) || qcc->flags & QC_CF_ERRL)
 		qc_wake_some_streams(qcc);
 
  out:
