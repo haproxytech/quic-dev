@@ -1,34 +1,19 @@
-DDOS -> * anti-replay TLS à activer ?
- -> drop des paquets 0RTT
- -> voir à activer l'option SSL_OP_NO_ANTI_REPLAY
- si problématique peut être annoncer le non-support de 0RTT avec QUIC
+# TODO
 
-DDOS -> * Retry : revoir la génération du token
-  -> générer une clé random au démarrage, changer la clé toutes les 10s (invalider la clé d'avant ou garder la clé précédente)
-
-* voir ce qu'il faut faire quand le build d'un packet échoue pour les trames,
-  peut-être ne les insérer dans le paquet que si correctement buildé (le paquet)
-  -> le MUX fait du retry opportuniste, ce serait plutôt à la quic-conn de le faire
-  -> voir les URLs des gros fichiers sur haproxy.org pour tester
-=> MINOR: à revoir en 2.9 avec la gestion des buffers dynamiques
+DDOS ->
+  Retry ->  changer la clé toutes les 10s (invalider la clé d'avant ou garder la clé précédente)
 
 OPTIM * diminuer le nombre de tasklet_wakeup nécessaire au traitement d'un paquet
 => MINOR
 
 Amélioration diagnostic QUIC
-* support pcap + keylogfile
-=> MINOR
 * support QLOG
   -> regarder intérêt du QLOG avec QVIS
 => MINOR
 * amélioration trace
-  -> définir des niveaux de traces
   -> réutiliser la quic_conn pour lockon sur les traces MUX
 => MEDIUM
-* avoir compteurs par connexion : paquet émis, paquet retransmis, ...
-  addition de ces compteurs sur free de la connexion vers les compteurs globaux
-  à implémenter via un "show quic" équivalent au "show fd" ?
-  peut etre ajouter les clés de session pour déchiffrer le trafic
+* logger clés de session TLS dans "show quic"
 * compléter dev/flags pour QUIC
 * avoir un "show listener" ? permettrait de diagnostiquer la partie quic-sock/quic-receiver-buf
   faire comme "show activity" pour des compteurs par thread ?
@@ -37,41 +22,9 @@ Amélioration diagnostic QUIC
 Tx transport quic-conn
 * utiliser sendmsg/sendmmsg pour support envoi datagrammes >16ko
 => MINOR
-* gérer les cas d'erreur de sendto
-  uniquement pour les quic-conn avec socket dédiée
-=> MEDIUM
-MAINTENANCE -> * revue des erreurs sur envoi trames
-  trier les erreurs temporaires et les erreurs permanentes
-  permettre au maxium à la couche MUX de s'inscrire en cas d'erreur
-  nécessite que la quic-conn réveille le MUX ensuite sur la condition (réception ACK si congestion, allocation réussie si erreur alloc, ...)
-  en cas d'erreur permanente fermer la connexion voire le process
+
+* nettoyage quic-conn en état closing/draining
 => MINOR
-
-* la quic-conn peut être conservée le temps de la durée de vie du MUX
-  possiblement nettoyer des parties devenus inutile de la quic-conn
-=> MINOR
-
-DISPATCH DES CONNEXIONS
- * sur allocation des nouveaux CID, assigner le CID sur le thread le moins
- chargé plutôt que le thread courant. Pour éviter de locker sur création CID,
- probablement redispatcher le paquet vers le thread le moins chargé et flagger
- le paquet comme devant donner lieu à création de la quic_conn.
-=> MEDIUM
-
- Sur ce point, il serait possible de se passer de l'arbre des ODCID en assignant
- nous-mêmes le CID à partir de l'ODCID. On le hashe avec sa source, ça nous donne
- les 52 bits de poids fort du CID (si c'est bien du 64-bits), et on stocke l'ID
- du thread dans les 12 bits de poids faible. Comme ça on n'utilise plus que les
- CID finaux comme clé de stockage, et si on ne trouve pas un CID lors d'un lookup,
- alors on considère que c'est peut-être un ODCID, on applique le calcul ci-dessus
- (sans le thread id) et on fait un lookup_ge() dans l'arbre (les arbres?) de
- connexions. Si on en trouve un qui correspond, c'est gagné et on a en prime le
- thread ID associé. Donc on pourrait très bien stocker les CID finaux dans un
- arbre locké temporaire (équivalent des ODCID actuels) tant que le client n'a
- pas confirmé l'utilisation de notre CID, et ne les déplacer dans l'arbre du
- thread qu'une fois que le client a confirmé avoir adopté notre CID. Ainsi, on
- n'a jamais besoin de mémoriser l'ODCID, soit le client parle avec le CID et on
- a l'info en direct, soit il parle avec l'ODCID et on retrouve l'info.
 
 CONNECTION_CLOSE DURING HANDSHAKE
 cf RFC 9000 10.2.3.
@@ -81,13 +34,6 @@ https://datatracker.ietf.org/doc/html/rfc9000#section-10.2.3
   d'encryption selon le contexte du client pour garantir qu'il pourra être
   déchiffré. À l'heure actuelle cela n'est pas fait et le CONNECTION_CLOSE est
   envoyé uniquement au niveau actuel de la struct quic_conn
-=> MINOR
-
-RACE FIN DE HANDSHAKE et INIT MUX ?
-vérifier s'il est possible de recevoir des STREAM ou autres trames destinés au
-MUX avant son initialisation. Si oui, prévoir de bufferiser ces trames ou
-désactiver temporairement la lecture du Rx buf, ou au pire dropper ces trames
-en attente de réémission par le client.
 => MINOR
 
 MAINTIEN DE LA CONNEXION PAR LA QUIC-CONN
@@ -103,19 +49,12 @@ qui cause l'envoi d'un datagramme par RESET_STREAM. À optimiser tout en gardant
 la possibilité de savoir si un RESET_STREAM n'a pu être envoyé pour un stream.
 => MEDIUM
 
-FERMETURE CONNECTION MUX
-améliorer l'envoi GOAWAY / CONNECTION_CLOSE
-=> MINOR
-
 REFACTOR
-* qc_dup_pkt_frms(): parsing des streams à refactorer avec le recv ?
 * utiliser ncbuf pour ACK ranges
+  est-ce bien utile ?
 * quic_conn_io_cb(): étendre la fonction pour pouvoir gérer plus de 2 encryption levels
   nécessaire notamment pour l'envoi de CONNECTION_CLOSE lors de la handshake
 * faire de QPACK un application protocol layer au même niveau que H3
-* identifier le code commun h3/hq-interop et le déplacer dans la couche MUX
-  par exemple h3_decode_qcs/hq_interop_decode_qcs vers qcc_decode_qcs
-    h3_snd_buf/hq_interop_snd_buf vers qc_snd_buf
 => MINOR
 
 ARCHI REVIEW
@@ -169,11 +108,6 @@ RECV DATAGRAM / RXBUF (QUIC_RECEIVER_BUF)
 
 * nettoyage des structures avec pa_hole
 
-* ackranges
-  nombre d'éléments alloués importants ?
-  à déterminer si cela est justifié ou non
-=> MEDIUM
-
 * implémentation BBR
 => MINOR
 
@@ -187,9 +121,6 @@ RECV DATAGRAM / RXBUF (QUIC_RECEIVER_BUF)
   -> et remplacer le buffer unique par un ring pour dumper plusieurs erreurs
 => MEDIUM
 
-* ajouter une stat sur la version HTTP utilisée + clear/SSL
-=> MAJOR
-
 * QUIC coté backend
 => MINOR
 
@@ -197,16 +128,33 @@ RECV DATAGRAM / RXBUF (QUIC_RECEIVER_BUF)
   regtest, benchmark, ...
 => MINOR
 
-* durée de vie des connexions QUIC et retransmissions
-  définir un paramètre max-age pour les connexions QUIC
-  si dépassement de ce paramètre, considérer la connexion comme malade et devant être fermée
-  équivalent au paramètre tcp-ut de la config haproxy
-  age de la connexion basée sur le paquet le plus ancien non acquité
-=> MAJOR
-  empêcher la fermeture du process en soft-stop si données restantes émises non acquittées
-  incrémenter la variable haproxy jobs pour chaque quic-conn
-=> MEDIUM
-
 * isoler le handshake SSL dans une task HEAVY
   pour garantir qu'on ne sature pas un thread avec une handshake SSL
 => MEDIUM
+
+* rajouter log sur erreur handshake
+  utiliser send_log + ERR_error_string (cf session_build_err_string)
+
+# Archi limitation
+
+* nettoyage quic_conn_io_cb()
+
+* API émission MUX/quic-conn
+
+* limiter le nombre d'allocations dynamiques
+  -> buffer
+  -> quic_frame
+     sur envoi ne conserver que les paquets chiffrés (à déchiffrer manuellement pour retransmission)
+
+* limiter le nombre de memcpy()
+  -> sur réception
+  -> sur émission
+
+* gestion des erreurs entre MUX/quic-conn
+
+# Features
+
+* NAT rebinding
+* migration de connexion
+* ECN
+* QUIC coté backend
