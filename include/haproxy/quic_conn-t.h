@@ -36,6 +36,7 @@
 #include <haproxy/quic_cc-t.h>
 #include <haproxy/quic_frame-t.h>
 #include <haproxy/quic_loss-t.h>
+#include <haproxy/quic_openssl_compat-t.h>
 #include <haproxy/quic_stats-t.h>
 #include <haproxy/quic_tls-t.h>
 #include <haproxy/quic_tp-t.h>
@@ -601,6 +602,9 @@ struct quic_conn {
 	struct quic_pktns pktns[QUIC_TLS_PKTNS_MAX];
 
 	struct ssl_sock_ctx *xprt_ctx;
+#ifdef USE_QUIC_OPENSSL_COMPAT
+	struct quic_openssl_compat openssl_compat;
+#endif
 
 	struct sockaddr_storage local_addr;
 	struct sockaddr_storage peer_addr;
