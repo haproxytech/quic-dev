@@ -1,5 +1,22 @@
 # TODO
 
+Amélioration association FD / CONNECTION
+* dans le cas d'un bourrinage de connexions avec Curl, le client se met à réutiliser
+  au bout d'un certain temps le même couple IP/PORT
+  dans ce cas on va recevoir le traffic pour la nouvelle connexion sur le FD d'une connexion
+  obsolète
+
+  pour améliorer cela, il faudrait considérer les FDs des connexions comme des
+  accélérateurs pour la connexion active qui peuvent être partagés entre
+  plusieurs connexions
+
+  si on reçoit du trafic sur un FD pour une connexion différente que celle
+  utilisée pour ce FD, switcher le FD pour qu'il pointe vers cette nouvelle
+  connexion
+
+  cela permettrait également de mettre à jour le CID en cas de changement de
+  CID par le client sur une même connexion
+
 DDOS ->
   Retry ->  changer la clé toutes les 10s (invalider la clé d'avant ou garder la clé précédente)
 
