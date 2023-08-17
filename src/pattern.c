@@ -1153,6 +1153,7 @@ void free_pattern_tree(struct eb_root *root)
 		next = eb_next(node);
 		eb_delete(node);
 		elt = container_of(node, struct pattern_tree, node);
+		ebpt_delete(&elt->pat_node);
 		pat_unlink_from_head(&elt->ref->tree_head, &elt->from_ref);
 		free(elt->data);
 		free(elt);
@@ -1166,6 +1167,7 @@ void pat_prune_gen(struct pattern_expr *expr)
 
 	list_for_each_entry_safe(pat, tmp, &expr->patterns, list) {
 		LIST_DELETE(&pat->list);
+		ebpt_delete(&pat->pat_node);
 		pat_unlink_from_head(&pat->pat.ref->list_head, &pat->from_ref);
 		if (pat->pat.sflags & PAT_SF_REGFREE)
 			regex_free(pat->pat.ptr.ptr);
@@ -1210,6 +1212,10 @@ int pat_idx_list_val(struct pattern_expr *expr, struct pattern *pat, char **err)
 	expr->ref->revision = rdtsc();
 	expr->ref->entry_cnt++;
 
+	patl->pat_node.key = pat->ref->pattern;
+	ebis_insert(&expr->pat_in_patterns, &patl->pat_node);
+	pat->ref->eb_root = &expr->pat_in_patterns;
+
 	/* that's ok */
 	return 1;
 }
@@ -1242,6 +1248,10 @@ int pat_idx_list_ptr(struct pattern_expr *expr, struct pattern *pat, char **err)
 	pat->ref->list_head = &patl->from_ref;
 	expr->ref->revision = rdtsc();
 	expr->ref->entry_cnt++;
+
+	patl->pat_node.key = pat->ref->pattern;
+	ebis_insert(&expr->pat_in_patterns, &patl->pat_node);
+	pat->ref->eb_root = &expr->pat_in_patterns;
 
 	/* that's ok */
 	return 1;
@@ -1277,6 +1287,10 @@ int pat_idx_list_str(struct pattern_expr *expr, struct pattern *pat, char **err)
 	expr->ref->revision = rdtsc();
 	expr->ref->entry_cnt++;
 
+	patl->pat_node.key = pat->ref->pattern;
+	ebis_insert(&expr->pat_in_patterns, &patl->pat_node);
+	pat->ref->eb_root = &expr->pat_in_patterns;
+
 	/* that's ok */
 	return 1;
 }
@@ -1310,6 +1324,10 @@ int pat_idx_list_reg_cap(struct pattern_expr *expr, struct pattern *pat, int cap
 	pat->ref->list_head = &patl->from_ref;
 	expr->ref->revision = rdtsc();
 	expr->ref->entry_cnt++;
+
+	patl->pat_node.key = pat->ref->pattern;
+	ebis_insert(&expr->pat_in_patterns, &patl->pat_node);
+	pat->ref->eb_root = &expr->pat_in_patterns;
 
 	/* that's ok */
 	return 1;
@@ -1358,6 +1376,11 @@ int pat_idx_tree_ip(struct pattern_expr *expr, struct pattern *pat, char **err)
 
 			/* Insert the entry. */
 			ebmb_insert_prefix(&expr->pattern_tree, &node->node, 4);
+
+			node->pat_node.key = pat->ref->pattern;
+			ebis_insert(&expr->pat_in_tree, &node->pat_node);
+			pat->ref->eb_root = &expr->pat_in_tree;
+
 			node->from_ref = pat->ref->tree_head;
 			pat->ref->tree_head = &node->from_ref;
 			expr->ref->revision = rdtsc();
@@ -1389,6 +1412,11 @@ int pat_idx_tree_ip(struct pattern_expr *expr, struct pattern *pat, char **err)
 
 		/* Insert the entry. */
 		ebmb_insert_prefix(&expr->pattern_tree_2, &node->node, 16);
+
+		node->pat_node.key = pat->ref->pattern;
+		ebis_insert(&expr->pat_in_tree_2, &node->pat_node);
+		pat->ref->eb_root = &expr->pat_in_tree_2;
+
 		node->from_ref = pat->ref->tree_head;
 		pat->ref->tree_head = &node->from_ref;
 		expr->ref->revision = rdtsc();
@@ -1436,6 +1464,11 @@ int pat_idx_tree_str(struct pattern_expr *expr, struct pattern *pat, char **err)
 
 	/* index the new node */
 	ebst_insert(&expr->pattern_tree, &node->node);
+
+	node->pat_node.key = pat->ref->pattern;
+	ebis_insert(&expr->pat_in_tree, &node->pat_node);
+	pat->ref->eb_root = &expr->pat_in_tree;
+
 	node->from_ref = pat->ref->tree_head;
 	pat->ref->tree_head = &node->from_ref;
 	expr->ref->revision = rdtsc();
@@ -1481,6 +1514,11 @@ int pat_idx_tree_pfx(struct pattern_expr *expr, struct pattern *pat, char **err)
 
 	/* index the new node */
 	ebmb_insert_prefix(&expr->pattern_tree, &node->node, len);
+
+	node->pat_node.key = pat->ref->pattern;
+	ebis_insert(&expr->pat_in_tree, &node->pat_node);
+	pat->ref->eb_root = &expr->pat_in_tree;
+
 	node->from_ref = pat->ref->tree_head;
 	pat->ref->tree_head = &node->from_ref;
 	expr->ref->revision = rdtsc();
@@ -1506,6 +1544,7 @@ void pat_delete_gen(struct pat_ref *ref, struct pat_ref_elt *elt)
 		BUG_ON(tree->ref != elt);
 
 		ebmb_delete(&tree->node);
+		ebpt_delete(&tree->pat_node);
 		free(tree->data);
 		free(tree);
 	}
@@ -1518,6 +1557,7 @@ void pat_delete_gen(struct pat_ref *ref, struct pat_ref_elt *elt)
 
 		/* Delete and free entry. */
 		LIST_DELETE(&pat->list);
+		ebpt_delete(&pat->pat_node);
 		if (pat->pat.sflags & PAT_SF_REGFREE)
 			regex_free(pat->pat.ptr.reg);
 		else
@@ -1536,8 +1576,11 @@ void pat_delete_gen(struct pat_ref *ref, struct pat_ref_elt *elt)
 void pattern_init_expr(struct pattern_expr *expr)
 {
 	LIST_INIT(&expr->patterns);
+	expr->pat_in_patterns = EB_ROOT;
 	expr->pattern_tree = EB_ROOT;
+	expr->pat_in_tree = EB_ROOT;
 	expr->pattern_tree_2 = EB_ROOT;
+	expr->pat_in_tree_2 = EB_ROOT;
 }
 
 void pattern_init_head(struct pattern_head *head)
@@ -2587,29 +2630,23 @@ void pattern_prune(struct pattern_head *head)
  */
 struct sample_data **pattern_find_smp(struct pattern_expr *expr, struct pat_ref_elt *ref)
 {
-	struct ebmb_node *node;
-	struct pattern_tree *elt;
-	struct pattern_list *pat;
+	struct ebpt_node *pat_node;
 
-	for (node = ebmb_first(&expr->pattern_tree);
-	     node;
-	     node = ebmb_next(node)) {
-		elt = container_of(node, struct pattern_tree, node);
-		if (elt->ref == ref)
-			return &elt->data;
+	pat_node = ebis_lookup(ref->eb_root, ref->pattern);
+	if (pat_node) {
+		if (ref->eb_root == &expr->pat_in_patterns) {
+			struct pattern_list *pelt;
+
+			pelt = ebpt_entry(pat_node, struct pattern_list, pat_node);
+			return &pelt->pat.data;
+		}
+		else {
+			struct pattern_tree *pnode;
+
+			pnode = ebpt_entry(pat_node, struct pattern_tree, pat_node);
+			return &pnode->data;
+		}
 	}
-
-	for (node = ebmb_first(&expr->pattern_tree_2);
-	     node;
-	     node = ebmb_next(node)) {
-		elt = container_of(node, struct pattern_tree, node);
-		if (elt->ref == ref)
-			return &elt->data;
-	}
-
-	list_for_each_entry(pat, &expr->patterns, list)
-		if (pat->pat.ref == ref)
-			return &pat->pat.data;
 
 	return NULL;
 }

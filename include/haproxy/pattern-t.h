@@ -127,6 +127,8 @@ struct pat_ref_elt {
 	void *tree_head; /* all &pattern_tree->from_ref derived from this reference, ends with NULL */
 	char *pattern;
 	char *sample;
+	/* The ebtree this element was inserted. */
+	struct eb_root *eb_root;
 	unsigned int gen_id; /* generation of pat_ref this was made for */
 	int line;
 };
@@ -138,6 +140,7 @@ struct pattern_tree {
 	void *from_ref;    // pattern_tree linked from pat_ref_elt, ends with NULL
 	struct sample_data *data;
 	struct pat_ref_elt *ref;
+	struct ebpt_node pat_node;
 	struct ebmb_node node;
 };
 
@@ -183,6 +186,7 @@ struct pattern_list {
 	void *from_ref;    // pattern_tree linked from pat_ref_elt, ends with NULL
 	struct list list;
 	struct pattern pat;
+	struct ebpt_node pat_node;
 };
 
 /* Description of a pattern expression.
@@ -199,8 +203,11 @@ struct pattern_expr {
 	                                * "head". Don't write "(struct pattern_expr *)any->pat_head->expr".
 	                                */
 	struct list patterns;         /* list of acl_patterns */
+	struct eb_root pat_in_patterns;
 	struct eb_root pattern_tree;  /* may be used for lookup in large datasets */
+	struct eb_root pat_in_tree;
 	struct eb_root pattern_tree_2;  /* may be used for different types */
+	struct eb_root pat_in_tree_2;
 	int mflags;                     /* flags relative to the parsing or matching method. */
 	__decl_thread(HA_RWLOCK_T lock);               /* lock used to protect patterns */
 };
