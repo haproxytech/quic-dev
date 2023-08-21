@@ -96,6 +96,15 @@ enum {
 #define PAT_REF_ACL 0x2 /* Set if the reference is used by at least one acl. */
 #define PAT_REF_SMP 0x4 /* Flag used if the reference contains a sample. */
 
+/* Ebtree back-refernece: a pointer to a target node entry. It has the same
+ * role as bref struct: detect when an ebtree node is being deleted if it is
+ * being tracked by another user.
+ */
+struct ebref {
+	struct list users;
+	struct ebpt_node *ref;
+};
+
 /* This struct contain a list of reference strings for dunamically
  * updatable patterns.
  */
@@ -103,7 +112,7 @@ struct pat_ref {
 	struct list list; /* Used to chain refs. */
 	char *reference; /* The reference name. */
 	char *display; /* String displayed to identify the pattern origin. */
-	struct list head; /* The head of the list of struct pat_ref_elt. */
+	struct eb_root ebpt_root; /* The tree where pattern reference elements are attached. */
 	struct list pat; /* The head of the list of struct pattern_expr. */
 	unsigned int flags; /* flags PAT_REF_*. */
 	unsigned int curr_gen; /* current generation number (anything below can be removed) */
@@ -119,7 +128,7 @@ struct pat_ref {
  * accessed from list_head or tree_head.
  */
 struct pat_ref_elt {
-	struct list list; /* Used to chain elements. */
+	struct ebpt_node node; /* Node to attach this element to its <pat_ref> ebtree. */
 	struct list back_refs; /* list of users tracking this pat ref */
 	void *list_head; /* all &pattern_list->from_ref derived from this reference, ends with NULL */
 	void *tree_head; /* all &pattern_tree->from_ref derived from this reference, ends with NULL */

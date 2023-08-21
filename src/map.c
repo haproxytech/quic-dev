@@ -13,6 +13,8 @@
 #include <stdio.h>
 #include <syslog.h>
 
+#include <import/ebpttree.h>
+
 #include <haproxy/api.h>
 #include <haproxy/applet.h>
 #include <haproxy/arg.h>
@@ -328,7 +330,7 @@ struct pattern_expr *pat_expr_get_next(struct pattern_expr *getnext, struct list
  */
 struct show_map_ctx {
 	struct pat_ref *ref;
-	struct bref bref;	/* back-reference from the pat_ref_elt being dumped */
+	struct ebref ebref;	/* back-reference from the pat_ref_elt being dumped */
 	struct pattern_expr *expr;
 	struct buffer chunk;
 	unsigned int display_flags;
@@ -353,9 +355,9 @@ static int cli_io_handler_pat_list(struct appctx *appctx)
 		/* If we're forced to shut down, we might have to remove our
 		 * reference to the last ref_elt being dumped.
 		 */
-		if (!LIST_ISEMPTY(&ctx->bref.users)) {
+		if (!LIST_ISEMPTY(&ctx->ebref.users)) {
 			HA_SPIN_LOCK(PATREF_LOCK, &ctx->ref->lock);
-			LIST_DEL_INIT(&ctx->bref.users);
+			LIST_DEL_INIT(&ctx->ebref.users);
 			HA_SPIN_UNLOCK(PATREF_LOCK, &ctx->ref->lock);
 		}
 		return 1;
@@ -369,17 +371,16 @@ static int cli_io_handler_pat_list(struct appctx *appctx)
 	case STATE_LIST:
 		HA_SPIN_LOCK(PATREF_LOCK, &ctx->ref->lock);
 
-		if (!LIST_ISEMPTY(&ctx->bref.users)) {
-			LIST_DELETE(&ctx->bref.users);
-			LIST_INIT(&ctx->bref.users);
+		if (!LIST_ISEMPTY(&ctx->ebref.users)) {
+			LIST_DEL_INIT(&ctx->ebref.users);
 		} else {
-			ctx->bref.ref = ctx->ref->head.n;
+			ctx->ebref.ref = ebpt_first(&ctx->ref->ebpt_root);
 		}
 
-		while (ctx->bref.ref != &ctx->ref->head) {
+		while (ctx->ebref.ref) {
 			chunk_reset(&trash);
 
-			elt = LIST_ELEM(ctx->bref.ref, struct pat_ref_elt *, list);
+			elt = ebpt_entry(ctx->ebref.ref, struct pat_ref_elt, node);
 
 			if (elt->gen_id != ctx->curr_gen)
 				goto skip;
@@ -397,13 +398,13 @@ static int cli_io_handler_pat_list(struct appctx *appctx)
 				/* let's try again later from this stream. We add ourselves into
 				 * this stream's users so that it can remove us upon termination.
 				 */
-				LIST_APPEND(&elt->back_refs, &ctx->bref.users);
+				LIST_APPEND(&elt->back_refs, &ctx->ebref.users);
 				HA_SPIN_UNLOCK(PATREF_LOCK, &ctx->ref->lock);
 				return 0;
 			}
 		skip:
 			/* get next list entry and check the end of the list */
-			ctx->bref.ref = elt->list.n;
+			ctx->ebref.ref = ebpt_next(ctx->ebref.ref);
 		}
 		HA_SPIN_UNLOCK(PATREF_LOCK, &ctx->ref->lock);
 		__fallthrough;
@@ -678,9 +679,9 @@ static void cli_release_show_map(struct appctx *appctx)
 {
 	struct show_map_ctx *ctx = appctx->svcctx;
 
-	if (!LIST_ISEMPTY(&ctx->bref.users)) {
+	if (!LIST_ISEMPTY(&ctx->ebref.users)) {
 		HA_SPIN_LOCK(PATREF_LOCK, &ctx->ref->lock);
-		LIST_DEL_INIT(&ctx->bref.users);
+		LIST_DEL_INIT(&ctx->ebref.users);
 		HA_SPIN_UNLOCK(PATREF_LOCK, &ctx->ref->lock);
 	}
 }
@@ -730,7 +731,7 @@ static int cli_parse_show_map(char **args, char *payload, struct appctx *appctx,
 		else
 			ctx->curr_gen = ctx->ref->curr_gen;
 
-		LIST_INIT(&ctx->bref.users);
+		LIST_INIT(&ctx->ebref.users);
 		appctx->io_handler = cli_io_handler_pat_list;
 		appctx->io_release = cli_release_show_map;
 		return 0;
@@ -794,7 +795,7 @@ static int cli_parse_set_map(char **args, char *payload, struct appctx *appctx, 
 			 */
 			err = NULL;
 			HA_SPIN_LOCK(PATREF_LOCK, &ctx->ref->lock);
-			if (!pat_ref_set(ctx->ref, args[3], args[4], &err)) {
+			if (!pat_ref_set(ctx->ref, args[3], args[4], &err, NULL)) {
 				HA_SPIN_UNLOCK(PATREF_LOCK, &ctx->ref->lock);
 				if (err)
 					return cli_dynerr(appctx, memprintf(&err, "%s.\n", err));
