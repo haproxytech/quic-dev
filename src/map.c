@@ -356,9 +356,9 @@ static int cli_io_handler_pat_list(struct appctx *appctx)
 		 * reference to the last ref_elt being dumped.
 		 */
 		if (!LIST_ISEMPTY(&ctx->ebref.users)) {
-			HA_SPIN_LOCK(PATREF_LOCK, &ctx->ref->lock);
+			HA_RWLOCK_WRLOCK(PATREF_LOCK, &ctx->ref->lock);
 			LIST_DEL_INIT(&ctx->ebref.users);
-			HA_SPIN_UNLOCK(PATREF_LOCK, &ctx->ref->lock);
+			HA_RWLOCK_WRUNLOCK(PATREF_LOCK, &ctx->ref->lock);
 		}
 		return 1;
 	}
@@ -369,7 +369,7 @@ static int cli_io_handler_pat_list(struct appctx *appctx)
 		__fallthrough;
 
 	case STATE_LIST:
-		HA_SPIN_LOCK(PATREF_LOCK, &ctx->ref->lock);
+		HA_RWLOCK_WRLOCK(PATREF_LOCK, &ctx->ref->lock);
 
 		if (!LIST_ISEMPTY(&ctx->ebref.users)) {
 			LIST_DEL_INIT(&ctx->ebref.users);
@@ -399,14 +399,14 @@ static int cli_io_handler_pat_list(struct appctx *appctx)
 				 * this stream's users so that it can remove us upon termination.
 				 */
 				LIST_APPEND(&elt->back_refs, &ctx->ebref.users);
-				HA_SPIN_UNLOCK(PATREF_LOCK, &ctx->ref->lock);
+				HA_RWLOCK_WRUNLOCK(PATREF_LOCK, &ctx->ref->lock);
 				return 0;
 			}
 		skip:
 			/* get next list entry and check the end of the list */
 			ctx->ebref.ref = ebpt_next(ctx->ebref.ref);
 		}
-		HA_SPIN_UNLOCK(PATREF_LOCK, &ctx->ref->lock);
+		HA_RWLOCK_WRUNLOCK(PATREF_LOCK, &ctx->ref->lock);
 		__fallthrough;
 
 	default:
@@ -490,7 +490,7 @@ static int cli_io_handler_map_lookup(struct appctx *appctx)
 		__fallthrough;
 
 	case STATE_LIST:
-		HA_SPIN_LOCK(PATREF_LOCK, &ctx->ref->lock);
+		HA_RWLOCK_RDLOCK(PATREF_LOCK, &ctx->ref->lock);
 		/* for each lookup type */
 		while (ctx->expr) {
 			/* initialise chunk to build new message */
@@ -576,7 +576,7 @@ static int cli_io_handler_map_lookup(struct appctx *appctx)
 				/* let's try again later from this stream. We add ourselves into
 				 * this stream's users so that it can remove us upon termination.
 				 */
-				HA_SPIN_UNLOCK(PATREF_LOCK, &ctx->ref->lock);
+				HA_RWLOCK_RDUNLOCK(PATREF_LOCK, &ctx->ref->lock);
 				return 0;
 			}
 
@@ -584,7 +584,7 @@ static int cli_io_handler_map_lookup(struct appctx *appctx)
 			ctx->expr = pat_expr_get_next(ctx->expr,
 			                                         &ctx->ref->pat);
 		}
-		HA_SPIN_UNLOCK(PATREF_LOCK, &ctx->ref->lock);
+		HA_RWLOCK_RDUNLOCK(PATREF_LOCK, &ctx->ref->lock);
 		__fallthrough;
 
 	default:
@@ -680,9 +680,9 @@ static void cli_release_show_map(struct appctx *appctx)
 	struct show_map_ctx *ctx = appctx->svcctx;
 
 	if (!LIST_ISEMPTY(&ctx->ebref.users)) {
-		HA_SPIN_LOCK(PATREF_LOCK, &ctx->ref->lock);
+		HA_RWLOCK_WRLOCK(PATREF_LOCK, &ctx->ref->lock);
 		LIST_DEL_INIT(&ctx->ebref.users);
-		HA_SPIN_UNLOCK(PATREF_LOCK, &ctx->ref->lock);
+		HA_RWLOCK_WRUNLOCK(PATREF_LOCK, &ctx->ref->lock);
 	}
 }
 
@@ -779,30 +779,30 @@ static int cli_parse_set_map(char **args, char *payload, struct appctx *appctx, 
 
 			/* Try to modify the entry. */
 			err = NULL;
-			HA_SPIN_LOCK(PATREF_LOCK, &ctx->ref->lock);
+			HA_RWLOCK_WRLOCK(PATREF_LOCK, &ctx->ref->lock);
 			if (!pat_ref_set_by_id(ctx->ref, ref, args[4], &err)) {
-				HA_SPIN_UNLOCK(PATREF_LOCK, &ctx->ref->lock);
+				HA_RWLOCK_WRUNLOCK(PATREF_LOCK, &ctx->ref->lock);
 				if (err)
 					return cli_dynerr(appctx, memprintf(&err, "%s.\n", err));
 				else
 					return cli_err(appctx, "Failed to update an entry.\n");
 			}
-			HA_SPIN_UNLOCK(PATREF_LOCK, &ctx->ref->lock);
+			HA_RWLOCK_WRUNLOCK(PATREF_LOCK, &ctx->ref->lock);
 		}
 		else {
 			/* Else, use the entry identifier as pattern
 			 * string, and update the value.
 			 */
 			err = NULL;
-			HA_SPIN_LOCK(PATREF_LOCK, &ctx->ref->lock);
+			HA_RWLOCK_WRLOCK(PATREF_LOCK, &ctx->ref->lock);
 			if (!pat_ref_set(ctx->ref, args[3], args[4], &err, NULL)) {
-				HA_SPIN_UNLOCK(PATREF_LOCK, &ctx->ref->lock);
+				HA_RWLOCK_WRUNLOCK(PATREF_LOCK, &ctx->ref->lock);
 				if (err)
 					return cli_dynerr(appctx, memprintf(&err, "%s.\n", err));
 				else
 					return cli_err(appctx, "Failed to update an entry.\n");
 			}
-			HA_SPIN_UNLOCK(PATREF_LOCK, &ctx->ref->lock);
+			HA_RWLOCK_WRUNLOCK(PATREF_LOCK, &ctx->ref->lock);
 		}
 
 		/* The set is done, send message. */
@@ -922,9 +922,9 @@ static int cli_parse_add_map(char **args, char *payload, struct appctx *appctx, 
 			if (ctx->display_flags != PAT_REF_MAP)
 				value = NULL;
 
-			HA_SPIN_LOCK(PATREF_LOCK, &ctx->ref->lock);
+			HA_RWLOCK_WRLOCK(PATREF_LOCK, &ctx->ref->lock);
 			ret = !!pat_ref_load(ctx->ref, gen ? genid : ctx->ref->curr_gen, key, value, -1, &err);
-			HA_SPIN_UNLOCK(PATREF_LOCK, &ctx->ref->lock);
+			HA_RWLOCK_WRUNLOCK(PATREF_LOCK, &ctx->ref->lock);
 
 			if (!ret) {
 				if (err)
@@ -984,25 +984,25 @@ static int cli_parse_del_map(char **args, char *payload, struct appctx *appctx, 
 			return cli_err(appctx, "Malformed identifier. Please use #<id> or <file>.\n");
 
 		/* Try to delete the entry. */
-		HA_SPIN_LOCK(PATREF_LOCK, &ctx->ref->lock);
+		HA_RWLOCK_WRLOCK(PATREF_LOCK, &ctx->ref->lock);
 		if (!pat_ref_delete_by_id(ctx->ref, ref)) {
-			HA_SPIN_UNLOCK(PATREF_LOCK, &ctx->ref->lock);
+			HA_RWLOCK_WRUNLOCK(PATREF_LOCK, &ctx->ref->lock);
 			/* The entry is not found, send message. */
 			return cli_err(appctx, "Key not found.\n");
 		}
-		HA_SPIN_UNLOCK(PATREF_LOCK, &ctx->ref->lock);
+		HA_RWLOCK_WRUNLOCK(PATREF_LOCK, &ctx->ref->lock);
 	}
 	else {
 		/* Else, use the entry identifier as pattern
 		 * string and try to delete the entry.
 		 */
-		HA_SPIN_LOCK(PATREF_LOCK, &ctx->ref->lock);
+		HA_RWLOCK_WRLOCK(PATREF_LOCK, &ctx->ref->lock);
 		if (!pat_ref_delete(ctx->ref, args[3])) {
-			HA_SPIN_UNLOCK(PATREF_LOCK, &ctx->ref->lock);
+			HA_RWLOCK_WRUNLOCK(PATREF_LOCK, &ctx->ref->lock);
 			/* The entry is not found, send message. */
 			return cli_err(appctx, "Key not found.\n");
 		}
-		HA_SPIN_UNLOCK(PATREF_LOCK, &ctx->ref->lock);
+		HA_RWLOCK_WRUNLOCK(PATREF_LOCK, &ctx->ref->lock);
 	}
 
 	/* The deletion is done, send message. */
@@ -1019,9 +1019,9 @@ static int cli_io_handler_clear_map(struct appctx *appctx)
 	struct show_map_ctx *ctx = appctx->svcctx;
 	int finished;
 
-	HA_SPIN_LOCK(PATREF_LOCK, &ctx->ref->lock);
+	HA_RWLOCK_WRLOCK(PATREF_LOCK, &ctx->ref->lock);
 	finished = pat_ref_purge_range(ctx->ref, ctx->curr_gen, ctx->prev_gen, 100);
-	HA_SPIN_UNLOCK(PATREF_LOCK, &ctx->ref->lock);
+	HA_RWLOCK_WRUNLOCK(PATREF_LOCK, &ctx->ref->lock);
 
 	if (!finished) {
 		/* let's come back later */
@@ -1136,13 +1136,13 @@ static int cli_parse_commit_map(char **args, char *payload, struct appctx *appct
 				return cli_err(appctx, "Unknown ACL identifier. Please use #<id> or <file>.\n");
 		}
 
-		HA_SPIN_LOCK(PATREF_LOCK, &ctx->ref->lock);
+		HA_RWLOCK_WRLOCK(PATREF_LOCK, &ctx->ref->lock);
 		if (genid - (ctx->ref->curr_gen + 1) <
 		    ctx->ref->next_gen - ctx->ref->curr_gen)
 			ret = pat_ref_commit(ctx->ref, genid);
 		else
 			ret = 1;
-		HA_SPIN_UNLOCK(PATREF_LOCK, &ctx->ref->lock);
+		HA_RWLOCK_WRUNLOCK(PATREF_LOCK, &ctx->ref->lock);
 
 		if (ret != 0)
 			return cli_err(appctx, "Version number out of range.\n");
