@@ -1886,7 +1886,7 @@ struct pat_ref *pat_ref_new(const char *reference, const char *display, unsigned
 	LIST_INIT(&ref->head);
 	ref->ebpt_root = EB_ROOT;
 	LIST_INIT(&ref->pat);
-	HA_SPIN_INIT(&ref->lock);
+	HA_RWLOCK_INIT(&ref->lock);
 	LIST_APPEND(&pattern_reference, &ref->list);
 
 	return ref;
