@@ -1230,7 +1230,7 @@ static void qc_rm_hp_pkts(struct quic_conn *qc, struct quic_enc_level *el)
 			quic_rx_packet_refinc(pqpkt);
 			TRACE_PROTO("RX hp removed", QUIC_EV_CONN_ELRMHP, qc, pqpkt);
 		}
-		LIST_DELETE(&pqpkt->list);
+		LIST_DEL_INIT(&pqpkt->list);
 		quic_rx_packet_refdec(pqpkt);
 	}
 
@@ -2336,8 +2336,8 @@ static void quic_rx_pkts_del(struct quic_conn *qc)
 
 	list_for_each_entry_safe(pkt, pktback, &qc->rx.pkt_list, qc_rx_pkt_list) {
 		TRACE_PRINTF(TRACE_LEVEL_DEVELOPER, QUIC_EV_CONN_LPKT, qc, 0, 0, 0,
-		             "pkt #%lld(type=%d,len=%llu,rawlen=%llu,refcnt=%u) (diff: %zd)",
-		             (long long)pkt->pn_node.key,
+		             "pkt@%p #%lld(type=%d,len=%llu,rawlen=%llu,refcnt=%u) (diff: %zd)",
+		             pkt, (long long)pkt->pn_node.key,
 		             pkt->type, (ull)pkt->len, (ull)pkt->raw_len, pkt->refcnt,
 		             (unsigned char *)b_head(&qc->rx.buf) - pkt->data);
 		if (pkt->data != (unsigned char *)b_head(&qc->rx.buf)) {
@@ -2357,7 +2357,10 @@ static void quic_rx_pkts_del(struct quic_conn *qc)
 			break;
 
 		b_del(&qc->rx.buf, pkt->raw_len);
-		LIST_DELETE(&pkt->qc_rx_pkt_list);
+		LIST_DEL_INIT(&pkt->qc_rx_pkt_list);
+		BUG_ON(LIST_INLIST(&pkt->list));
+		BUG_ON(pkt->pn_node.node.leaf_p);
+		TRACE_DEVEL("freeing RX packet", QUIC_EV_CONN_LPKT, qc, pkt);
 		pool_free(pool_head_quic_rx_packet, pkt);
 	}
 
@@ -2583,6 +2586,9 @@ int quic_dgram_parse(struct quic_dgram *dgram, struct quic_conn *from_qc,
 		/* Free rejected packets */
 		if (!pkt->refcnt) {
 			BUG_ON(LIST_INLIST(&pkt->qc_rx_pkt_list));
+			BUG_ON(LIST_INLIST(&pkt->list));
+			BUG_ON(pkt->pn_node.node.leaf_p);
+			TRACE_DEVEL("freeing RX packet", QUIC_EV_CONN_LPKT, NULL, pkt);
 			pool_free(pool_head_quic_rx_packet, pkt);
 		}
 	} while (pos < end);
