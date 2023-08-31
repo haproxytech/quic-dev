@@ -27,6 +27,7 @@
 #include <haproxy/quic_tls-t.h>
 #include <haproxy/quic_tx-t.h>
 
+void quic_tx_packet_refdec(struct quic_conn *qc, struct quic_tx_packet *pkt);
 struct buffer *qc_txb_alloc(struct quic_conn *qc);
 void qc_txb_release(struct quic_conn *qc);
 int qc_purge_txbuf(struct quic_conn *qc, struct buffer *buf);
@@ -65,26 +66,6 @@ static inline void quic_tx_packet_dgram_detach(struct quic_tx_packet *pkt)
 		pkt->prev->next = pkt->next;
 	if (pkt->next)
 		pkt->next->prev = pkt->prev;
-}
-
-
-/* Increment the reference counter of <pkt> */
-static inline void quic_tx_packet_refinc(struct quic_tx_packet *pkt)
-{
-	pkt->refcnt++;
-}
-
-/* Decrement the reference counter of <pkt> */
-static inline void quic_tx_packet_refdec(struct quic_tx_packet *pkt)
-{
-	if (--pkt->refcnt == 0) {
-		BUG_ON(!LIST_ISEMPTY(&pkt->frms));
-		/* If there are others packet in the same datagram <pkt> is attached to,
-		 * detach the previous one and the next one from <pkt>.
-		 */
-		quic_tx_packet_dgram_detach(pkt);
-		pool_free(pool_head_quic_tx_packet, pkt);
-	}
 }
 
 #endif /* _HAPROXY_QUIC_TX_H */

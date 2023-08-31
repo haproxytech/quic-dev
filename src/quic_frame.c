@@ -1263,7 +1263,7 @@ void qc_release_frm(struct quic_conn *qc, struct quic_frame *frm)
 	}
 	LIST_DEL_INIT(&frm->list);
 	pn = frm->pkt->pn_node.key;
-	quic_tx_packet_refdec(frm->pkt);
+	quic_tx_packet_refdec(qc, frm->pkt);
 	TRACE_DEVEL("freeing frame from packet",
 	            QUIC_EV_CONN_PRSAFRM, qc, frm, &pn);
 	qc_frm_free(qc, &frm);

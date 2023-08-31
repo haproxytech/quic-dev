@@ -57,6 +57,37 @@ static void quic_packet_encrypt(unsigned char *payload, size_t payload_len,
 	TRACE_LEAVE(QUIC_EV_CONN_ENCPKT, qc);
 }
 
+/* Increment the reference counter of <pkt> */
+static void quic_tx_packet_refinc(struct quic_conn *qc, struct quic_tx_packet *pkt)
+{
+	TRACE_ENTER(QUIC_EV_CONN_TXPKT, qc, pkt);
+	pkt->refcnt++;
+	TRACE_LEAVE(QUIC_EV_CONN_TXPKT, qc, pkt);
+}
+
+/* Decrement the reference counter of <pkt> and free it if new value is null */
+void quic_tx_packet_refdec(struct quic_conn *qc, struct quic_tx_packet *pkt)
+{
+	TRACE_ENTER(QUIC_EV_CONN_TXPKT, qc, pkt);
+
+	if (--pkt->refcnt == 0) {
+		/* ->list struct list member is not tested because only used to attach a
+		 * TX packet to a local list.
+		 */
+		BUG_ON(!LIST_ISEMPTY(&pkt->frms));
+		BUG_ON(pkt->pn_node.node.leaf_p);
+		/* If there are others packet in the same datagram <pkt> is attached to,
+		 * detach the previous one and the next one from <pkt>.
+		 */
+		quic_tx_packet_dgram_detach(pkt);
+		TRACE_DEVEL("freeing packet", QUIC_EV_CONN_TXPKT, qc, pkt);
+		pool_free(pool_head_quic_tx_packet, pkt);
+	}
+
+	TRACE_LEAVE(QUIC_EV_CONN_TXPKT, qc);
+}
+
+
 /* Free <pkt> TX packet and its attached frames.
  * This is the responsibility of the caller to remove this packet of
  * any data structure it was possibly attached to.
@@ -66,13 +97,14 @@ static inline void free_quic_tx_packet(struct quic_conn *qc,
 {
 	struct quic_frame *frm, *frmbak;
 
-	TRACE_ENTER(QUIC_EV_CONN_TXPKT, qc);
+	TRACE_ENTER(QUIC_EV_CONN_TXPKT, qc, pkt);
 
 	if (!pkt)
 		goto leave;
 
 	list_for_each_entry_safe(frm, frmbak, &pkt->frms, list)
 		qc_frm_free(qc, &frm);
+	TRACE_DEVEL("freeing packet", QUIC_EV_CONN_TXPKT, qc, pkt);
 	pool_free(pool_head_quic_tx_packet, pkt);
 
  leave:
@@ -575,6 +607,7 @@ static inline void qc_free_tx_coalesced_pkts(struct quic_conn *qc,
 	for (pkt = p; pkt; pkt = nxt_pkt) {
 		qc_free_frm_list(qc, &pkt->frms);
 		nxt_pkt = pkt->next;
+		TRACE_DEVEL("freeing packet", QUIC_EV_CONN_TXPKT, qc, pkt);
 		pool_free(pool_head_quic_tx_packet, pkt);
 	}
 }
@@ -715,7 +748,7 @@ int qc_send_ppkts(struct buffer *buf, struct ssl_sock_ctx *ctx)
 				qc_set_timer(qc);
 			TRACE_PROTO("TX pkt", QUIC_EV_CONN_SPPKTS, qc, pkt);
 			next_pkt = pkt->next;
-			quic_tx_packet_refinc(pkt);
+			quic_tx_packet_refinc(qc, pkt);
 			eb64_insert(&pkt->pktns->tx.pkts, &pkt->pn_node);
 		}
 	}
@@ -2406,7 +2439,7 @@ static int qc_do_build_pkt(unsigned char *pos, const unsigned char *end,
 				continue;
 			}
 
-			quic_tx_packet_refinc(pkt);
+			quic_tx_packet_refinc(qc, pkt);
 			cf->pkt = pkt;
 		}
 	}

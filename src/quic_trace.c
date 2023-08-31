@@ -242,7 +242,8 @@ static void quic_trace(enum trace_level level, uint64_t mask, const struct trace
 			if (pkt) {
 				const struct quic_frame *frm;
 				if (pkt->pn_node.key != (uint64_t)-1)
-					chunk_appendf(&trace_buf, " pn=%llu",(ull)pkt->pn_node.key);
+					chunk_appendf(&trace_buf, " pn=%llu refcnt=%d",
+					              (ull)pkt->pn_node.key, pkt->refcnt);
 				list_for_each_entry(frm, &pkt->frms, list) {
 					chunk_appendf(&trace_buf, " frm@%p", frm);
 					chunk_frm_appendf(&trace_buf, frm);

@@ -380,7 +380,7 @@ static int qc_requeue_nacked_pkt_tx_frms(struct quic_conn *qc,
 	list_for_each_entry_safe(frm, frmbak, pkt_frm_list, list) {
 		/* First remove this frame from the packet it was attached to */
 		LIST_DEL_INIT(&frm->list);
-		quic_tx_packet_refdec(pkt);
+		quic_tx_packet_refdec(qc, pkt);
 		/* At this time, this frame is not freed but removed from its packet */
 		frm->pkt = NULL;
 		/* Remove any reference to this frame */
@@ -486,7 +486,7 @@ static void qc_treat_newly_acked_pkts(struct quic_conn *qc,
 		quic_cc_event(&qc->path->cc, &ev);
 		LIST_DELETE(&pkt->list);
 		eb64_delete(&pkt->pn_node);
-		quic_tx_packet_refdec(pkt);
+		quic_tx_packet_refdec(qc, pkt);
 	}
 
 	TRACE_LEAVE(QUIC_EV_CONN_PRSAFRM, qc);
@@ -529,7 +529,7 @@ int qc_release_lost_pkts(struct quic_conn *qc, struct quic_pktns *pktns,
 		}
 		else {
 			if (newest_lost != oldest_lost)
-				quic_tx_packet_refdec(newest_lost);
+				quic_tx_packet_refdec(qc, newest_lost);
 			newest_lost = pkt;
 		}
 	}
@@ -564,9 +564,9 @@ int qc_release_lost_pkts(struct quic_conn *qc, struct quic_pktns *pktns,
 	 * possible overflow on a 0 byte region with O2 optimization.
 	 */
 	ALREADY_CHECKED(oldest_lost);
-	quic_tx_packet_refdec(oldest_lost);
+	quic_tx_packet_refdec(qc, oldest_lost);
 	if (newest_lost != oldest_lost)
-		quic_tx_packet_refdec(newest_lost);
+		quic_tx_packet_refdec(qc, newest_lost);
 
  leave:
 	TRACE_LEAVE(QUIC_EV_CONN_PRSAFRM, qc);

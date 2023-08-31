@@ -500,11 +500,11 @@ static inline void quic_pktns_tx_pkts_release(struct quic_pktns *pktns, struct q
 			            QUIC_EV_CONN_PRSAFRM, qc, frm, &pkt->pn_node.key);
 			qc_frm_unref(frm, qc);
 			LIST_DEL_INIT(&frm->list);
-			quic_tx_packet_refdec(frm->pkt);
+			quic_tx_packet_refdec(qc, frm->pkt);
 			qc_frm_free(qc, &frm);
 		}
 		eb64_delete(&pkt->pn_node);
-		quic_tx_packet_refdec(pkt);
+		quic_tx_packet_refdec(qc, pkt);
 	}
 
 	TRACE_LEAVE(QUIC_EV_CONN_PHPKTS, qc);
