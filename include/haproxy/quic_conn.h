@@ -529,50 +529,6 @@ static inline int qc_el_rx_pkts(struct quic_enc_level *qel)
 	return ret;
 }
 
-/* Increment the reference counter of <pkt> */
-static inline void quic_rx_packet_refinc(struct quic_rx_packet *pkt)
-{
-	pkt->refcnt++;
-}
-
-/* Decrement the reference counter of <pkt> while remaining positive */
-static inline void quic_rx_packet_refdec(struct quic_rx_packet *pkt)
-{
-	if (pkt->refcnt)
-		pkt->refcnt--;
-}
-
-/* Delete all RX packets for <qel> QUIC encryption level */
-static inline void qc_el_rx_pkts_del(struct quic_enc_level *qel)
-{
-	struct eb64_node *node;
-
-	node = eb64_first(&qel->rx.pkts);
-	while (node) {
-		struct quic_rx_packet *pkt =
-			eb64_entry(node, struct quic_rx_packet, pn_node);
-
-		node = eb64_next(node);
-		eb64_delete(&pkt->pn_node);
-		quic_rx_packet_refdec(pkt);
-	}
-}
-
-static inline void qc_list_qel_rx_pkts(struct quic_enc_level *qel)
-{
-	struct eb64_node *node;
-
-	node = eb64_first(&qel->rx.pkts);
-	while (node) {
-		struct quic_rx_packet *pkt;
-
-		pkt = eb64_entry(node, struct quic_rx_packet, pn_node);
-		fprintf(stderr, "pkt@%p type=%d pn=%llu\n",
-		        pkt, pkt->type, (ull)pkt->pn_node.key);
-		node = eb64_next(node);
-	}
-}
-
 void chunk_frm_appendf(struct buffer *buf, const struct quic_frame *frm);
 
 void quic_set_connection_close(struct quic_conn *qc, const struct quic_err err);

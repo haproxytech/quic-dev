@@ -59,6 +59,36 @@ static uint64_t decode_packet_number(uint64_t largest_pn,
 	return candidate_pn;
 }
 
+/* Increment the reference counter of <pkt> */
+static void quic_rx_packet_refinc(struct quic_rx_packet *pkt)
+{
+	pkt->refcnt++;
+}
+
+/* Decrement the reference counter of <pkt> while remaining positive */
+static void quic_rx_packet_refdec(struct quic_rx_packet *pkt)
+{
+	BUG_ON(!pkt->refcnt);
+	pkt->refcnt--;
+}
+
+/* Delete all RX packets for <qel> QUIC encryption level */
+void qc_el_rx_pkts_del(struct quic_enc_level *qel)
+{
+	struct eb64_node *node;
+
+	node = eb64_first(&qel->rx.pkts);
+	while (node) {
+		struct quic_rx_packet *pkt =
+			eb64_entry(node, struct quic_rx_packet, pn_node);
+
+		node = eb64_next(node);
+		eb64_delete(&pkt->pn_node);
+		quic_rx_packet_refdec(pkt);
+	}
+}
+
+
 /* Remove the header protection of <pkt> QUIC packet using <tls_ctx> as QUIC TLS
  * cryptographic context.
  * <largest_pn> is the largest received packet number and <pn> the address of

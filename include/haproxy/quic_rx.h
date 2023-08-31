@@ -33,5 +33,6 @@ int qc_parse_hd_form(struct quic_rx_packet *pkt,
 void quic_free_ncbuf(struct ncbuf *ncbuf);
 int qc_release_lost_pkts(struct quic_conn *qc, struct quic_pktns *pktns,
                          struct list *pkts, uint64_t now_us);
+void qc_el_rx_pkts_del(struct quic_enc_level *qel);
 
 #endif /* _HAPROXY_QUIC_RX_H */
