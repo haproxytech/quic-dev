@@ -2468,6 +2468,7 @@ static inline void quic_tx_packet_init(struct quic_tx_packet *pkt, int type)
 	pkt->type = type;
 	pkt->len = 0;
 	pkt->in_flight_len = 0;
+	pkt->pn_node.node.leaf_p = NULL;
 	pkt->pn_node.key = (uint64_t)-1;
 	LIST_INIT(&pkt->frms);
 	pkt->time_sent = TICK_ETERNITY;
