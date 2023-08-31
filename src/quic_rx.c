@@ -2474,6 +2474,7 @@ int quic_dgram_parse(struct quic_dgram *dgram, struct quic_conn *from_qc,
 		}
 
 		LIST_INIT(&pkt->qc_rx_pkt_list);
+		LIST_INIT(&pkt->list);
 		pkt->version = NULL;
 		pkt->type = QUIC_PACKET_TYPE_UNKNOWN;
 		pkt->pn_offset = 0;
@@ -2484,6 +2485,7 @@ int quic_dgram_parse(struct quic_dgram *dgram, struct quic_conn *from_qc,
 		pkt->aad_len = 0;
 		pkt->data = NULL;
 		pkt->pn_node.key = (uint64_t)-1;
+		pkt->pn_node.node.leaf_p = NULL;
 		pkt->refcnt = 0;
 		pkt->flags = 0;
 		pkt->time_received = now_ms;
