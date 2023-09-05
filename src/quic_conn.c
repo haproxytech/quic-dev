@@ -597,7 +597,8 @@ static void quic_trace(enum trace_level level, uint64_t mask, const struct trace
 			if (ql)
 				chunk_appendf(&trace_buf,
 				              " srtt=%ums rttvar=%ums min_rtt=%ums",
-				              ql->srtt >> 3, ql->rtt_var >> 2, ql->rtt_min);
+				              ql->srtt, ql->rtt_var, ql->rtt_min);
+
 		}
 		if (mask & QUIC_EV_CONN_CC) {
 			const struct quic_cc_event *ev = a2;
@@ -8880,7 +8881,7 @@ static void dump_quic_full(struct show_quic_ctx *ctx, struct quic_conn *qc)
 
 	chunk_appendf(&trash, "  srtt=%-4u rttvar=%-4u rttmin=%-4u ptoc=%-4u cwnd=%-6llu"
 	                      " mcwnd=%-6llu sentpkts=%-6llu lostpkts=%-6llu\n",
-	              qc->path->loss.srtt >> 3, qc->path->loss.rtt_var >> 2,
+		      qc->path->loss.srtt, qc->path->loss.rtt_var,
 	              qc->path->loss.rtt_min, qc->path->loss.pto_count, (ullong)qc->path->cwnd,
 	              (ullong)qc->path->mcwnd, (ullong)qc->cntrs.sent_pkt, (ullong)qc->path->loss.nb_lost_pkt);
 

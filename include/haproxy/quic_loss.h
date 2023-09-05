@@ -34,8 +34,8 @@
 
 static inline void quic_loss_init(struct quic_loss *ql)
 {
-	ql->srtt = QUIC_LOSS_INITIAL_RTT << 3;
-	ql->rtt_var = (QUIC_LOSS_INITIAL_RTT >> 1) << 2;
+	ql->srtt = QUIC_LOSS_INITIAL_RTT;
+	ql->rtt_var = QUIC_LOSS_INITIAL_RTT / 2;
 	ql->rtt_min = 0;
 	ql->pto_count = 0;
 	ql->nb_lost_pkt = 0;
@@ -56,8 +56,8 @@ static inline int quic_loss_persistent_congestion(struct quic_loss *ql,
 	if (!period)
 		return 0;
 
-	congestion_period = (ql->srtt >> 3) +
-		QUIC_MAX(ql->rtt_var, QUIC_TIMER_GRANULARITY) + max_ack_delay;
+	congestion_period = ql->srtt +
+		QUIC_MAX(4 * ql->rtt_var, QUIC_TIMER_GRANULARITY) + max_ack_delay;
 	congestion_period *= QUIC_LOSS_PACKET_THRESHOLD;
 
 	return period >= congestion_period;
@@ -68,7 +68,7 @@ static inline unsigned int quic_pto(struct quic_conn *qc)
 {
 	struct quic_loss *ql = &qc->path->loss;
 
-	return (ql->srtt >> 3) + QUIC_MAX(ql->rtt_var, QUIC_TIMER_GRANULARITY) +
+	return ql->srtt + QUIC_MAX(4 * ql->rtt_var, QUIC_TIMER_GRANULARITY) +
 		(HA_ATOMIC_LOAD(&qc->state) >= QUIC_HS_ST_COMPLETE ? qc->max_ack_delay : 0);
 }
 
