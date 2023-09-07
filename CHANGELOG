@@ -1,6 +1,57 @@
 ChangeLog :
 ===========
 
+2023/09/07 : 2.8.3
+    - CI: do not use "groupinstall" for Fedora Rawhide builds
+    - CI: get rid of travis-ci wrapper for Coverity scan
+    - BUG/MEDIUM: quic: fix tasklet_wakeup loop on connection closing
+    - BUG/MINOR: hlua: fix invalid use of lua_pop on error paths
+    - DEV: flags/show-sess-to-flags: properly decode fd.state
+    - BUG/MINOR: stktable: allow sc-set-gpt(0) from tcp-request connection
+    - BUG/MINOR: stktable: allow sc-add-gpc from tcp-request connection
+    - DOC: typo: fix sc-set-gpt references
+    - SCRIPTS: git-show-backports: automatic ref and base detection with -m
+    - REGTESTS: Do not use REQUIRE_VERSION for HAProxy 2.5+ (3)
+    - DOC: jwt: Add explicit list of supported algorithms
+    - BUILD: Makefile: add the USE_QUIC option to make help
+    - IMPORT: plock: also support inlining the int code
+    - MINOR: threads: inline the wait function for pthread_rwlock emulation
+    - MINOR: atomic: make sure to always relax after a failed CAS
+    - IMPORT: xxhash: update xxHash to version 0.8.2
+    - CI: fedora: fix "dnf" invocation syntax
+    - BUG/MINOR: hlua_fcn: potentially unsafe stktable_data_ptr usage
+    - DOC: lua: fix core.register_action typo
+    - BUG/MINOR: ssl_sock: fix possible memory leak on OOM
+    - BUILD: import: guard plock.h against multiple inclusion
+    - BUG/MINOR: ssl/cli: can't find ".crt" files when replacing a certificate
+    - BUG/MINOR: stream: protect stream_dump() against incomplete streams
+    - DOC: config: mention uid dependency on the tune.quic.socket-owner option
+    - BUG/MINOR: checks: do not queue/wake a bounced check
+    - DEBUG: applet: Properly report opposite SC expiration dates in traces
+    - BUG/MEDIUM: stconn: Update stream expiration date on blocked sends
+    - BUG/MINOR: stconn: Don't report blocked sends during connection establishment
+    - BUG/MEDIUM: stconn: Wake applets on sending path if there is a pending shutdown
+    - BUG/MEDIUM: stconn: Don't block sends if there is a pending shutdown
+    - BUG/MINOR: quic: Possible skipped RTT sampling
+    - BUG/MAJOR: quic: Really ignore malformed ACK frames.
+    - BUG/MEDIUM: h1-htx: Ensure chunked parsing with full output buffer
+    - BUG/MINOR: stream: further protect stream_dump() against incomplete sessions
+    - DOC: configuration: update examples for req.ver
+    - MINOR: httpclient: allow to configure the retries
+    - MINOR: httpclient: allow to configure the timeout.connect
+    - BUG/MINOR: quic: Wrong RTT adjusments
+    - BUG/MINOR: quic: Wrong RTT computation (srtt and rrt_var)
+    - BUG/MEDIUM: applet: Fix API for function to push new data in channels buffer
+    - BUG/MEDIUM: stconn: Report read activity when a stream is attached to front SC
+    - BUG/MEDIUM: applet: Report an error if applet request more room on aborted SC
+    - BUG/MEDIUM: stconn/stream: Forward shutdown on write timeout
+    - NUG/MEDIUM: stconn: Always update stream's expiration date after I/O
+    - BUG/MINOR: applet: Always expect data when CLI is waiting for a new command
+    - BUG/MINOR: ring/cli: Don't expect input data when showing events
+    - BUG/MINOR: hlua/action: incorrect message on E_YIELD error
+    - MEDIUM: capabilities: enable support for Linux capabilities
+    - CI: Update to actions/checkout@v4
+
 2023/08/09 : 2.8.2
     - DOC: ssl: Fix typo in 'ocsp-update' option
     - DOC: ssl: Add ocsp-update troubleshooting clues and emphasize on crt-list only aspect
