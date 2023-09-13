@@ -5840,6 +5840,7 @@ void quic_conn_release(struct quic_conn *qc)
 	for (i = 0; i < QUIC_TLS_PKTNS_MAX; i++) {
 		quic_pktns_tx_pkts_release(&qc->pktns[i], qc);
 		quic_free_arngs(qc, &qc->pktns[i].rx.arngs);
+		qc_release_pktns_frms(qc, &qc->pktns[i]);
 	}
 
 	qc_detach_th_ctx_list(qc, 0);
