@@ -588,6 +588,8 @@ void qc_release_frm(struct quic_conn *qc, struct quic_frame *frm);
 
 void qc_check_close_on_released_mux(struct quic_conn *qc);
 
+void qc_release_pktns_frms(struct quic_conn *qc, struct quic_pktns *pktns);
+
 void quic_conn_release(struct quic_conn *qc);
 
 void qc_kill_conn(struct quic_conn *qc);

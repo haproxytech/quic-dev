@@ -1081,14 +1081,16 @@ int ha_quic_set_encryption_secrets(SSL *ssl, enum ssl_encryption_level_t level,
 		goto write;
 
 	rx = &tls_ctx->rx;
+	rx->aead = tls_aead(cipher);
+	rx->md   = tls_md(cipher);
+	rx->hp   = tls_hp(cipher);
+	if (!rx->aead || !rx->md || !rx->hp)
+		goto leave;
+
 	if (!quic_tls_secrets_keys_alloc(rx)) {
 		TRACE_ERROR("RX keys allocation failed", QUIC_EV_CONN_RWSEC, qc);
 		goto leave;
 	}
-
-	rx->aead = tls_aead(cipher);
-	rx->md   = tls_md(cipher);
-	rx->hp   = tls_hp(cipher);
 
 	if (!quic_tls_derive_keys(rx->aead, rx->hp, rx->md, ver, rx->key, rx->keylen,
 	                          rx->iv, rx->ivlen, rx->hp_key, sizeof rx->hp_key,
@@ -1122,14 +1124,16 @@ write:
 		goto keyupdate_init;
 
 	tx = &tls_ctx->tx;
+	tx->aead = tls_aead(cipher);
+	tx->md   = tls_md(cipher);
+	tx->hp   = tls_hp(cipher);
+	if (!tx->aead || !tx->md || !tx->hp)
+		goto leave;
+
 	if (!quic_tls_secrets_keys_alloc(tx)) {
 		TRACE_ERROR("TX keys allocation failed", QUIC_EV_CONN_RWSEC, qc);
 		goto leave;
 	}
-
-	tx->aead = tls_aead(cipher);
-	tx->md   = tls_md(cipher);
-	tx->hp   = tls_hp(cipher);
 
 	if (!quic_tls_derive_keys(tx->aead, tx->hp, tx->md, ver, tx->key, tx->keylen,
 	                          tx->iv, tx->ivlen, tx->hp_key, sizeof tx->hp_key,
@@ -1198,6 +1202,16 @@ write:
  out:
 	ret = 1;
  leave:
+	if (!ret) {
+		/* Release the CRYPTO frames which have been provided by the TLS stack
+		 * to prevent the transmission of ack-eliciting packets.
+		 */
+		qc_release_pktns_frms(qc, qc->els[QUIC_TLS_ENC_LEVEL_INITIAL].pktns);
+		qc_release_pktns_frms(qc, qc->els[QUIC_TLS_ENC_LEVEL_HANDSHAKE].pktns);
+		qc_release_pktns_frms(qc, qc->els[QUIC_TLS_ENC_LEVEL_APP].pktns);
+		quic_set_tls_alert(qc, SSL_AD_HANDSHAKE_FAILURE);
+	}
+
 	TRACE_LEAVE(QUIC_EV_CONN_RWSEC, qc, &level);
 	return ret;
 }
@@ -2157,16 +2171,19 @@ static inline void qc_treat_newly_acked_pkts(struct quic_conn *qc,
 }
 
 /* Release all the frames attached to <pktns> packet number space */
-static inline void qc_release_pktns_frms(struct quic_conn *qc,
-                                         struct quic_pktns *pktns)
+void qc_release_pktns_frms(struct quic_conn *qc, struct quic_pktns *pktns)
 {
 	struct quic_frame *frm, *frmbak;
 
 	TRACE_ENTER(QUIC_EV_CONN_PHPKTS, qc);
 
+	if (!pktns)
+		goto leave;
+
 	list_for_each_entry_safe(frm, frmbak, &pktns->tx.frms, list)
 		qc_frm_free(&frm);
 
+ leave:
 	TRACE_LEAVE(QUIC_EV_CONN_PHPKTS, qc);
 }
 
