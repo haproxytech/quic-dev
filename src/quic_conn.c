@@ -5024,6 +5024,7 @@ static int qc_dgrams_retransmit(struct quic_conn *qc)
 			if (!LIST_ISEMPTY(&frms1)) {
 				aqel->pktns->tx.pto_probe = 1;
 				if (!qc_send_app_probing(qc, &frms1)) {
+					qc_free_frm_list(&frms1);
 					qc_free_frm_list(&frms2);
 					goto leave;
 				}
@@ -5033,8 +5034,10 @@ static int qc_dgrams_retransmit(struct quic_conn *qc)
 			}
 			if (!LIST_ISEMPTY(&frms2)) {
 				aqel->pktns->tx.pto_probe = 1;
-				if (!qc_send_app_probing(qc, &frms2))
+				if (!qc_send_app_probing(qc, &frms2)) {
+					qc_free_frm_list(&frms2);
 					goto leave;
+				}
 				/* Put back unsent frames into their packet number spaces */
 				LIST_SPLICE(&aqel->pktns->tx.frms, &frms2);
 			}
