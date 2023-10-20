@@ -2794,6 +2794,13 @@ static struct h2s *h2c_frt_handle_headers(struct h2c *h2c, struct h2s *h2s)
 		 */
 		sess_log(h2c->conn->owner);
 		h2s = (struct h2s*)h2_error_stream;
+
+		/* This stream ID is now opened anyway until we send the RST on
+		 * it, it must not be reused.
+		 */
+		if (h2c->dsi > h2c->max_id)
+			h2c->max_id = h2c->dsi;
+
 		goto send_rst;
 	}
 
