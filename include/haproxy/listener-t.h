@@ -110,6 +110,7 @@ enum li_status {
 #define BC_O_ACC_CIP            0x00001000 /* find the proxied address in the NetScaler Client IP header */
 #define BC_O_UNLIMITED          0x00002000 /* listeners not subject to global limits (peers & stats socket) */
 #define BC_O_NOSTOP             0x00004000 /* keep the listeners active even after a soft stop */
+#define BC_O_XPRT_MAXCONN       0x00010000 /* transport layer allocates its own resource prior to accept and is responsible to check maxconn limit */
 
 
 /* flags used with bind_conf->ssl_options */

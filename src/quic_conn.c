@@ -39,6 +39,7 @@
 #include <haproxy/connection.h>
 #include <haproxy/fd.h>
 #include <haproxy/freq_ctr.h>
+#include <haproxy/frontend.h>
 #include <haproxy/global.h>
 #include <haproxy/h3.h>
 #include <haproxy/hq_interop.h>
@@ -5810,6 +5811,12 @@ void quic_conn_release(struct quic_conn *qc)
 	/* Close quic-conn socket fd. */
 	qc_release_fd(qc, 0);
 
+	/* Decrement on quic_conn free. quic_cc_conn instances are not counted
+	 * into global counters because they are designed to run for a limited
+	 * time with a limited memory.
+	 */
+	_HA_ATOMIC_DEC(&actconn);
+
 	/* in the unlikely (but possible) case the connection was just added to
 	 * the accept_list we must delete it from there.
 	 */
@@ -6909,6 +6916,7 @@ static struct quic_conn *quic_rx_pkt_retrieve_conn(struct quic_rx_packet *pkt,
 	struct quic_conn *qc = NULL;
 	struct proxy *prx;
 	struct quic_counters *prx_counters;
+	unsigned int next_actconn = 0;
 
 	TRACE_ENTER(QUIC_EV_CONN_LPKT);
 
@@ -6966,6 +6974,14 @@ static struct quic_conn *quic_rx_pkt_retrieve_conn(struct quic_rx_packet *pkt,
 			pkt->saddr = dgram->saddr;
 			ipv4 = dgram->saddr.ss_family == AF_INET;
 
+			next_actconn = increment_actconn();
+			if (!next_actconn) {
+				_HA_ATOMIC_INC(&maxconn_reached);
+				TRACE_STATE("drop packet on maxconn reached",
+					    QUIC_EV_CONN_LPKT, NULL, NULL, NULL, pkt->version);
+				goto err;
+			}
+
 			/* Generate the first connection CID. This is derived from the client
 			 * ODCID and address. This allows to retrieve the connection from the
 			 * ODCID without storing it in the CID tree. This is an interesting
@@ -6983,6 +6999,13 @@ static struct quic_conn *quic_rx_pkt_retrieve_conn(struct quic_rx_packet *pkt,
 				pool_free(pool_head_quic_connection_id, conn_id);
 				goto err;
 			}
+
+			/* Now quic_conn is allocated. If a future error
+			 * occurred it will be freed with quic_conn_release()
+			 * which also ensure actconn is decremented.
+			 * Reset guard value to prevent a double decrement.
+			 */
+			next_actconn = 0;
 
 			tree = &quic_cid_trees[quic_cid_tree_idx(&conn_id->cid)];
 			HA_RWLOCK_WRLOCK(QC_CID_LOCK, &tree->lock);
@@ -7028,6 +7051,11 @@ static struct quic_conn *quic_rx_pkt_retrieve_conn(struct quic_rx_packet *pkt,
 		qc->cntrs.dropped_pkt++;
 	else
 		HA_ATOMIC_INC(&prx_counters->dropped_pkt);
+
+	/* Reset active conn counter if needed. */
+	if (next_actconn)
+		_HA_ATOMIC_DEC(&actconn);
+
 	TRACE_LEAVE(QUIC_EV_CONN_LPKT);
 	return NULL;
 }
