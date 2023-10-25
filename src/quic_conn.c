@@ -5863,6 +5863,7 @@ void quic_conn_release(struct quic_conn *qc)
 		SSL_free(conn_ctx->ssl);
 		pool_free(pool_head_quic_conn_ctx, conn_ctx);
 	}
+	_HA_ATOMIC_DEC(&global.sslconns);
 
 	quic_tls_ku_free(qc);
 	for (i = 0; i < QUIC_TLS_ENC_LEVEL_MAX; i++) {
@@ -6873,6 +6874,9 @@ static int qc_conn_alloc_ssl_ctx(struct quic_conn *qc)
 	/* Store the allocated context in <qc>. */
 	qc->xprt_ctx = ctx;
 
+	/* global.sslconns is already incremented on INITIAL packet parsing. */
+	_HA_ATOMIC_INC(&global.totalsslconns);
+
 	ret = 1;
  leave:
 	TRACE_LEAVE(QUIC_EV_CONN_NEW, qc);
@@ -6916,7 +6920,7 @@ static struct quic_conn *quic_rx_pkt_retrieve_conn(struct quic_rx_packet *pkt,
 	struct quic_conn *qc = NULL;
 	struct proxy *prx;
 	struct quic_counters *prx_counters;
-	unsigned int next_actconn = 0;
+	unsigned int next_actconn = 0, next_sslconn = 0;
 
 	TRACE_ENTER(QUIC_EV_CONN_LPKT);
 
@@ -6982,6 +6986,13 @@ static struct quic_conn *quic_rx_pkt_retrieve_conn(struct quic_rx_packet *pkt,
 				goto err;
 			}
 
+			next_sslconn = increment_sslconn();
+			if (!next_sslconn) {
+				TRACE_STATE("drop packet on sslconn reached",
+					    QUIC_EV_CONN_LPKT, NULL, NULL, NULL, pkt->version);
+				goto err;
+			}
+
 			/* Generate the first connection CID. This is derived from the client
 			 * ODCID and address. This allows to retrieve the connection from the
 			 * ODCID without storing it in the CID tree. This is an interesting
@@ -7002,10 +7013,10 @@ static struct quic_conn *quic_rx_pkt_retrieve_conn(struct quic_rx_packet *pkt,
 
 			/* Now quic_conn is allocated. If a future error
 			 * occurred it will be freed with quic_conn_release()
-			 * which also ensure actconn is decremented.
-			 * Reset guard value to prevent a double decrement.
+			 * which also ensure actconn/sslconns is decremented.
+			 * Reset guard values to prevent a double decrement.
 			 */
-			next_actconn = 0;
+			next_sslconn = next_actconn = 0;
 
 			tree = &quic_cid_trees[quic_cid_tree_idx(&conn_id->cid)];
 			HA_RWLOCK_WRLOCK(QC_CID_LOCK, &tree->lock);
@@ -7055,6 +7066,8 @@ static struct quic_conn *quic_rx_pkt_retrieve_conn(struct quic_rx_packet *pkt,
 	/* Reset active conn counter if needed. */
 	if (next_actconn)
 		_HA_ATOMIC_DEC(&actconn);
+	if (next_sslconn)
+		_HA_ATOMIC_DEC(&global.sslconns);
 
 	TRACE_LEAVE(QUIC_EV_CONN_LPKT);
 	return NULL;
