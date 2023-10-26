@@ -829,6 +829,7 @@ static int qc_handle_crypto_frm(struct quic_conn *qc,
 		crypto_frm->offset = cstream->rx.offset;
 	}
 
+#if 0
 	if (crypto_frm->offset == cstream->rx.offset && ncb_is_empty(ncbuf)) {
 		if (!qc_ssl_provide_quic_data(&qel->cstream->rx.ncbuf, qel->level,
 		                              qc->xprt_ctx, crypto_frm->data, crypto_frm->len)) {
@@ -841,6 +842,7 @@ static int qc_handle_crypto_frm(struct quic_conn *qc,
 		goto done;
 	}
 
+#endif
 	if (!quic_get_ncbuf(ncbuf) ||
 	    ncb_is_null(ncbuf)) {
 		TRACE_ERROR("CRYPTO ncbuf allocation failed", QUIC_EV_CONN_PRSHPKT, qc);
@@ -850,7 +852,10 @@ static int qc_handle_crypto_frm(struct quic_conn *qc,
 	/* crypto_frm->offset > cstream-trx.offset */
 	ncb_ret = ncb_add(ncbuf, crypto_frm->offset - cstream->rx.offset,
 	                  (const char *)crypto_frm->data, crypto_frm->len, NCB_ADD_COMPARE);
-	if (ncb_ret != NCB_RET_OK) {
+	if (ncb_ret == NCB_RET_OK) {
+		qc->wait_event.tasklet->state |= TASK_HEAVY;
+	}
+	else {
 		if (ncb_ret == NCB_RET_DATA_REJ) {
 			TRACE_ERROR("overlapping data rejected", QUIC_EV_CONN_PRSHPKT, qc);
 			quic_set_connection_close(qc, quic_err_transport(QC_ERR_PROTOCOL_VIOLATION));
@@ -1249,6 +1254,7 @@ static void qc_rm_hp_pkts(struct quic_conn *qc, struct quic_enc_level *el)
 	TRACE_LEAVE(QUIC_EV_CONN_ELRMHP, qc);
 }
 
+#if 0
 /* Process all the CRYPTO frame at <el> encryption level. This is the
  * responsibility of the called to ensure there exists a CRYPTO data
  * stream for this level.
@@ -1290,6 +1296,52 @@ static int qc_treat_rx_crypto_frms(struct quic_conn *qc,
 		TRACE_DEVEL("freeing crypto buf", QUIC_EV_CONN_PHPKTS, qc, el);
 		quic_free_ncbuf(ncbuf);
 	}
+	TRACE_LEAVE(QUIC_EV_CONN_PHPKTS, qc);
+	return ret;
+}
+#endif
+
+int qc_treat_all_rx_crypto_frms(struct quic_conn *qc, struct ssl_sock_ctx *ctx)
+{
+	int ret = 0;
+	struct quic_enc_level *qel;
+
+	TRACE_ENTER(QUIC_EV_CONN_PHPKTS, qc);
+	list_for_each_entry(qel, &qc->qel_list, list) {
+		struct quic_cstream *cstream = qel->cstream;
+		struct ncbuf *ncbuf;
+		ncb_sz_t data;
+
+		if (!qel->cstream)
+			continue;
+
+		ncbuf = &cstream->rx.ncbuf;
+		if (ncb_is_null(ncbuf))
+			continue;
+
+		/* TODO not working if buffer is wrapping */
+		while ((data = ncb_data(ncbuf, 0))) {
+			int ssl_ret;
+			const unsigned char *cdata = (const unsigned char *)ncb_head(ncbuf);
+
+			ssl_ret = qc_ssl_provide_quic_data(&qel->cstream->rx.ncbuf, qel->level,
+			                                   ctx, cdata, data);
+			if (ncb_is_empty(ncbuf)) {
+				TRACE_DEVEL("freeing crypto buf", QUIC_EV_CONN_PHPKTS, qc, qel);
+				quic_free_ncbuf(ncbuf);
+			}
+
+			if (!ssl_ret)
+				goto leave;
+
+			cstream->rx.offset += data;
+			TRACE_DEVEL("buffered crypto data were provided to TLS stack",
+						QUIC_EV_CONN_PHPKTS, qc, qel);
+		}
+	}
+
+	ret = 1;
+ leave:
 	TRACE_LEAVE(QUIC_EV_CONN_PHPKTS, qc);
 	return ret;
 }
@@ -1403,10 +1455,12 @@ int qc_treat_rx_pkts(struct quic_conn *qc)
 			qel->pktns->flags |= QUIC_FL_PKTNS_NEW_LARGEST_PN;
 		}
 
+#if 0
 		if (qel->cstream && !qc_treat_rx_crypto_frms(qc, qel, qc->xprt_ctx)) {
 			// trace already emitted by function above
 			goto leave;
 		}
+#endif
 
 		/* Release the Initial encryption level and packet number space. */
 		if ((qc->flags & QUIC_FL_CONN_IPKTNS_DCD) && qel == qc->iel) {

@@ -897,11 +897,17 @@ struct task *quic_conn_io_cb(struct task *t, void *context, unsigned int state)
 	struct quic_conn *qc = context;
 	struct buffer *buf = NULL;
 	int st;
+	struct tasklet *tl = (struct tasklet *)t;
 
 	TRACE_ENTER(QUIC_EV_CONN_IO_CB, qc);
 
 	st = qc->state;
 	TRACE_PROTO("connection state", QUIC_EV_CONN_IO_CB, qc, &st);
+
+	if (tl->state & TASK_HEAVY) {
+		qc_treat_all_rx_crypto_frms(qc, qc->xprt_ctx);
+		tl->state &= ~TASK_HEAVY;
+	}
 
 	/* Retranmissions */
 	if (qc->flags & QUIC_FL_CONN_RETRANS_NEEDED) {
@@ -916,6 +922,11 @@ struct task *quic_conn_io_cb(struct task *t, void *context, unsigned int state)
 
 	if (!qc_treat_rx_pkts(qc))
 		goto out;
+
+	if (tl->state & TASK_HEAVY) {
+		tasklet_wakeup(tl);
+		goto out;
+	}
 
 	if (qc->flags & QUIC_FL_CONN_TO_KILL) {
 		TRACE_DEVEL("connection to be killed", QUIC_EV_CONN_PHPKTS, qc);
