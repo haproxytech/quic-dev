@@ -79,6 +79,18 @@ void qc_stream_desc_release(struct qc_stream_desc *stream)
 	}
 }
 
+/* Returns the count of available buffer left for <stream>. */
+static int qc_stream_buf_avail(const struct quic_conn *qc)
+{
+	//BUG_ON(qc->stream_buf_count > global.tune.quic_streams_buf);
+	//return global.tune.quic_streams_buf - qc->stream_buf_count;
+	const int window_buf = qc_cwnd(qc) / global.tune.bufsize + 1;
+	if (window_buf < qc->stream_buf_count)
+		return 0;
+
+	return window_buf - qc->stream_buf_count;
+}
+
 /* Acknowledge data at <offset> of length <len> for <stream>. It is handled
  * only if it covers a range corresponding to stream.ack_offset. After data
  * removal, if the stream does not contains data any more and is already
@@ -131,16 +143,12 @@ int qc_stream_desc_ack(struct qc_stream_desc **stream, size_t offset, size_t len
 	/* notify MUX about available buffers. */
 	--qc->stream_buf_count;
 	if (qc->mux_state == QC_MUX_READY) {
-		if (qc->qcc->flags & QC_CF_CONN_FULL) {
+		if (qc->qcc->flags & QC_CF_CONN_FULL &&
+		    qc_stream_buf_avail(s->qc)) {
+			fprintf(stderr, "wake up\n");
 			qc->qcc->flags &= ~QC_CF_CONN_FULL;
 			tasklet_wakeup(qc->qcc->wait_event.tasklet);
 		}
-	}
-
-	/* Free stream instance if already released and no buffers left. */
-	if (s->release && LIST_ISEMPTY(&s->buf_list)) {
-		qc_stream_desc_free(s, 0);
-		*stream = NULL;
 	}
 
 	return diff;
@@ -177,7 +185,9 @@ void qc_stream_desc_free(struct qc_stream_desc *stream, int closing)
 		qc->stream_buf_count -= free_count;
 		if (qc->mux_state == QC_MUX_READY) {
 			/* notify MUX about available buffers. */
-			if (qc->qcc->flags & QC_CF_CONN_FULL) {
+			if (qc->qcc->flags & QC_CF_CONN_FULL &&
+			    qc_stream_buf_avail(qc)) {
+				fprintf(stderr, "wake up\n");
 				qc->qcc->flags &= ~QC_CF_CONN_FULL;
 				tasklet_wakeup(qc->qcc->wait_event.tasklet);
 			}
@@ -215,13 +225,6 @@ struct buffer *qc_stream_buf_get(struct qc_stream_desc *stream)
 	return &stream->buf->buf;
 }
 
-/* Returns the count of available buffer left for <qc>. */
-static int qc_stream_buf_avail(struct quic_conn *qc)
-{
-	BUG_ON(qc->stream_buf_count > global.tune.quic_streams_buf);
-	return global.tune.quic_streams_buf - qc->stream_buf_count;
-}
-
 /* Allocate a new current buffer for <stream>. The buffer limit count for the
  * connection is checked first. This function is not allowed if current buffer
  * is not NULL prior to this call. The new buffer represents stream payload at
@@ -248,6 +251,7 @@ struct buffer *qc_stream_buf_alloc(struct qc_stream_desc *stream,
 		return NULL;
 
 	++qc->stream_buf_count;
+	fprintf(stderr, "BUF COUNT %d (%lu)\n", qc->stream_buf_count, qc_cwnd(qc));
 
 	stream->buf->buf = BUF_NULL;
 	LIST_APPEND(&stream->buf_list, &stream->buf->list);
