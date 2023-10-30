@@ -1955,6 +1955,12 @@ void qc_finalize_affinity_rebind(struct quic_conn *qc)
 	TRACE_LEAVE(QUIC_EV_CONN_SET_AFFINITY, qc);
 }
 
+/* Return current congestion window size for connection <qc>. */
+uint64_t qc_cwnd(const struct quic_conn *qc)
+{
+	return qc->path->cwnd;
+}
+
 static void init_quic()
 {
 	int thr;
