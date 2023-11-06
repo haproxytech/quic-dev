@@ -190,20 +190,6 @@ static forceinline void sc_ep_report_send_activity(struct stconn *sc)
 		sc_ep_report_read_activity(sc);
 }
 
-static forceinline int sc_ep_rcv_ex(const struct stconn *sc)
-{
-	return (tick_isset(sc->sedesc->lra)
-		? tick_add_ifset(sc->sedesc->lra, sc->ioto)
-		: TICK_ETERNITY);
-}
-
-static forceinline int sc_ep_snd_ex(const struct stconn *sc)
-{
-	return (tick_isset(sc->sedesc->fsb)
-		? tick_add_ifset(sc->sedesc->fsb, sc->ioto)
-		: TICK_ETERNITY);
-}
-
 /* Returns the stream endpoint from an connector, without any control */
 static inline void *__sc_endp(const struct stconn *sc)
 {
