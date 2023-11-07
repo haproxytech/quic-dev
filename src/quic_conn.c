@@ -4644,23 +4644,27 @@ int qc_treat_rx_pkts(struct quic_conn *qc, struct quic_enc_level *cur_el,
 			else {
 				struct quic_arng ar = { .first = pkt->pn, .last = pkt->pn };
 
-				if (pkt->flags & QUIC_FL_RX_PACKET_ACK_ELICITING) {
-					int arm_ack_timer =
-						qc->state >= QUIC_HS_ST_COMPLETE &&
-						qel->pktns == &qc->pktns[QUIC_TLS_PKTNS_01RTT];
-
-					qel->pktns->flags |= QUIC_FL_PKTNS_ACK_REQUIRED;
-					qel->pktns->rx.nb_aepkts_since_last_ack++;
-					qc_idle_timer_rearm(qc, 1, arm_ack_timer);
-				}
-				if (pkt->pn > largest_pn) {
-					largest_pn = pkt->pn;
-					largest_pn_time_received = pkt->time_received;
-				}
 				/* Update the list of ranges to acknowledge. */
-				if (!quic_update_ack_ranges_list(qc, &qel->pktns->rx.arngs, &ar))
+				if (quic_update_ack_ranges_list(qc, &qel->pktns->rx.arngs, &ar)) {
+					if (pkt->flags & QUIC_FL_RX_PACKET_ACK_ELICITING) {
+						int arm_ack_timer =
+							qc->state >= QUIC_HS_ST_COMPLETE &&
+							qel->pktns == &qc->pktns[QUIC_TLS_PKTNS_01RTT];
+
+						qel->pktns->flags |= QUIC_FL_PKTNS_ACK_REQUIRED;
+						qel->pktns->rx.nb_aepkts_since_last_ack++;
+						qc_idle_timer_rearm(qc, 1, arm_ack_timer);
+					}
+
+					if (pkt->pn > largest_pn) {
+						largest_pn = pkt->pn;
+						largest_pn_time_received = pkt->time_received;
+					}
+				}
+				else {
 					TRACE_ERROR("Could not update ack range list",
 					            QUIC_EV_CONN_RXPKT, qc);
+				}
 			}
 		}
 		node = eb64_next(node);
