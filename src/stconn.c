@@ -549,7 +549,6 @@ static void sc_app_abort(struct stconn *sc)
 
 	sc->flags |= SC_FL_ABRT_DONE;
 	ic->flags |= CF_READ_EVENT;
-	sc_ep_report_read_activity(sc);
 
 	if (!sc_state_in(sc->state, SC_SB_CON|SC_SB_RDY|SC_SB_EST))
 		return;
@@ -1383,6 +1382,7 @@ static int sc_conn_recv(struct stconn *sc)
 			 * cannot be xferred to the channel
 			 */
 			ic->flags |= CF_READ_EVENT;
+			sc_ep_report_read_activity(sc);
 		}
 
 		if (ret <= 0) {
@@ -1825,6 +1825,7 @@ static int sc_conn_process(struct stconn *sc)
 	if (sc_ep_test(sc, SE_FL_EOI) && !(sc->flags & SC_FL_EOI)) {
 		sc->flags |= SC_FL_EOI;
 		ic->flags |= CF_READ_EVENT;
+		sc_ep_report_read_activity(sc);
 	}
 
 	if (sc_ep_test(sc, SE_FL_ERROR))
@@ -1878,6 +1879,7 @@ static void sc_applet_eos(struct stconn *sc)
 		return;
 	sc->flags |= SC_FL_EOS;
 	ic->flags |= CF_READ_EVENT;
+	sc_ep_report_read_activity(sc);
 
 	/* Note: on abort, we don't call the applet */
 
