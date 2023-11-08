@@ -155,8 +155,8 @@ static inline uint pool_releasable(const struct pool_head *pool)
 
 	alloc = HA_ATOMIC_LOAD(&pool->allocated);
 	used = HA_ATOMIC_LOAD(&pool->used);
-	if (used < alloc)
-		used = alloc;
+	if (used > alloc)
+		alloc = used;
 
 	if (alloc < swrate_avg(pool->needed_avg + pool->needed_avg / 4, POOL_AVG_SAMPLES))
 		return used; // less than needed is allocated, can release everything
