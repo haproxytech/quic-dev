@@ -328,6 +328,7 @@ enum proto_proxy_side {
 enum mux_ctl_type {
 	MUX_STATUS, /* Expects an int as output, sets it to a combinaison of MUX_STATUS flags */
 	MUX_EXIT_STATUS, /* Expects an int as output, sets the mux exist/error/http status, if known or 0 */
+	MUX_SUBS_RECV, /* Notify the mux it must wait for read events again  */
 };
 
 /* response for ctl MUX_STATUS */
