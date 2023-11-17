@@ -1712,7 +1712,8 @@ static int sc_conn_send(struct stconn *sc)
 	}
 
 	if (channel_is_empty(oc)) {
-		sc_ep_report_send_activity(sc);
+		if (did_send)
+			sc_ep_report_send_activity(sc);
 	}
 	else {
 		/* We couldn't send all of our data, let the mux know we'd like to send more */
