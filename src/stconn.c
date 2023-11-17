@@ -1090,7 +1090,7 @@ static void sc_notify(struct stconn *sc)
 	 */
 	if (!channel_is_empty(ic) &&
 	    sc_ep_test(sco, SE_FL_WAIT_DATA) &&
-	    (!(sc->flags & SC_FL_SND_EXP_MORE) || c_full(ic) || ci_data(ic) == 0 || ic->pipe)) {
+	     (!(sc->flags & SC_FL_SND_EXP_MORE) || channel_full(ic, co_data(ic)) || channel_input_data(ic) == 0)) {
 		int new_len, last_len;
 
 		last_len = co_data(ic);
@@ -1269,7 +1269,7 @@ static int sc_conn_recv(struct stconn *sc)
 	if (sc_ep_test(sc, SE_FL_MAY_SPLICE) &&
 	    (ic->pipe || ic->to_forward >= MIN_SPLICE_FORWARD) &&
 	    ic->flags & CF_KERN_SPLICING) {
-		if (c_data(ic)) {
+		if (channel_data(ic)) {
 			/* We're embarrassed, there are already data pending in
 			 * the buffer and we don't want to have them at two
 			 * locations at a time. Let's indicate we need some
