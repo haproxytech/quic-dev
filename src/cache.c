@@ -536,7 +536,17 @@ cache_store_strm_deinit(struct stream *s, struct filter *filter)
 	/* Everything should be released in the http_end filter, but we need to do it
 	 * there too, in case of errors */
 	if (st && st->first_block) {
+		struct cache_entry *object = (struct cache_entry *)st->first_block->data;
+
 		shctx_lock(shctx);
+		if (!object->complete) {
+			/* The stream was closed but the 'complete' flag was not
+			 * set which means that cache_store_http_end was not
+			 * called. The stream must have been closed before we
+			 * could store the full answer in the cache.
+			 */
+			delete_entry(object);
+		}
 		shctx_row_dec_hot(shctx, st->first_block);
 		shctx_unlock(shctx);
 	}
