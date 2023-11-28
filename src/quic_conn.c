@@ -7964,7 +7964,8 @@ static void qc_build_cc_frm(struct quic_conn *qc, struct quic_enc_level *qel,
 		}
 		else {
 			out->type = QUIC_FT_CONNECTION_CLOSE_APP;
-			out->connection_close.error_code = qc->err.code;
+			out->connection_close_app.error_code = qc->err.code;
+			out->connection_close_app.reason_phrase_len = 0;
 		}
 	}
 	else {
