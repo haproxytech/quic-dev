@@ -19305,7 +19305,7 @@ x509_v_err_str
 
 A first set of sample fetch methods applies to internal information which does
 not even relate to any client information. These ones are sometimes used with
-"monitor-fail" directives to report an internal status to external watchers.
+"monitor fail" directives to report an internal status to external watchers.
 The sample fetch methods described in this section are usable anywhere.
 
 always_false : boolean
