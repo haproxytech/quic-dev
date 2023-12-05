@@ -5643,6 +5643,10 @@ static struct quic_conn *qc_new_conn(const struct quic_version *qv, int ipv4,
 	LIST_INIT(&qc->back_refs);
 	LIST_INIT(&qc->el_th_ctx);
 
+	/* Packet number spaces initialization. */
+	for (i = 0; i < QUIC_TLS_PKTNS_MAX; i++)
+		quic_pktns_init(&qc->pktns[i]);
+
 	/* Now proceeds to allocation of qc members. */
 
 	buf_area = pool_alloc(pool_head_quic_conn_rxbuf);
@@ -5702,9 +5706,6 @@ static struct quic_conn *qc_new_conn(const struct quic_version *qv, int ipv4,
 	/* Select our SCID which is the first CID with 0 as sequence number. */
 	qc->scid = conn_id->cid;
 
-	/* Packet number spaces initialization. */
-	for (i = 0; i < QUIC_TLS_PKTNS_MAX; i++)
-		quic_pktns_init(&qc->pktns[i]);
 	/* QUIC encryption level context initialization. */
 	for (i = 0; i < QUIC_TLS_ENC_LEVEL_MAX; i++) {
 		if (!quic_conn_enc_level_init(qc, i)) {
