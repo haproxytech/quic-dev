@@ -2708,7 +2708,7 @@ static void qc_dup_pkt_frms(struct quic_conn *qc,
 		TRACE_DEVEL("built probing frame", QUIC_EV_CONN_PRSAFRM, qc, origin);
 		if (origin->pkt) {
 			TRACE_DEVEL("duplicated from packet", QUIC_EV_CONN_PRSAFRM,
-			            qc, NULL, &origin->pkt->pn_node.key);
+			            qc, dup_frm, &origin->pkt->pn_node.key);
 		}
 		else {
 			/* <origin> is a frame which was sent from a packet detected as lost. */
@@ -4962,6 +4962,7 @@ int qc_send_hdshk_pkts(struct quic_conn *qc, int old_data,
 static int qc_dgrams_retransmit(struct quic_conn *qc)
 {
 	int ret = 0;
+	int sret;
 	struct quic_enc_level *iqel = &qc->els[QUIC_TLS_ENC_LEVEL_INITIAL];
 	struct quic_enc_level *hqel = &qc->els[QUIC_TLS_ENC_LEVEL_HANDSHAKE];
 	struct quic_enc_level *aqel = &qc->els[QUIC_TLS_ENC_LEVEL_APP];
@@ -4982,18 +4983,20 @@ static int qc_dgrams_retransmit(struct quic_conn *qc)
 				iqel->pktns->tx.pto_probe = 1;
 				if (!LIST_ISEMPTY(&hfrms))
 					hqel->pktns->tx.pto_probe = 1;
-				if (!qc_send_hdshk_pkts(qc, 1, QUIC_TLS_ENC_LEVEL_INITIAL, &ifrms,
-				                        QUIC_TLS_ENC_LEVEL_HANDSHAKE, &hfrms))
+				sret = qc_send_hdshk_pkts(qc, 1, QUIC_TLS_ENC_LEVEL_INITIAL, &ifrms,
+				                          QUIC_TLS_ENC_LEVEL_HANDSHAKE, &hfrms);
+				qc_free_frm_list(&ifrms);
+				qc_free_frm_list(&hfrms);
+				if (!sret)
 					goto leave;
-				/* Put back unsent frames in their packet number spaces */
-				LIST_SPLICE(&iqel->pktns->tx.frms, &ifrms);
-				LIST_SPLICE(&hqel->pktns->tx.frms, &hfrms);
 			}
 			else {
 				if (!(qc->flags & QUIC_FL_CONN_ANTI_AMPLIFICATION_REACHED)) {
 					iqel->pktns->tx.pto_probe = 1;
-					if (!qc_send_hdshk_pkts(qc, 0, QUIC_TLS_ENC_LEVEL_INITIAL, &ifrms,
-					                        QUIC_TLS_ENC_LEVEL_NONE, NULL))
+					sret = qc_send_hdshk_pkts(qc, 0, QUIC_TLS_ENC_LEVEL_INITIAL, &ifrms,
+					                          QUIC_TLS_ENC_LEVEL_NONE, NULL);
+					qc_free_frm_list(&hfrms);
+					if (!sret)
 						goto leave;
 				}
 			}
@@ -5015,12 +5018,11 @@ static int qc_dgrams_retransmit(struct quic_conn *qc)
 				TRACE_DEVEL("Avail. ack eliciting frames", QUIC_EV_CONN_FRMLIST, qc, &frms1);
 				if (!LIST_ISEMPTY(&frms1)) {
 					hqel->pktns->tx.pto_probe = 1;
-					if (!qc_send_hdshk_pkts(qc, 1, QUIC_TLS_ENC_LEVEL_HANDSHAKE, &frms1,
-					                        QUIC_TLS_ENC_LEVEL_NONE, NULL))
+					sret = qc_send_hdshk_pkts(qc, 1, QUIC_TLS_ENC_LEVEL_HANDSHAKE, &frms1,
+					                          QUIC_TLS_ENC_LEVEL_NONE, NULL);
+					qc_free_frm_list(&frms1);
+					if (!sret)
 						goto leave;
-
-					/* Put back unsent frames into their packet number spaces */
-					LIST_SPLICE(&hqel->pktns->tx.frms, &frms1);
 				}
 			}
 			TRACE_STATE("no more need to probe Handshake packet number space",
@@ -5037,23 +5039,19 @@ static int qc_dgrams_retransmit(struct quic_conn *qc)
 			TRACE_PROTO("Avail. ack eliciting frames", QUIC_EV_CONN_FRMLIST, qc, &frms2);
 			if (!LIST_ISEMPTY(&frms1)) {
 				aqel->pktns->tx.pto_probe = 1;
-				if (!qc_send_app_probing(qc, &frms1)) {
-					qc_free_frm_list(&frms1);
+				sret = qc_send_app_probing(qc, &frms1);
+				qc_free_frm_list(&frms1);
+				if (!sret) {
 					qc_free_frm_list(&frms2);
 					goto leave;
 				}
-
-				/* Put back unsent frames into their packet number spaces */
-				LIST_SPLICE(&aqel->pktns->tx.frms, &frms1);
 			}
 			if (!LIST_ISEMPTY(&frms2)) {
 				aqel->pktns->tx.pto_probe = 1;
-				if (!qc_send_app_probing(qc, &frms2)) {
-					qc_free_frm_list(&frms2);
+				sret = qc_send_app_probing(qc, &frms2);
+				qc_free_frm_list(&frms2);
+				if (!sret)
 					goto leave;
-				}
-				/* Put back unsent frames into their packet number spaces */
-				LIST_SPLICE(&aqel->pktns->tx.frms, &frms2);
 			}
 			TRACE_STATE("no more need to probe 01RTT packet number space",
 			            QUIC_EV_CONN_TXPKT, qc);
