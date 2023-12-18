@@ -1637,7 +1637,11 @@ skip_reuse:
 	if (!srv_conn->xprt) {
 		/* set the correct protocol on the output stream connector */
 		if (srv) {
-			if (conn_prepare(srv_conn, protocol_lookup(srv_conn->dst->ss_family, PROTO_TYPE_STREAM, 0), srv->xprt)) {
+			int is_quic = srv->flags & SRV_F_QUIC_PROTO;
+			enum proto_type proto_type = is_quic ? PROTO_TYPE_DGRAM : PROTO_TYPE_STREAM;
+			struct protocol *proto = protocol_lookup(srv_conn->dst->ss_family, proto_type, 0);
+
+			if (conn_prepare(srv_conn, proto, srv->xprt)) {
 				conn_free(srv_conn);
 				return SF_ERR_INTERNAL;
 			}
