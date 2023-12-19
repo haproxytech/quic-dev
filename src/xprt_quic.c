@@ -108,10 +108,16 @@ static int quic_conn_unsubscribe(struct connection *conn, void *xprt_ctx, int ev
  */
 static int qc_conn_init(struct connection *conn, void **xprt_ctx)
 {
-	struct quic_conn *qc = conn->handle.qc;
+	int ret = -1;
+	struct quic_conn *qc =
+		obj_type(conn->target) == OBJ_TYPE_LISTENER ?
+		conn->handle.qc : qc_new_srv_conn(conn);
 
 	TRACE_ENTER(QUIC_EV_CONN_NEW, qc);
+	if (!qc)
+		goto out;
 
+	ret = 0;
 	/* Ensure thread connection migration is finalized ASAP. */
 	if (qc->flags & QUIC_FL_CONN_AFFINITY_CHANGED)
 		qc_finalize_affinity_rebind(qc);
@@ -125,7 +131,7 @@ static int qc_conn_init(struct connection *conn, void **xprt_ctx)
  out:
 	TRACE_LEAVE(QUIC_EV_CONN_NEW, qc);
 
-	return 0;
+	return ret;
 }
 
 /* Start the QUIC transport layer */
@@ -163,6 +169,8 @@ static struct xprt_ops ssl_quic = {
 	.start    = qc_xprt_start,
 	.prepare_bind_conf = ssl_sock_prepare_bind_conf,
 	.destroy_bind_conf = ssl_sock_destroy_bind_conf,
+	.prepare_srv = ssl_sock_prepare_srv_ctx,
+	.destroy_srv = ssl_sock_free_srv_ctx,
 	.get_alpn = ssl_sock_get_alpn,
 	.get_ssl_sock_ctx = qc_get_ssl_sock_ctx,
 	.name     = "QUIC",
