@@ -20,7 +20,7 @@ DECLARE_POOL(pool_head_quic_ssl_sock_ctx, "quic_ssl_sock_ctx", sizeof(struct ssl
  * be set to 1 for a QUIC server, 0 for a client.
  * Return 1 if succeeded, 0 if not.
  */
-static int qc_ssl_set_quic_transport_params(struct quic_conn *qc,
+static int qc_ssl_set_quic_transport_params(SSL *ssl, struct quic_conn *qc,
                                             const struct quic_version *ver, int server)
 {
 	int ret = 0;
@@ -43,7 +43,7 @@ static int qc_ssl_set_quic_transport_params(struct quic_conn *qc,
 		goto leave;
 	}
 
-	if (!SSL_set_quic_transport_params(qc->xprt_ctx->ssl, in, *enclen)) {
+	if (!SSL_set_quic_transport_params(ssl, in, *enclen)) {
 		TRACE_ERROR("SSL_set_quic_transport_params() failed", QUIC_EV_CONN_RWSEC);
 		goto leave;
 	}
@@ -268,7 +268,7 @@ write:
 
 	/* Set the transport parameters in the TLS stack. */
 	if (level == ssl_encryption_handshake && qc_is_listener(qc) &&
-	    !qc_ssl_set_quic_transport_params(qc, ver, 1))
+	    !qc_ssl_set_quic_transport_params(qc->xprt_ctx->ssl, qc, ver, 1))
 		goto leave;
 
  keyupdate_init:
@@ -748,10 +748,9 @@ static int qc_ssl_sess_init(struct quic_conn *qc, SSL_CTX *ssl_ctx, SSL **ssl)
  *
  * Returns 0 on success else non-zero.
  */
-int qc_alloc_ssl_sock_ctx(struct quic_conn *qc)
+int qc_alloc_ssl_sock_ctx(struct quic_conn *qc, struct connection *conn)
 {
 	int ret = 0;
-	struct bind_conf *bc = qc->li->bind_conf;
 	struct ssl_sock_ctx *ctx = NULL;
 
 	TRACE_ENTER(QUIC_EV_CONN_NEW, qc);
@@ -762,7 +761,7 @@ int qc_alloc_ssl_sock_ctx(struct quic_conn *qc)
 		goto err;
 	}
 
-	ctx->conn = NULL;
+	ctx->conn = conn;
 	ctx->bio = NULL;
 	ctx->xprt = NULL;
 	ctx->xprt_ctx = NULL;
@@ -775,6 +774,8 @@ int qc_alloc_ssl_sock_ctx(struct quic_conn *qc)
 	ctx->qc = qc;
 
 	if (qc_is_listener(qc)) {
+		struct bind_conf *bc = qc->li->bind_conf;
+
 		if (qc_ssl_sess_init(qc, bc->initial_ctx, &ctx->ssl) == -1)
 		        goto err;
 #if (HA_OPENSSL_VERSION_NUMBER >= 0x10101000L) && !defined(OPENSSL_IS_AWSLC)
@@ -786,6 +787,19 @@ int qc_alloc_ssl_sock_ctx(struct quic_conn *qc)
 #endif
 
 		SSL_set_accept_state(ctx->ssl);
+	}
+	else {
+		struct server *srv = __objt_server(ctx->conn->target);
+
+		if (qc_ssl_sess_init(qc, srv->ssl_ctx.ctx, &ctx->ssl) == -1)
+			goto err;
+
+		if (!qc_ssl_set_quic_transport_params(ctx->ssl, qc, quic_version_1, 0))
+			goto err;
+
+		SSL_set_connect_state(ctx->ssl);
+		SSL_do_handshake(ctx->ssl);
+		tasklet_wakeup(qc->wait_event.tasklet);
 	}
 
 	ctx->xprt = xprt_get(XPRT_QUIC);

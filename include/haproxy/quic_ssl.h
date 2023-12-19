@@ -35,7 +35,7 @@
 
 int ssl_quic_initial_ctx(struct bind_conf *bind_conf);
 SSL_CTX *ssl_quic_srv_new_ssl_ctx(void);
-int qc_alloc_ssl_sock_ctx(struct quic_conn *qc);
+int qc_alloc_ssl_sock_ctx(struct quic_conn *qc, struct connection *conn);
 int qc_ssl_provide_quic_data(struct ncbuf *ncbuf,
                              enum ssl_encryption_level_t level,
                              struct ssl_sock_ctx *ctx,
