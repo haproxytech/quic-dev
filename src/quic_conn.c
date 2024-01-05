@@ -971,7 +971,8 @@ struct quic_conn *qc_new_conn(const struct quic_version *qv, int ipv4,
 	int i;
 	struct quic_conn *qc = NULL;
 	struct listener *l = server ? owner : NULL;
-	struct proxy *prx = l ? l->bind_conf->frontend : NULL;
+	struct server *srv = server ? NULL : owner;
+	struct proxy *prx = server ? l->bind_conf->frontend : srv->proxy;
 	struct quic_cc_algo *cc_algo = NULL;
 	unsigned int next_actconn = 0, next_sslconn = 0, next_handshake = 0;
 
@@ -1074,25 +1075,32 @@ struct quic_conn *qc_new_conn(const struct quic_version *qv, int ipv4,
 	}
 	/* QUIC Client (outgoing connection to servers) */
 	else {
+		qc->flags = QUIC_FL_CONN_PEER_VALIDATED_ADDR;
 		qc->state = QUIC_HS_ST_CLIENT_INITIAL;
+		memset(&qc->odcid, 0, sizeof qc->odcid);
+		qc->odcid.len = 0;
 		if (dcid->len)
 			memcpy(qc->dcid.data, dcid->data, dcid->len);
 		qc->dcid.len = dcid->len;
+		qc->tx.buf = BUF_NULL;
 		qc->li = NULL;
+		qc->next_cid_seq_num = 1;
 	}
 	qc->mux_state = QC_MUX_NULL;
 	qc->err = quic_err_transport(QC_ERR_NO_ERROR);
 
-	/* If connection is instantiated due to an INITIAL packet with an
+	/* Listener only: if connection is instantiated due to an INITIAL packet with an
 	 * already checked token, consider the peer address as validated.
 	 */
-	if (token_odcid->len) {
-		TRACE_STATE("validate peer address due to initial token",
-		            QUIC_EV_CONN_INIT, qc);
-		qc->flags |= QUIC_FL_CONN_PEER_VALIDATED_ADDR;
-	}
-	else {
-		HA_ATOMIC_INC(&qc->prx_counters->half_open_conn);
+	if (server) {
+		if (token_odcid->len) {
+			TRACE_STATE("validate peer address due to initial token",
+						QUIC_EV_CONN_INIT, qc);
+			qc->flags |= QUIC_FL_CONN_PEER_VALIDATED_ADDR;
+		}
+		else if (qc->prx_counters) {
+			HA_ATOMIC_INC(&qc->prx_counters->half_open_conn);
+		}
 	}
 
 	/* Now proceeds to allocation of qc members. */
@@ -1111,7 +1119,8 @@ struct quic_conn *qc_new_conn(const struct quic_version *qv, int ipv4,
 
 	conn_id->qc = qc;
 
-	if (HA_ATOMIC_LOAD(&l->rx.quic_mode) == QUIC_SOCK_MODE_CONN &&
+	/* Listener only */
+	if (l && HA_ATOMIC_LOAD(&l->rx.quic_mode) == QUIC_SOCK_MODE_CONN &&
 	    (global.tune.options & GTUNE_QUIC_SOCK_PER_CONN) &&
 	    is_addr(local_addr)) {
 		TRACE_USER("Allocate a socket for QUIC connection", QUIC_EV_CONN_INIT, qc);
@@ -1162,11 +1171,16 @@ struct quic_conn *qc_new_conn(const struct quic_version *qv, int ipv4,
 	qc->max_ack_delay = 0;
 	/* Only one path at this time (multipath not supported) */
 	qc->path = &qc->paths[0];
-	quic_cc_path_init(qc->path, ipv4, server ? l->bind_conf->max_cwnd : 0,
+	quic_cc_path_init(qc->path, ipv4,
+	                  server ? l->bind_conf->max_cwnd :
+	                  global.tune.bufsize * global.tune.quic_streams_buf,
 	                  cc_algo ? cc_algo : default_quic_cc_algo, qc);
 
 	qc->stream_buf_count = 0;
-	memcpy(&qc->local_addr, local_addr, sizeof(qc->local_addr));
+	if (local_addr)
+		memcpy(&qc->local_addr, local_addr, sizeof(qc->local_addr));
+	else
+		memset(&qc->local_addr, 0, sizeof(qc->local_addr));
 	memcpy(&qc->peer_addr, peer_addr, sizeof qc->peer_addr);
 
 	if (server) {
@@ -1174,6 +1188,9 @@ struct quic_conn *qc_new_conn(const struct quic_version *qv, int ipv4,
 		                     conn_id->stateless_reset_token,
 		                     dcid->data, dcid->len,
 		                     qc->scid.data, qc->scid.len, token_odcid);
+	}
+	else {
+		qc_srv_params_init(qc, &srv->quic_params, qc->scid.data, qc->scid.len);
 	}
 
 	/* Initialize the idle timeout of the connection at the "max_idle_timeout"
@@ -1195,7 +1212,7 @@ struct quic_conn *qc_new_conn(const struct quic_version *qv, int ipv4,
 	    !quic_conn_init_idle_timer_task(qc, prx))
 		goto err;
 
-	if (!qc_new_isecs(qc, &qc->iel->tls_ctx, qc->original_version, dcid->data, dcid->len, 1))
+	if (!qc_new_isecs(qc, &qc->iel->tls_ctx, qc->original_version, dcid->data, dcid->len, server))
 		goto err;
 
 	/* Counters initialization */
