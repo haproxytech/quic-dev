@@ -20,12 +20,12 @@ int quic_transport_params_store(struct quic_conn *conn, int server,
                                 const unsigned char *buf,
                                 const unsigned char *end);
 
-int qc_lstnr_params_init(struct quic_conn *qc,
-                         const struct quic_transport_params *listener_params,
-                         const unsigned char *stateless_reset_token,
-                         const unsigned char *dcid, size_t dcidlen,
-                         const unsigned char *scid, size_t scidlen,
-                         const struct quic_cid *token_odcid);
+void qc_lstnr_params_init(struct quic_conn *qc,
+                          const struct quic_transport_params *listener_params,
+                          const unsigned char *stateless_reset_token,
+                          const unsigned char *dcid, size_t dcidlen,
+                          const unsigned char *scid, size_t scidlen,
+                          const struct quic_cid *token_odcid);
 void qc_srv_params_init(struct quic_conn *qc,
                         const struct quic_transport_params *srv_params,
                         const unsigned char *scid, size_t scidlen);

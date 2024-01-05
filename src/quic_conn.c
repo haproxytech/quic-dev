@@ -1169,11 +1169,12 @@ struct quic_conn *qc_new_conn(const struct quic_version *qv, int ipv4,
 	memcpy(&qc->local_addr, local_addr, sizeof(qc->local_addr));
 	memcpy(&qc->peer_addr, peer_addr, sizeof qc->peer_addr);
 
-	if (server && !qc_lstnr_params_init(qc, &l->bind_conf->quic_params,
-	                                    conn_id->stateless_reset_token,
-	                                    dcid->data, dcid->len,
-	                                    qc->scid.data, qc->scid.len, token_odcid))
-		goto err;
+	if (server) {
+		qc_lstnr_params_init(qc, &l->bind_conf->quic_params,
+		                     conn_id->stateless_reset_token,
+		                     dcid->data, dcid->len,
+		                     qc->scid.data, qc->scid.len, token_odcid);
+	}
 
 	/* Initialize the idle timeout of the connection at the "max_idle_timeout"
 	 * value from local transport parameters.

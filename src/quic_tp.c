@@ -674,14 +674,14 @@ int quic_transport_params_store(struct quic_conn *qc, int server,
  * coming from configuration and Initial packet information (destination
  * connection ID, source connection ID, original destination connection ID) from
  * client token.
- * Returns 1 if succeeded, 0 if not.
+ * Never fails.
  */
-int qc_lstnr_params_init(struct quic_conn *qc,
-                         const struct quic_transport_params *listener_params,
-                         const unsigned char *stateless_reset_token,
-                         const unsigned char *dcid, size_t dcidlen,
-                         const unsigned char *scid, size_t scidlen,
-                         const struct quic_cid *token_odcid)
+void qc_lstnr_params_init(struct quic_conn *qc,
+                          const struct quic_transport_params *listener_params,
+                          const unsigned char *stateless_reset_token,
+                          const unsigned char *dcid, size_t dcidlen,
+                          const unsigned char *scid, size_t scidlen,
+                          const struct quic_cid *token_odcid)
 {
 	struct quic_transport_params *rx_params = &qc->rx.params;
 	struct tp_cid *odcid_param = &rx_params->original_destination_connection_id;
@@ -708,8 +708,6 @@ int qc_lstnr_params_init(struct quic_conn *qc,
 	memcpy(rx_params->initial_source_connection_id.data, scid, scidlen);
 	rx_params->initial_source_connection_id.len = scidlen;
 	TRACE_PROTO("\nRX(local) transp. params.", QUIC_EV_TRANSP_PARAMS, qc, rx_params);
-
-	return 1;
 }
 
 /* QUIC client (or haproxy server) only function.
