@@ -682,7 +682,9 @@ int qc_snd_buf(struct quic_conn *qc, const struct buffer *buf, size_t sz,
 		}
 #endif /* IP_PKTINFO || IP_RECVDSTADDR || IPV6_RECVPKTINFO */
 		else {
-			ret = sendto(qc->li->rx.fd, b_peek(buf, b_head_ofs(buf)), sz,
+			int fd = qc->li ? qc->li->rx.fd : qc->fd;
+
+			ret = sendto(fd, b_peek(buf, b_head_ofs(buf)), sz,
 			             MSG_DONTWAIT|MSG_NOSIGNAL,
 			             (struct sockaddr *)&qc->peer_addr,
 			             get_addr_len(&qc->peer_addr));
