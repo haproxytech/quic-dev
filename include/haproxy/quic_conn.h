@@ -173,6 +173,31 @@ static inline size_t qc_max_udp_payload_size(struct quic_conn *qc)
 		__objt_server(qc->conn->target)->quic_params.max_udp_payload_size;
 }
 
+/* Return the address of the connection owner object type. */
+static inline enum obj_type *qc_owner_obj_type(struct quic_conn *qc)
+{
+	return qc_is_listener(qc) ? &qc->li->obj_type :
+		&__objt_server(qc->conn->target)->obj_type;
+}
+
+/* Return the address of the QUIC counters attached to the proxy of
+ * the owner of the connection whose object type address is <o> for
+ * listener and servers, or NULL for others object type.
+ */
+static inline void *qc_counters(enum obj_type *o, const struct stats_module *m)
+{
+	struct proxy *p;
+
+	if (*o == OBJ_TYPE_LISTENER)
+		p = __objt_listener(o)->bind_conf->frontend;
+	else if (*o == OBJ_TYPE_SERVER)
+		p = __objt_server(o)->proxy;
+	else
+		return NULL;
+
+	return EXTRA_COUNTERS_GET(p->extra_counters_fe, m);
+}
+
 void chunk_frm_appendf(struct buffer *buf, const struct quic_frame *frm);
 void quic_set_connection_close(struct quic_conn *qc, const struct quic_err err);
 void quic_set_tls_alert(struct quic_conn *qc, int alert);

@@ -1762,8 +1762,8 @@ static struct quic_conn *quic_rx_pkt_retrieve_conn(struct quic_rx_packet *pkt,
 /* Parse a QUIC packet starting at <pos>. Data won't be read after <end> even
  * if the packet is incomplete. This function will populate fields of <pkt>
  * instance, most notably its length. <dgram> is the UDP datagram which
- * contains the parsed packet. <l> is the listener instance on which it was
- * received.
+ * contains the parsed packet. <o> is the address object type address of the
+ * object which receives this received packet.
  *
  * Returns 0 on success else non-zero. Packet length is guaranteed to be set to
  * the real packet value or to cover all data between <pos> and <end> : this is
@@ -1771,16 +1771,15 @@ static struct quic_conn *quic_rx_pkt_retrieve_conn(struct quic_rx_packet *pkt,
  */
 static int quic_rx_pkt_parse(struct quic_rx_packet *pkt,
                              unsigned char *pos, const unsigned char *end,
-                             struct quic_dgram *dgram, struct listener *l)
+                             struct quic_dgram *dgram, enum obj_type *o)
 {
 	const unsigned char *beg = pos;
-	struct proxy *prx;
 	struct quic_counters *prx_counters;
+	struct listener *l = *o == OBJ_TYPE_LISTENER ? __objt_listener(o) : NULL;
 
 	TRACE_ENTER(QUIC_EV_CONN_LPKT);
 
-	prx = l->bind_conf->frontend;
-	prx_counters = EXTRA_COUNTERS_GET(prx->extra_counters_fe, &quic_stats_module);
+	prx_counters = qc_counters(o, &quic_stats_module);
 
 	if (end <= pos) {
 		TRACE_PROTO("Packet dropped", QUIC_EV_CONN_LPKT);
@@ -1836,8 +1835,10 @@ static int quic_rx_pkt_parse(struct quic_rx_packet *pkt,
 			goto drop;
 		}
 
-		/* RFC9000 6. Version Negotiation */
-		if (!pkt->version) {
+		/* RFC9000 6. Version Negotiation. A Version Negotiation packet is
+		 * sent only by servers.
+		 */
+		if (l && !pkt->version) {
 			 /* unsupported version, send Negotiation packet */
 			if (send_version_negotiation(l->rx.fd, &dgram->saddr, pkt)) {
 				TRACE_ERROR("VN packet not sent", QUIC_EV_CONN_LPKT);
@@ -1862,10 +1863,11 @@ static int quic_rx_pkt_parse(struct quic_rx_packet *pkt,
 			}
 
 			/* TODO Retry should be automatically activated if
-			 * suspect network usage is detected.
+			 * suspect network usage is detected. Retry packet are sent only
+			 * by servers.
 			 */
 			if (!token_len) {
-				if (l->bind_conf->options & BC_O_QUIC_FORCE_RETRY) {
+				if (l && l->bind_conf->options & BC_O_QUIC_FORCE_RETRY) {
 					TRACE_PROTO("Initial without token, sending retry",
 					            QUIC_EV_CONN_LPKT, NULL, NULL, NULL, pkt->version);
 					if (send_retry(l->rx.fd, &dgram->saddr, pkt, pkt->version)) {
@@ -1877,6 +1879,12 @@ static int quic_rx_pkt_parse(struct quic_rx_packet *pkt,
 					HA_ATOMIC_INC(&prx_counters->retry_sent);
 					goto drop_silent;
 				}
+			}
+			else if (!l) {
+				/* A server must sent Initial packets with a null token length. */
+				TRACE_PROTO("Packet dropped",
+				            QUIC_EV_CONN_LPKT, NULL, NULL, NULL, pkt->version);
+				goto drop;
 			}
 
 			pkt->token = pos;
@@ -1904,6 +1912,11 @@ static int quic_rx_pkt_parse(struct quic_rx_packet *pkt,
 		pkt->pn_offset = pos - beg;
 		pkt->len = pkt->pn_offset + len;
 
+		/* Interrupt parsing after packet length retrieval : this
+		 * ensures that only the packet is dropped but not the whole
+		 * datagram.
+		 */
+
 		/* RFC 9000. Initial Datagram Size
 		 *
 		 * A server MUST discard an Initial packet that is carried in a UDP datagram
@@ -1917,11 +1930,8 @@ static int quic_rx_pkt_parse(struct quic_rx_packet *pkt,
 			goto drop;
 		}
 
-		/* Interrupt parsing after packet length retrieval : this
-		 * ensures that only the packet is dropped but not the whole
-		 * datagram.
-		 */
-		if (pkt->type == QUIC_PACKET_TYPE_0RTT && !l->bind_conf->ssl_conf.early_data) {
+		/* O-RTT packet are not sent by servers. */
+		if (pkt->type == QUIC_PACKET_TYPE_0RTT && (!l || !l->bind_conf->ssl_conf.early_data)) {
 			TRACE_PROTO("RX 0-RTT packet not supported", QUIC_EV_CONN_LPKT);
 			goto drop;
 		}
@@ -2145,7 +2155,8 @@ static void qc_rx_pkt_handle(struct quic_conn *qc, struct quic_rx_packet *pkt,
  * this function.
  *
  * If datagram has been received on a quic-conn owned FD, <from_qc> must be set
- * to the connection instance. <li> is the attached listener. The caller is
+ * to the connection instance. <o> is the object type address of the object
+ * (listener or server) receiving the datagram. The caller is
  * responsible to ensure that the first packet is destined to this connection
  * by comparing CIDs.
  *
@@ -2157,7 +2168,7 @@ static void qc_rx_pkt_handle(struct quic_conn *qc, struct quic_rx_packet *pkt,
  * the datagram may not have been parsed.
  */
 int quic_dgram_parse(struct quic_dgram *dgram, struct quic_conn *from_qc,
-                     struct listener *li)
+                     enum obj_type *o)
 {
 	struct quic_rx_packet *pkt;
 	struct quic_conn *qc = NULL;
@@ -2195,7 +2206,7 @@ int quic_dgram_parse(struct quic_dgram *dgram, struct quic_conn *from_qc,
 			pkt->flags |= QUIC_FL_RX_PACKET_DGRAM_FIRST;
 
 		quic_rx_packet_refinc(pkt);
-		if (quic_rx_pkt_parse(pkt, pos, end, dgram, li))
+		if (quic_rx_pkt_parse(pkt, pos, end, dgram, o))
 			goto next;
 
 		/* Search quic-conn instance for first packet of the datagram.
@@ -2204,6 +2215,7 @@ int quic_dgram_parse(struct quic_dgram *dgram, struct quic_conn *from_qc,
 		 */
 		if (!qc) {
 			int new_tid = -1;
+			struct listener *li = *o == OBJ_TYPE_LISTENER ? __objt_listener(o) : NULL;
 
 			qc = from_qc ? from_qc : quic_rx_pkt_retrieve_conn(pkt, dgram, li, &new_tid);
 			/* qc is NULL if receiving a non Initial packet for an
