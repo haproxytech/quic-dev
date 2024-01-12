@@ -924,6 +924,9 @@ static int qc_parse_pkt_frms(struct quic_conn *qc, struct quic_rx_packet *pkt,
 			if (!qc_handle_crypto_frm(qc, &frm.crypto, pkt, qel, &fast_retrans))
 				goto leave;
 			break;
+		case QUIC_FT_NEW_TOKEN:
+			/* XXX TODO XXX */
+			break;
 		case QUIC_FT_STREAM_8 ... QUIC_FT_STREAM_F:
 		{
 			struct qf_stream *strm_frm = &frm.stream;
