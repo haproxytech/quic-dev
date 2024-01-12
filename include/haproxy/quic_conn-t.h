@@ -283,6 +283,7 @@ struct quic_conn_cntrs {
 #define QUIC_FL_CONN_IPKTNS_DCD                  (1U << 15) /* Initial packet number space discarded  */
 #define QUIC_FL_CONN_HPKTNS_DCD                  (1U << 16) /* Handshake packet number space discarded  */
 #define QUIC_FL_CONN_PEER_VALIDATED_ADDR         (1U << 17) /* Peer address is considered as validated for this connection. */
+#define QUIC_FL_CONN_SCID_RECEIVED               (1U << 18) /* (client only: first Initial received. */
 #define QUIC_FL_CONN_TO_KILL                     (1U << 24) /* Unusable connection, to be killed */
 #define QUIC_FL_CONN_TX_TP_RECEIVED              (1U << 25) /* Peer transport parameters have been received (used for the transmitting part) */
 #define QUIC_FL_CONN_FINALIZED                   (1U << 26) /* QUIC connection finalized (functional, ready to send/receive) */
