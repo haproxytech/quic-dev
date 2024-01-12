@@ -621,8 +621,8 @@ int qc_ssl_provide_quic_data(struct ncbuf *ncbuf,
 
 		/* I/O callback switch */
 		qc->wait_event.tasklet->process = quic_conn_app_io_cb;
+		qc->flags |= QUIC_FL_CONN_NEED_POST_HANDSHAKE_FRMS;
 		if (qc_is_listener(ctx->qc)) {
-			qc->flags |= QUIC_FL_CONN_NEED_POST_HANDSHAKE_FRMS;
 			qc->state = QUIC_HS_ST_CONFIRMED;
 			/* The connection is ready to be accepted. */
 			quic_accept_push_qc(qc);
