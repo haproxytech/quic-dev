@@ -806,6 +806,10 @@ struct task *quic_conn_io_cb(struct task *t, void *context, unsigned int state)
 		qc_set_timer(qc);
 		qc_el_rx_pkts_del(qc->hel);
 		qc_release_pktns_frms(qc, qc->hel->pktns);
+		if (!qc_is_listener(qc)) {
+			/* I/O callback switch */
+			qc->wait_event.tasklet->process = quic_conn_app_io_cb;
+		}
 	}
 
 	buf = qc_get_txb(qc);
