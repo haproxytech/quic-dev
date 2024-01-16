@@ -731,7 +731,8 @@ int qc_ssl_provide_all_quic_data(struct quic_conn *qc, struct ssl_sock_ctx *ctx)
  * Return 0 if succeeded, -1 if not. If failed, sets the ->err_code member of <qc->conn> to
  * CO_ER_SSL_NO_MEM.
  */
-static int qc_ssl_sess_init(struct quic_conn *qc, SSL_CTX *ssl_ctx, SSL **ssl)
+static int qc_ssl_sess_init(struct quic_conn *qc, SSL_CTX *ssl_ctx, SSL **ssl,
+                            struct connection *conn, int server)
 {
 	int retry, ret = -1;
 
@@ -748,7 +749,8 @@ static int qc_ssl_sess_init(struct quic_conn *qc, SSL_CTX *ssl_ctx, SSL **ssl)
 		goto retry;
 	}
 
-	if (!SSL_set_ex_data(*ssl, ssl_qc_app_data_index, qc) ||
+	if ((!server && !SSL_set_ex_data(*ssl, ssl_app_data_index, conn)) ||
+	    !SSL_set_ex_data(*ssl, ssl_qc_app_data_index, qc) ||
 	    !SSL_set_quic_method(*ssl, &ha_quic_method)) {
 		SSL_free(*ssl);
 		*ssl = NULL;
@@ -799,7 +801,7 @@ int qc_alloc_ssl_sock_ctx(struct quic_conn *qc, struct connection *conn)
 	if (qc_is_listener(qc)) {
 		struct bind_conf *bc = qc->li->bind_conf;
 
-		if (qc_ssl_sess_init(qc, bc->initial_ctx, &ctx->ssl) == -1)
+		if (qc_ssl_sess_init(qc, bc->initial_ctx, &ctx->ssl, NULL, 1) == -1)
 		        goto err;
 #if (HA_OPENSSL_VERSION_NUMBER >= 0x10101000L) && !defined(OPENSSL_IS_AWSLC)
 #ifndef USE_QUIC_OPENSSL_COMPAT
@@ -814,7 +816,7 @@ int qc_alloc_ssl_sock_ctx(struct quic_conn *qc, struct connection *conn)
 	else {
 		struct server *srv = __objt_server(ctx->conn->target);
 
-		if (qc_ssl_sess_init(qc, srv->ssl_ctx.ctx, &ctx->ssl) == -1)
+		if (qc_ssl_sess_init(qc, srv->ssl_ctx.ctx, &ctx->ssl, conn, 0) == -1)
 			goto err;
 
 		if (!qc_ssl_set_quic_transport_params(ctx->ssl, qc, quic_version_1, 0))
