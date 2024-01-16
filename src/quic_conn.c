@@ -747,6 +747,7 @@ struct task *quic_conn_io_cb(struct task *t, void *context, unsigned int state)
 	struct quic_conn *qc = context;
 	struct buffer *buf = NULL;
 	int st;
+	int discard_hpktns = 0;
 	struct tasklet *tl = (struct tasklet *)t;
 
 	TRACE_ENTER(QUIC_EV_CONN_IO_CB, qc);
@@ -788,15 +789,23 @@ struct task *quic_conn_io_cb(struct task *t, void *context, unsigned int state)
 		goto out;
 
 	st = qc->state;
-	if (qc_is_listener(qc) && st >= QUIC_HS_ST_COMPLETE) {
-		if (!(qc->flags & QUIC_FL_CONN_HPKTNS_DCD)) {
-			/* Discard the Handshake packet number space. */
-			TRACE_PROTO("discarding Handshake pktns", QUIC_EV_CONN_PHPKTS, qc);
-			quic_pktns_discard(qc->hel->pktns, qc);
-			qc_set_timer(qc);
-			qc_el_rx_pkts_del(qc->hel);
-			qc_release_pktns_frms(qc, qc->hel->pktns);
-		}
+
+	if (qc_is_listener(qc)) {
+		if (st >= QUIC_HS_ST_COMPLETE && !quic_tls_pktns_is_dcd(qc, qc->hpktns))
+			discard_hpktns = 1;
+	}
+	else {
+		if (st >= QUIC_HS_ST_CONFIRMED && !quic_tls_pktns_is_dcd(qc, qc->hpktns))
+			discard_hpktns = 1;
+	}
+
+	if (discard_hpktns) {
+		/* Discard the Handshake packet number space. */
+		TRACE_PROTO("discarding Handshake pktns", QUIC_EV_CONN_PHPKTS, qc);
+		quic_pktns_discard(qc->hel->pktns, qc);
+		qc_set_timer(qc);
+		qc_el_rx_pkts_del(qc->hel);
+		qc_release_pktns_frms(qc, qc->hel->pktns);
 	}
 
 	buf = qc_get_txb(qc);
