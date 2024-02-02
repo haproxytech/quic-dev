@@ -85,8 +85,10 @@ static inline void *read_ptr(const void *p)
 /* Write a void* in native host order */
 static inline void write_ptr(void *p, const void *ptr)
 {
-	if (sizeof(ptr) == 4)
+	if (sizeof(ptr) == 4) {
+		ABORT_NOW();
 		return write_u32(p, (uintptr_t)ptr);
+	}
 	else
 		return write_u64(p, (uintptr_t)ptr);
 }

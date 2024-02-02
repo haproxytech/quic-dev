@@ -651,7 +651,7 @@ static struct task *quic_conn_closed_io_cb(struct task *t, void *context, unsign
 
 	buf = b_make(cc_qc->cc_buf_area + headlen,
 	             QUIC_MAX_CC_BUFSIZE - headlen, 0, cc_qc->cc_dgram_len);
-	if (qc_snd_buf(qc, &buf, buf.data, 0) < 0) {
+	if (qc_snd_buf(qc, &buf, buf.data, 0, 0) < 0) {
 		TRACE_ERROR("sendto fatal error", QUIC_EV_CONN_IO_CB, qc);
 		quic_release_cc_conn(cc_qc);
 		cc_qc = NULL;
@@ -817,7 +817,7 @@ struct task *quic_conn_io_cb(struct task *t, void *context, unsigned int state)
 		goto out;
 	}
 
-	if (ret && !qc_send_ppkts(buf, qc->xprt_ctx)) {
+	if (ret && !qc_send_ppkts(buf, qc->xprt_ctx, 0, NULL)) {
 		if (qc->flags & QUIC_FL_CONN_TO_KILL)
 			qc_txb_release(qc);
 		goto out;

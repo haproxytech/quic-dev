@@ -14,6 +14,8 @@
 
 #include <haproxy/quic_tx.h>
 
+#include <netinet/udp.h>
+
 #include <haproxy/pool.h>
 #include <haproxy/trace.h>
 #include <haproxy/quic_cid.h>
@@ -87,9 +89,20 @@ static inline void free_quic_tx_packet(struct quic_conn *qc,
  */
 struct buffer *qc_txb_alloc(struct quic_conn *qc)
 {
+	const int bufsz = 65535;
+	//const int bufsz = 65535 / 2;
 	struct buffer *buf = &qc->tx.buf;
-	if (!b_alloc(buf))
+
+	if (buf->area)
+		return buf;
+
+	//if (!b_alloc(buf))
+	//	return NULL;
+	if (!(buf->area = malloc(bufsz)))
 		return NULL;
+
+	buf->size = bufsz;
+	buf->head = buf->data = 0;
 
 	return buf;
 }
@@ -108,8 +121,11 @@ void qc_txb_release(struct quic_conn *qc)
 	BUG_ON_HOT(buf && b_data(buf));
 
 	if (!b_data(buf)) {
-		b_free(buf);
-		offer_buffers(NULL, 1);
+		//b_free(buf);
+		//offer_buffers(NULL, 1);
+		free(buf->area);
+		buf->area = NULL;
+		buf->size = 0;
 	}
 }
 
@@ -212,7 +228,8 @@ static int qc_may_build_pkt(struct quic_conn *qc, struct list *frms,
  * -1 if something wrong happened.
  */
 static int qc_prep_app_pkts(struct quic_conn *qc, struct buffer *buf,
-                            struct list *frms)
+                            struct list *frms,
+                            struct quic_tx_packet **first_pkt)
 {
 	int ret = -1, cc;
 	struct quic_enc_level *qel;
@@ -262,6 +279,7 @@ static int qc_prep_app_pkts(struct quic_conn *qc, struct buffer *buf,
 			goto leave;
 		case -2:
 			// trace already emitted by function above
+			ABORT_NOW();
 			goto leave;
 		case -1:
 			/* As we provide qc_build_pkt() with an enough big buffer to fulfill an
@@ -269,6 +287,7 @@ static int qc_prep_app_pkts(struct quic_conn *qc, struct buffer *buf,
 			 * no need to try to reuse this buffer.
 			 */
 			TRACE_PROTO("could not prepare anymore packet", QUIC_EV_CONN_PHPKTS, qc, qel);
+			//ABORT_NOW();
 			goto out;
 		default:
 			break;
@@ -284,9 +303,20 @@ static int qc_prep_app_pkts(struct quic_conn *qc, struct buffer *buf,
 
 		/* Write datagram header. */
 		qc_txb_store(buf, pkt->len, pkt);
+		if (!*first_pkt)
+			*first_pkt = pkt;
+		else {
+			struct quic_tx_packet *pnext;
+
+			//ABORT_NOW();
+			for (pnext = *first_pkt; pnext->next; pnext = pnext->next)
+				;
+			pnext->next = pkt;
+		}
 		/* Build only one datagram when an immediate close is required. */
 		if (cc)
 			break;
+		//break;
 	}
 
  out:
@@ -362,7 +392,8 @@ static void qc_purge_tx_buf(struct quic_conn *qc, struct buffer *buf)
  *   Remaining data are purged from the buffer and will eventually be detected
  *   as lost which gives the opportunity to retry sending.
  */
-int qc_send_ppkts(struct buffer *buf, struct ssl_sock_ctx *ctx)
+int qc_send_ppkts(struct buffer *buf, struct ssl_sock_ctx *ctx, uint16_t gso_size,
+                  struct quic_tx_packet *inpkt)
 {
 	int ret = 0;
 	struct quic_conn *qc;
@@ -379,12 +410,19 @@ int qc_send_ppkts(struct buffer *buf, struct ssl_sock_ctx *ctx)
 		unsigned int time_sent;
 
 		pos = (unsigned char *)b_head(buf);
-		dglen = read_u16(pos);
-		BUG_ON_HOT(!dglen); /* this should not happen */
+		if (!gso_size) {
+			dglen = read_u16(pos);
+			BUG_ON_HOT(!dglen); /* this should not happen */
 
-		pos += sizeof dglen;
-		first_pkt = read_ptr(pos);
-		pos += sizeof first_pkt;
+			pos += sizeof dglen;
+			first_pkt = read_ptr(pos);
+			pos += sizeof first_pkt;
+		}
+		else {
+			first_pkt = inpkt;
+			dglen = b_data(buf);
+		}
+
 		tmpbuf.area = (char *)pos;
 		tmpbuf.size = tmpbuf.data = dglen;
 
@@ -400,9 +438,11 @@ int qc_send_ppkts(struct buffer *buf, struct ssl_sock_ctx *ctx)
 		 * quic-conn fd management.
 		 */
 		if (!skip_sendto) {
-			int ret = qc_snd_buf(qc, &tmpbuf, tmpbuf.data, 0);
+			int ret = qc_snd_buf(qc, &tmpbuf, tmpbuf.data, 0, gso_size);
 			if (ret < 0) {
+				ABORT_NOW();
 				TRACE_ERROR("sendto fatal error", QUIC_EV_CONN_SPPKTS, qc, first_pkt);
+				perror("sendto");
 				qc_kill_conn(qc);
 				qc_free_tx_coalesced_pkts(qc, first_pkt);
 				b_del(buf, dglen + headlen);
@@ -410,6 +450,7 @@ int qc_send_ppkts(struct buffer *buf, struct ssl_sock_ctx *ctx)
 				goto leave;
 			}
 			else if (!ret) {
+				ABORT_NOW();
 				/* Connection owned socket : poller will wake us up when transient error is cleared. */
 				if (qc_test_fd(qc)) {
 					TRACE_ERROR("sendto error, subscribe to poller", QUIC_EV_CONN_SPPKTS, qc);
@@ -422,7 +463,8 @@ int qc_send_ppkts(struct buffer *buf, struct ssl_sock_ctx *ctx)
 			}
 		}
 
-		b_del(buf, dglen + headlen);
+		if (!gso_size)
+			b_del(buf, dglen + headlen);
 		qc->bytes.tx += tmpbuf.data;
 		time_sent = now_ms;
 
@@ -472,7 +514,12 @@ int qc_send_ppkts(struct buffer *buf, struct ssl_sock_ctx *ctx)
 			next_pkt = pkt->next;
 			quic_tx_packet_refinc(pkt);
 			eb64_insert(&pkt->pktns->tx.pkts, &pkt->pn_node);
+
+			if (gso_size)
+				pkt->next = NULL;
 		}
+		if (gso_size)
+			break;
 	}
 
 	ret = 1;
@@ -493,13 +540,14 @@ int qc_purge_txbuf(struct quic_conn *qc, struct buffer *buf)
 {
 	TRACE_ENTER(QUIC_EV_CONN_TXPKT, qc);
 
+	ABORT_NOW();
 	/* This operation can only be conducted if txbuf is not empty. This
 	 * case only happens for connection with their owned socket due to an
 	 * older transient sendto() error.
 	 */
 	BUG_ON(!qc_test_fd(qc));
 
-	if (b_data(buf) && !qc_send_ppkts(buf, qc->xprt_ctx)) {
+	if (b_data(buf) && !qc_send_ppkts(buf, qc->xprt_ctx, 0, NULL)) {
 		if (qc->flags & QUIC_FL_CONN_TO_KILL)
 			qc_txb_release(qc);
 		TRACE_DEVEL("leaving in error", QUIC_EV_CONN_TXPKT, qc);
@@ -524,9 +572,15 @@ int qc_purge_txbuf(struct quic_conn *qc, struct buffer *buf)
  */
 int qc_send_app_pkts(struct quic_conn *qc, struct list *frms)
 {
+	//uint16_t gso_size = qc->path->mtu + QUIC_DGRAM_HEADLEN;
+	//uint16_t gso_size = qc->path->mtu - 20 - 8;
+	uint16_t gso_size = qc->path->mtu;
 	int status = 0, ret;
 	struct buffer *buf;
+	struct quic_tx_packet *first_pkt;
+	//struct quic_tx_packet *next_pkt, *pkt;
 
+	//fprintf(stderr, "GSO SIZE %hu\n", gso_size);
 	TRACE_ENTER(QUIC_EV_CONN_TXPKT, qc);
 
 	buf = qc_get_txb(qc);
@@ -540,20 +594,171 @@ int qc_send_app_pkts(struct quic_conn *qc, struct list *frms)
 
 	/* Prepare and send packets until we could not further prepare packets. */
 	do {
-		/* Currently buf cannot be non-empty at this stage. Even if a
-		 * previous sendto() has failed it is emptied to simulate
-		 * packet emission and rely on QUIC lost detection to try to
-		 * emit it.
-		 */
-		BUG_ON_HOT(b_data(buf));
-		b_reset(buf);
+		first_pkt = NULL;
+		if (qc->flags & QUIC_FL_CONN_IMMEDIATE_CLOSE) {
+			/* Currently buf cannot be non-empty at this stage. Even if a
+			 * previous sendto() has failed it is emptied to simulate
+			 * packet emission and rely on QUIC lost detection to try to
+			 * emit it.
+			 */
+			BUG_ON_HOT(b_data(buf));
+			b_reset(buf);
+			ret = qc_prep_app_pkts(qc, buf, frms, &first_pkt);
 
-		ret = qc_prep_app_pkts(qc, buf, frms);
+			if (b_data(buf) && !qc_send_ppkts(buf, qc->xprt_ctx, 0, NULL)) {
+				if (qc->flags & QUIC_FL_CONN_TO_KILL)
+					qc_txb_release(qc);
+				goto err;
+			}
+		}
+		else {
+			char area[2048];
+			struct buffer bufmtu;
 
-		if (b_data(buf) && !qc_send_ppkts(buf, qc->xprt_ctx)) {
-			if (qc->flags & QUIC_FL_CONN_TO_KILL)
-				qc_txb_release(qc);
-			goto err;
+			/* Currently buf cannot be non-empty at this stage. Even if a
+			 * previous sendto() has failed it is emptied to simulate
+			 * packet emission and rely on QUIC lost detection to try to
+			 * emit it.
+			 */
+			BUG_ON_HOT(b_data(buf));
+			b_reset(buf);
+
+			do {
+				//bufmtu = b_make(b_tail(buf), qc->path->mtu + QUIC_DGRAM_HEADLEN, 0, 0);
+				//BUG_ON(b_room(buf) < gso_size + QUIC_DGRAM_HEADLEN);
+				//bufmtu = b_make(area, gso_size + QUIC_DGRAM_HEADLEN, 0, 0);
+				bufmtu = b_make(area, MIN(gso_size, b_contig_space(buf)) + QUIC_DGRAM_HEADLEN, 0, 0);
+				ret = qc_prep_app_pkts(qc, &bufmtu, frms, &first_pkt);
+				fprintf(stderr, "RET %d\n", ret);
+
+				if (b_data(&bufmtu)) {
+					BUG_ON(!first_pkt);
+					b_del(&bufmtu, QUIC_DGRAM_HEADLEN);
+
+					//b_add(buf, b_data(&bufmtu));
+					BUG_ON(b_data(&bufmtu) > b_room(buf));
+					b_putblk(buf, b_head(&bufmtu), b_data(&bufmtu));
+				}
+				//break;
+			//} while (b_data(&bufmtu));
+			} while (ret >= gso_size && b_data(&bufmtu) && b_room(buf));
+			//} while(0);
+
+#if 1
+			if (b_data(buf) && !qc_send_ppkts(buf, qc->xprt_ctx, gso_size, first_pkt)) {
+				if (qc->flags & QUIC_FL_CONN_TO_KILL)
+					qc_txb_release(qc);
+				goto err;
+			}
+			b_reset(buf);
+#endif
+
+#if 0
+			if (b_data(buf) > gso_size) {
+				unsigned int time_sent;
+				int ret2;
+				struct msghdr msg = { 0 };
+				struct iovec vec;
+				struct cmsghdr *cm;
+
+				//union {
+				//	char buf[CMSG_SPACE(sizeof(gso_size))];
+				//	struct cmsghdr align;
+				//} u;
+				uint8_t u[CMSG_SPACE(sizeof(uint16_t))];
+				memset(u, 0, sizeof(u));
+
+				//vec.iov_base = b_peek(buf, b_head_ofs(buf));
+				vec.iov_base = b_orig(buf);
+				vec.iov_len = b_data(buf);
+				msg.msg_name = &qc->peer_addr;
+				msg.msg_namelen = get_addr_len(&qc->peer_addr);
+				msg.msg_iov = &vec;
+				msg.msg_iovlen = 1;
+
+				//msg.msg_control = u.buf;
+				//msg.msg_controllen = sizeof(u.buf);
+				msg.msg_control = u;
+				msg.msg_controllen = sizeof(u);
+
+				cm = CMSG_FIRSTHDR(&msg);
+				cm->cmsg_level = SOL_UDP;
+				cm->cmsg_type = UDP_SEGMENT;
+				cm->cmsg_len = CMSG_LEN(sizeof(uint16_t));
+				*((uint16_t *)CMSG_DATA(cm)) = gso_size;
+				//memcpy(CMSG_DATA(cm), &gso_size, sizeof(gso_size));
+
+				BUG_ON(b_data(buf) < gso_size);
+				fprintf(stderr, "SENDING %lu MESSAGES (%lu)\n", b_data(buf) / gso_size + 1, b_data(buf));
+				ret2 = sendmsg(qc->fd, &msg, 0);
+				if (ret2 < 0)
+					perror("sendmsg");
+				BUG_ON(ret2 != b_data(buf));
+				b_reset(buf);
+
+				time_sent = now_ms;
+
+				for (pkt = first_pkt; pkt; pkt = next_pkt) {
+					/* RFC 9000 14.1 Initial datagram size
+					 * a server MUST expand the payload of all UDP datagrams carrying ack-eliciting
+					 * Initial packets to at least the smallest allowed maximum datagram size of
+					 * 1200 bytes.
+					 */
+					qc->cntrs.sent_pkt++;
+					//BUG_ON_HOT(pkt->type == QUIC_PACKET_TYPE_INITIAL &&
+					//		(pkt->flags & QUIC_FL_TX_PACKET_ACK_ELICITING) &&
+					//		dglen < QUIC_INITIAL_PACKET_MINLEN);
+
+					pkt->time_sent = time_sent;
+					if (pkt->flags & QUIC_FL_TX_PACKET_ACK_ELICITING) {
+						pkt->pktns->tx.time_of_last_eliciting = time_sent;
+						qc->path->ifae_pkts++;
+						if (qc->flags & QUIC_FL_CONN_IDLE_TIMER_RESTARTED_AFTER_READ)
+							qc_idle_timer_rearm(qc, 0, 0);
+					}
+					if (!(qc->flags & QUIC_FL_CONN_CLOSING) &&
+							(pkt->flags & QUIC_FL_TX_PACKET_CC)) {
+						qc->flags |= QUIC_FL_CONN_CLOSING;
+						qc_detach_th_ctx_list(qc, 1);
+
+						/* RFC 9000 10.2. Immediate Close:
+						 * The closing and draining connection states exist to ensure
+						 * that connections close cleanly and that delayed or reordered
+						 * packets are properly discarded. These states SHOULD persist
+						 * for at least three times the current PTO interval...
+						 *
+						 * Rearm the idle timeout only one time when entering closing
+						 * state.
+						 */
+						qc_idle_timer_do_rearm(qc, 0);
+						if (qc->timer_task) {
+							task_destroy(qc->timer_task);
+							qc->timer_task = NULL;
+						}
+					}
+					qc->path->in_flight += pkt->in_flight_len;
+					pkt->pktns->tx.in_flight += pkt->in_flight_len;
+					if (pkt->in_flight_len)
+						qc_set_timer(qc);
+					TRACE_PROTO("TX pkt", QUIC_EV_CONN_SPPKTS, qc, pkt);
+					next_pkt = pkt->next;
+					quic_tx_packet_refinc(pkt);
+					eb64_insert(&pkt->pktns->tx.pkts, &pkt->pn_node);
+
+					pkt->next = NULL;
+				}
+			}
+			else if (b_data(buf)) {
+				ssize_t ret2;
+
+				fprintf(stderr, "SEND %lu BYTES\n", b_data(buf));
+				ret2 = send(qc->fd, b_head(buf), b_data(buf), 0);
+				if (ret2 < 0)
+					perror("sendmsg");
+				BUG_ON(ret2 != b_data(buf));
+				b_reset(buf);
+			}
+#endif
 		}
 	} while (ret > 0);
 
@@ -945,7 +1150,7 @@ int qc_send_hdshk_pkts(struct quic_conn *qc, int old_data,
 		goto out;
 	}
 
-	if (ret && !qc_send_ppkts(buf, qc->xprt_ctx)) {
+	if (ret && !qc_send_ppkts(buf, qc->xprt_ctx, 0, NULL)) {
 		if (qc->flags & QUIC_FL_CONN_TO_KILL)
 			qc_txb_release(qc);
 		TRACE_ERROR("Could not send some packets", QUIC_EV_CONN_TXPKT, qc);
