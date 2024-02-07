@@ -156,7 +156,7 @@ void qc_packet_loss_lookup(struct quic_pktns *pktns, struct quic_conn *qc,
 	struct eb_root *pkts;
 	struct eb64_node *node;
 	struct quic_loss *ql;
-	unsigned int loss_delay;
+	unsigned int loss_delay, pktthresh;
 
 	TRACE_ENTER(QUIC_EV_CONN_PKTLOSS, qc);
 	TRACE_PROTO("TX loss", QUIC_EV_CONN_PKTLOSS, qc, pktns);
@@ -165,6 +165,9 @@ void qc_packet_loss_lookup(struct quic_pktns *pktns, struct quic_conn *qc,
 	if (eb_is_empty(pkts))
 		goto out;
 
+	pktthresh = pktns->tx.in_flight / (qc->path->mtu * 2);
+	pktthresh = QUIC_MAX(pktthresh, (unsigned int)QUIC_LOSS_PACKET_THRESHOLD);
+	pktthresh = QUIC_MIN(pktthresh, 256U);
 	ql = &qc->path->loss;
 	loss_delay = QUIC_MAX(ql->latest_rtt, ql->srtt);
 	loss_delay = QUIC_MAX(loss_delay, MS_TO_TICKS(QUIC_TIMER_GRANULARITY)) *
@@ -185,7 +188,7 @@ void qc_packet_loss_lookup(struct quic_pktns *pktns, struct quic_conn *qc,
 		time_sent = pkt->time_sent;
 		loss_time_limit = tick_add(time_sent, loss_delay);
 		if (tick_is_le(loss_time_limit, now_ms) ||
-			(int64_t)largest_acked_pn >= pkt->pn_node.key + QUIC_LOSS_PACKET_THRESHOLD) {
+			(int64_t)largest_acked_pn >= pkt->pn_node.key + pktthresh) {
 			eb64_delete(&pkt->pn_node);
 			LIST_APPEND(lost_pkts, &pkt->list);
 			ql->nb_lost_pkt++;
