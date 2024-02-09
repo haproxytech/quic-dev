@@ -162,6 +162,30 @@ static inline void quic_free_ncbuf(struct ncbuf *ncbuf)
 	*ncbuf = NCBUF_NULL;
 }
 
+static inline void qc_update_ma_rate(struct quic_conn *qc)
+{
+	unsigned int idx = qc->ma_rate.idx;
+	unsigned int sent_pkt = qc->cntrs.sent_pkt;
+	unsigned int sample = sent_pkt - qc->ma_rate.sntpkt;
+
+	if (!sample)
+		return;
+
+	if (!unlikely(qc->ma_rate.sample[idx])) {
+		qc->ma_rate.sample[idx] = sample;
+		qc->ma_rate.rate += sample;
+	}
+	else {
+		qc->ma_rate.rate -= qc->ma_rate.sample[idx];
+		qc->ma_rate.rate += sample;
+		qc->ma_rate.sample[idx] = sample;
+	}
+
+	fprintf(stderr, "sample=%u rate=%u\n", sample, qc->ma_rate.rate / QUIC_MOVING_AVERAGE_RATE_SAMPLE);
+	qc->ma_rate.sntpkt = sent_pkt;
+	qc->ma_rate.idx = (qc->ma_rate.idx + 1) % QUIC_MOVING_AVERAGE_RATE_SAMPLE;
+}
+
 void chunk_frm_appendf(struct buffer *buf, const struct quic_frame *frm);
 void quic_set_connection_close(struct quic_conn *qc, const struct quic_err err);
 void quic_set_tls_alert(struct quic_conn *qc, int alert);

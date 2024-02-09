@@ -426,6 +426,13 @@ struct quic_conn {
 	const struct qcc_app_ops *app_ops;
 	/* Proxy counters */
 	struct quic_counters *prx_counters;
+#define QUIC_MOVING_AVERAGE_RATE_SAMPLE 10
+	struct {
+		unsigned int idx;
+		unsigned int rate;
+		unsigned int sample[QUIC_MOVING_AVERAGE_RATE_SAMPLE];
+		unsigned long long sntpkt;
+	} ma_rate;
 
 	struct list el_th_ctx; /* list elem in ha_thread_ctx */
 	struct list back_refs; /* list head of CLI context currently dumping this connection. */

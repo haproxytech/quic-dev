@@ -1197,6 +1197,10 @@ struct quic_conn *qc_new_conn(const struct quic_version *qv, int ipv4,
 	/* Counters initialization */
 	memset(&qc->cntrs, 0, sizeof qc->cntrs);
 
+	qc->ma_rate.idx = 0;
+	qc->ma_rate.sntpkt = 0;
+	memset(&qc->ma_rate.rate, 0, sizeof qc->ma_rate.rate);
+
 	LIST_APPEND(&th_ctx->quic_conns, &qc->el_th_ctx);
 	qc->qc_epoch = HA_ATOMIC_LOAD(&qc_epoch);
 

@@ -613,10 +613,15 @@ static int qc_parse_ack_frm(struct quic_conn *qc,
 		            qc, NULL, &largest, &smallest);
 	} while (1);
 
+	qc_update_ma_rate(qc);
 	if (!LIST_ISEMPTY(&newly_acked_pkts)) {
 		qc_handle_newly_acked_pkts(qc, &pkt_flags, &newly_acked_pkts);
 		if (new_largest_acked_pn && (pkt_flags & QUIC_FL_TX_PACKET_ACK_ELICITING)) {
 			*rtt_sample = tick_remain(time_sent, now_ms);
+#if 0
+			if (ack_frm->largest_ack > qel->pktns->rx.largest_acked_pn)
+				qc_update_ma_rate(qc);
+#endif
 			qel->pktns->rx.largest_acked_pn = ack_frm->largest_ack;
 		}
 
