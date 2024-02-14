@@ -687,13 +687,20 @@ int qc_snd_buf(struct quic_conn *qc, const struct buffer *buf, size_t sz,
 	struct cmsghdr *cmsg __maybe_unused = NULL;
 
 	union {
+		struct {
+			union {
 #ifdef IP_PKTINFO
-		char buf[CMSG_SPACE(sizeof(struct in_pktinfo)) + CMSG_SPACE(sizeof(gso_size))];
+				char buf[CMSG_SPACE(sizeof(struct in_pktinfo))];
 #endif /* IP_PKTINFO */
 #ifdef IPV6_RECVPKTINFO
-		char buf6[CMSG_SPACE(sizeof(struct in6_pktinfo)) + CMSG_SPACE(sizeof(gso_size))];
+				char buf6[CMSG_SPACE(sizeof(struct in6_pktinfo))];
 #endif /* IPV6_RECVPKTINFO */
-		char bufaddr[CMSG_SPACE(sizeof(struct in_addr)) + CMSG_SPACE(sizeof(gso_size))];
+				char bufaddr[CMSG_SPACE(sizeof(struct in_addr))];
+			};
+
+			char gso[CMSG_SPACE(sizeof(gso_size))];
+		};
+
 		struct cmsghdr align;
 	} ancillary_data;
 
