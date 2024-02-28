@@ -206,8 +206,9 @@ static int quic_conn_enc_level_init(struct quic_conn *qc,
 	if (!qel)
 		goto leave;
 
-	LIST_INIT(&qel->retrans);
-	qel->retrans_frms = NULL;
+	LIST_INIT(&qel->tmp_send);
+	qel->tmp_send_frms = NULL;
+
 	qel->tx.crypto.bufs = NULL;
 	qel->tx.crypto.nb_buf = 0;
 	qel->cstream = NULL;
@@ -1085,4 +1086,63 @@ int quic_tls_finalize(struct quic_conn *qc, int server)
  err:
 	quic_tls_ctx_free(&qc->nictx);
 	goto out;
+}
+
+/* Initialize a new encryption level iterator over <head> list. Set <tmp_send>
+ * if using a custom QEL send list with frames outside of pktns storage.
+ */
+struct qel_iter qel_iter_new(struct list *head, int tmp_send)
+{
+	return (struct qel_iter) {
+	  .head = head,
+	  .next = head,
+	  .tmp_send = tmp_send,
+	};
+}
+
+/* Returns a pointer to the frames list attached to <el> encryption level via
+ * pktns or temporary storage depending on <iter> context.
+ */
+struct list *qel_iter_frms(struct qel_iter *iter, struct quic_enc_level *el)
+{
+	return !iter->tmp_send ? &el->pktns->tx.frms : el->tmp_send_frms;
+}
+
+static struct list *_qel_iter_next(struct qel_iter *iter)
+{
+	return iter->next && iter->next->n != iter->head ? iter->next->n : NULL;
+}
+
+/* Retrieve <iter> next encryption level while advancing iterator. Returns NULL
+ * on iterator exhaustion.
+ */
+struct quic_enc_level *qel_iter_next(struct qel_iter *iter)
+{
+	struct quic_enc_level *el = NULL;
+
+	iter->next = _qel_iter_next(iter);
+	if (iter->next) {
+		el = !iter->tmp_send ?
+		  LIST_ELEM(iter->next, struct quic_enc_level *, list) :
+		  LIST_ELEM(iter->next, struct quic_enc_level *, tmp_send);
+	}
+
+	return el;
+}
+
+/* Retrieve <iter> next encryption level without updating the iterator
+ * instance. Returns NULL on iterator exhaustion.
+ */
+struct quic_enc_level *qel_iter_next_peek(struct qel_iter *iter)
+{
+	struct quic_enc_level *el = NULL;
+	struct list *next = _qel_iter_next(iter);
+
+	if (next) {
+		el = !iter->tmp_send ?
+		  LIST_ELEM(next, struct quic_enc_level *, list) :
+		  LIST_ELEM(next, struct quic_enc_level *, tmp_send);
+	}
+
+	return el;
 }

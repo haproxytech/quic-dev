@@ -1109,7 +1109,10 @@ static inline int qc_may_probe_ipktns(struct quic_conn *qc)
 		quic_may_send_bytes(qc) >= QUIC_INITIAL_PACKET_MINLEN;
 }
 
-
+struct qel_iter qel_iter_new(struct list *head, int retransmission);
+struct list *qel_iter_frms(struct qel_iter *iter, struct quic_enc_level *el);
+struct quic_enc_level *qel_iter_next(struct qel_iter *iter);
+struct quic_enc_level *qel_iter_next_peek(struct qel_iter *iter);
 
 #endif /* USE_QUIC */
 #endif /* _PROTO_QUIC_TLS_H */

@@ -746,6 +746,7 @@ struct task *quic_conn_io_cb(struct task *t, void *context, unsigned int state)
 	struct buffer *buf = NULL;
 	int st;
 	struct tasklet *tl = (struct tasklet *)t;
+	struct qel_iter qels_iter;
 
 	TRACE_ENTER(QUIC_EV_CONN_IO_CB, qc);
 
@@ -806,7 +807,8 @@ struct task *quic_conn_io_cb(struct task *t, void *context, unsigned int state)
 	BUG_ON_HOT(b_data(buf));
 	b_reset(buf);
 
-	ret = qc_prep_hpkts(qc, buf, NULL, 0);
+	qels_iter = qel_iter_new(&qc->qel_list, 0);
+	ret = qc_prep_hpkts(qc, buf, &qels_iter, 0);
 	if (ret == -1) {
 		qc_txb_release(qc);
 		goto out;

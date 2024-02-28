@@ -238,10 +238,10 @@ struct quic_cstream {
 
 struct quic_enc_level {
 	struct list list;
-	/* Attach point to enqueue this encryption level during retransmissions */
-	struct list retrans;
-	/* pointer to list used only during retransmissions */
-	struct list *retrans_frms;
+	/* Attach point when using custom QEL send list */
+	struct list tmp_send;
+	/* pointer when using a list of frames outside of pktns storage */
+	struct list *tmp_send_frms;
 	/* Encryption level, as defined by the TLS stack. */
 	enum ssl_encryption_level_t level;
 	/* TLS encryption context (AEAD only) */
@@ -275,6 +275,11 @@ struct quic_enc_level {
 	struct quic_cstream *cstream;
 	/* Packet number space */
 	struct quic_pktns *pktns;
+};
+
+struct qel_iter {
+	struct list *head, *next;
+	int tmp_send;
 };
 
 #endif /* USE_QUIC */
