@@ -273,7 +273,7 @@ struct quic_conn_cntrs {
 #define QUIC_FL_CONN_TX_MUX_CONTEXT              (1U << 5) /* sending in progress from the MUX layer */
 #define QUIC_FL_CONN_IDLE_TIMER_RESTARTED_AFTER_READ (1U << 6)
 #define QUIC_FL_CONN_RETRANS_NEEDED              (1U << 7)
-#define QUIC_FL_CONN_RETRANS_OLD_DATA            (1U << 8) /* retransmission in progress for probing with already sent data */
+/* gap here */
 #define QUIC_FL_CONN_TLS_ALERT                   (1U << 9)
 #define QUIC_FL_CONN_AFFINITY_CHANGED            (1U << 10) /* qc_finalize_affinity_rebind() must be called to finalize affinity rebind */
 /* gap here */

@@ -203,7 +203,8 @@ static int qc_may_build_pkt(struct quic_conn *qc, struct list *frms,
 }
 
 /* Prepare as much as possible QUIC packets for sending from prebuilt frames
- * <frms>. Each packet is stored in a distinct datagram written to <buf>.
+ * <frms>. Each packet is stored in a distinct datagram written to <buf>. Set
+ * <old_data> if frames refer to already sent data used for probing.
  *
  * Each datagram is prepended by a two fields header : the datagram length and
  * the address of the packet contained in the datagram.
@@ -212,7 +213,7 @@ static int qc_may_build_pkt(struct quic_conn *qc, struct list *frms,
  * -1 if something wrong happened.
  */
 static int qc_prep_app_pkts(struct quic_conn *qc, struct buffer *buf,
-                            struct list *frms)
+                            struct list *frms, int old_data)
 {
 	int ret = -1, cc;
 	struct quic_enc_level *qel;
@@ -277,7 +278,7 @@ static int qc_prep_app_pkts(struct quic_conn *qc, struct buffer *buf,
 		/* This is to please to GCC. We cannot have (err >= 0 && !pkt) */
 		BUG_ON(!pkt);
 
-		if (qc->flags & QUIC_FL_CONN_RETRANS_OLD_DATA)
+		if (old_data)
 			pkt->flags |= QUIC_FL_TX_PACKET_PROBE_WITH_OLD_DATA;
 
 		total += pkt->len;
@@ -510,9 +511,8 @@ int qc_purge_txbuf(struct quic_conn *qc, struct buffer *buf)
 	return 1;
 }
 
-/* Try to send application frames from list <frms> on connection <qc>.
- *
- * Use qc_send_app_probing wrapper when probing with old data.
+/* Try to send application frames from list <frms> on connection <qc>. Set
+ * <old_data> if frames refer to already sent data used for probing.
  *
  * Returns 1 on success. Some data might not have been sent due to congestion,
  * in this case they are left in <frms> input list. The caller may subscribe on
@@ -522,7 +522,7 @@ int qc_purge_txbuf(struct quic_conn *qc, struct buffer *buf)
  * TODO review and classify more distinctly transient from definitive errors to
  * allow callers to properly handle it.
  */
-int qc_send_app_pkts(struct quic_conn *qc, struct list *frms)
+int qc_send_app_pkts(struct quic_conn *qc, struct list *frms, int old_data)
 {
 	int status = 0, ret;
 	struct buffer *buf;
@@ -548,7 +548,7 @@ int qc_send_app_pkts(struct quic_conn *qc, struct list *frms)
 		BUG_ON_HOT(b_data(buf));
 		b_reset(buf);
 
-		ret = qc_prep_app_pkts(qc, buf, frms);
+		ret = qc_prep_app_pkts(qc, buf, frms, old_data);
 
 		if (b_data(buf) && !qc_send_ppkts(buf, qc->xprt_ctx)) {
 			if (qc->flags & QUIC_FL_CONN_TO_KILL)
@@ -583,9 +583,7 @@ static forceinline int qc_send_app_probing(struct quic_conn *qc,
 	TRACE_ENTER(QUIC_EV_CONN_TXPKT, qc);
 
 	TRACE_PROTO("preparing old data (probing)", QUIC_EV_CONN_FRMLIST, qc, frms);
-	qc->flags |= QUIC_FL_CONN_RETRANS_OLD_DATA;
-	ret = qc_send_app_pkts(qc, frms);
-	qc->flags &= ~QUIC_FL_CONN_RETRANS_OLD_DATA;
+	ret = qc_send_app_pkts(qc, frms, 1);
 
 	TRACE_LEAVE(QUIC_EV_CONN_TXPKT, qc);
 	return ret;
@@ -613,12 +611,12 @@ int qc_send_mux(struct quic_conn *qc, struct list *frms)
 	if ((qc->flags & QUIC_FL_CONN_NEED_POST_HANDSHAKE_FRMS) &&
 	    qc->state >= QUIC_HS_ST_COMPLETE) {
 		quic_build_post_handshake_frames(qc);
-		qc_send_app_pkts(qc, &qc->ael->pktns->tx.frms);
+		qc_send_app_pkts(qc, &qc->ael->pktns->tx.frms, 0);
 	}
 
 	TRACE_STATE("preparing data (from MUX)", QUIC_EV_CONN_TXPKT, qc);
 	qc->flags |= QUIC_FL_CONN_TX_MUX_CONTEXT;
-	ret = qc_send_app_pkts(qc, frms);
+	ret = qc_send_app_pkts(qc, frms, 0);
 	qc->flags &= ~QUIC_FL_CONN_TX_MUX_CONTEXT;
 
 	TRACE_LEAVE(QUIC_EV_CONN_TXPKT, qc);
@@ -686,7 +684,8 @@ static inline void qc_select_tls_frms_ver(struct quic_conn *qc,
  * list of encryption levels. Several packets can be coalesced into a single
  * datagram. The result is written into <buf>. Note that if <qels> is NULL,
  * the encryption levels which will be used are those currently allocated
- * and attached to the connection.
+ * and attached to the connection. Set <old_data> if frames refer to already
+ * sent data used for probing.
  *
  * Each datagram is prepended by a two fields header : the datagram length and
  * the address of first packet in the datagram.
@@ -694,7 +693,8 @@ static inline void qc_select_tls_frms_ver(struct quic_conn *qc,
  * Returns the number of bytes prepared in datragrams/packets if succeeded
  * (may be 0), or -1 if something wrong happened.
  */
-int qc_prep_hpkts(struct quic_conn *qc, struct buffer *buf, struct list *qels)
+int qc_prep_hpkts(struct quic_conn *qc, struct buffer *buf, struct list *qels,
+                  int old_data)
 {
 	int ret, cc, retrans, padding;
 	struct quic_tx_packet *first_pkt, *prv_pkt;
@@ -833,7 +833,7 @@ int qc_prep_hpkts(struct quic_conn *qc, struct buffer *buf, struct list *qels)
 			total += cur_pkt->len;
 			dglen += cur_pkt->len;
 
-			if (qc->flags & QUIC_FL_CONN_RETRANS_OLD_DATA)
+			if (old_data)
 				cur_pkt->flags |= QUIC_FL_TX_PACKET_PROBE_WITH_OLD_DATA;
 
 			/* keep trace of the first packet in the datagram */
@@ -923,10 +923,8 @@ int qc_send_hdshk_pkts(struct quic_conn *qc, int old_data,
 	BUG_ON_HOT(b_data(buf));
 	b_reset(buf);
 
-	if (old_data) {
+	if (old_data)
 		TRACE_STATE("old data for probing asked", QUIC_EV_CONN_TXPKT, qc);
-		qc->flags |= QUIC_FL_CONN_RETRANS_OLD_DATA;
-	}
 
 	if (qel1) {
 		BUG_ON(LIST_INLIST(&qel1->retrans));
@@ -938,7 +936,7 @@ int qc_send_hdshk_pkts(struct quic_conn *qc, int old_data,
 		LIST_APPEND(&qels, &qel2->retrans);
 	}
 
-	ret = qc_prep_hpkts(qc, buf, &qels);
+	ret = qc_prep_hpkts(qc, buf, &qels, old_data);
 	if (ret == -1) {
 		qc_txb_release(qc);
 		TRACE_ERROR("Could not build some packets", QUIC_EV_CONN_TXPKT, qc);
@@ -967,7 +965,6 @@ int qc_send_hdshk_pkts(struct quic_conn *qc, int old_data,
 	}
 
 	TRACE_STATE("no more need old data for probing", QUIC_EV_CONN_TXPKT, qc);
-	qc->flags &= ~QUIC_FL_CONN_RETRANS_OLD_DATA;
  leave:
 	TRACE_LEAVE(QUIC_EV_CONN_TXPKT, qc);
 	return status;
