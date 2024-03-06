@@ -28,7 +28,7 @@
 DECLARE_POOL(pool_head_quic_tx_packet, "quic_tx_packet", sizeof(struct quic_tx_packet));
 DECLARE_POOL(pool_head_quic_cc_buf, "quic_cc_buf", QUIC_MAX_CC_BUFSIZE);
 
-static struct quic_tx_packet *qc_build_pkt(unsigned char **pos, const unsigned char *buf_end,
+static struct quic_tx_packet *qc_build_pkt(struct buffer *pktbuf,
                                            struct quic_enc_level *qel, struct quic_tls_ctx *ctx,
                                            struct list *frms, struct quic_conn *qc,
                                            const struct quic_version *ver, size_t dglen, int pkt_type,
@@ -217,7 +217,8 @@ static int qc_prep_app_pkts(struct quic_conn *qc, struct buffer *buf,
 {
 	int ret = -1, cc;
 	struct quic_enc_level *qel;
-	unsigned char *end, *pos;
+	size_t maxsize;
+	struct buffer pktbuf = BUF_NULL;
 	struct quic_tx_packet *pkt;
 	size_t total;
 
@@ -225,7 +226,6 @@ static int qc_prep_app_pkts(struct quic_conn *qc, struct buffer *buf,
 
 	qel = qc->ael;
 	total = 0;
-	pos = (unsigned char *)b_tail(buf);
 	cc =  qc->flags & QUIC_FL_CONN_IMMEDIATE_CLOSE;
 	/* Each datagram is prepended with its length followed by the address
 	 * of the first packet in the datagram (QUIC_DGRAM_HEADLEN).
@@ -244,18 +244,19 @@ static int qc_prep_app_pkts(struct quic_conn *qc, struct buffer *buf,
 			break;
 
 		/* Leave room for the datagram header */
-		pos += QUIC_DGRAM_HEADLEN;
 		if (cc) {
-			end = pos + QUIC_MIN_CC_PKTSIZE;
+			maxsize = QUIC_MIN_CC_PKTSIZE;
 		}
 		else if (!quic_peer_validated_addr(qc) && qc_is_listener(qc)) {
-			end = pos + QUIC_MIN(qc->path->mtu, quic_may_send_bytes(qc));
+			maxsize = QUIC_MIN(qc->path->mtu, quic_may_send_bytes(qc));
 		}
 		else {
-			end = pos + qc->path->mtu;
+			maxsize = qc->path->mtu;
 		}
 
-		pkt = qc_build_pkt(&pos, end, qel, &qel->tls_ctx, frms, qc, NULL, 0,
+		pktbuf = b_make(b_tail(buf) + QUIC_DGRAM_HEADLEN, maxsize, 0, 0);
+
+		pkt = qc_build_pkt(&pktbuf, qel, &qel->tls_ctx, frms, qc, NULL, 0,
 		                   QUIC_PACKET_TYPE_SHORT, must_ack, 0, probe, cc, &err);
 		switch (err) {
 		case -3:
@@ -664,7 +665,7 @@ int qc_prep_hpkts(struct quic_conn *qc, struct buffer *buf,
 {
 	int ret, cc, padding;
 	struct quic_tx_packet *first_pkt, *prv_pkt;
-	unsigned char *end, *pos;
+	struct buffer pktbuf = BUF_NULL;
 	uint16_t dglen;
 	size_t total;
 	struct quic_enc_level *qel;
@@ -679,7 +680,6 @@ int qc_prep_hpkts(struct quic_conn *qc, struct buffer *buf,
 	cc =  qc->flags & QUIC_FL_CONN_IMMEDIATE_CLOSE;
 	padding = 0;
 	first_pkt = prv_pkt = NULL;
-	end = pos = (unsigned char *)b_head(buf);
 	dglen = 0;
 	total = 0;
 
@@ -706,6 +706,7 @@ int qc_prep_hpkts(struct quic_conn *qc, struct buffer *buf,
 		 */
 		while ((!cc && b_contig_space(buf) >= (int)qc->path->mtu + QUIC_DGRAM_HEADLEN) ||
 		        (cc && b_contig_space(buf) >= QUIC_MIN_CC_PKTSIZE + QUIC_DGRAM_HEADLEN) || prv_pkt) {
+
 			int err, probe, must_ack;
 			enum quic_pkt_type pkt_type;
 			struct quic_tx_packet *cur_pkt;
@@ -729,17 +730,22 @@ int qc_prep_hpkts(struct quic_conn *qc, struct buffer *buf,
 			}
 
 			if (!prv_pkt) {
-				/* Leave room for the datagram header */
-				pos += QUIC_DGRAM_HEADLEN;
-				if (cc) {
-					end = pos + QUIC_MIN_CC_PKTSIZE;
-				}
-				else if (!quic_peer_validated_addr(qc) && qc_is_listener(qc)) {
-					end = pos + QUIC_MIN(qc->path->mtu, quic_may_send_bytes(qc));
-				}
-				else {
-					end = pos + qc->path->mtu;
-				}
+				size_t maxsize;
+
+				if (cc)
+					maxsize = QUIC_MIN_CC_PKTSIZE;
+				else if (!quic_peer_validated_addr(qc) && qc_is_listener(qc))
+					maxsize = QUIC_MIN(qc->path->mtu, quic_may_send_bytes(qc));
+				else
+					maxsize = qc->path->mtu;
+
+				BUG_ON(b_room(buf) < QUIC_DGRAM_HEADLEN);
+				pktbuf = b_make(b_tail(buf) + QUIC_DGRAM_HEADLEN,
+				                maxsize, 0, 0);
+			}
+			else {
+				b_del(&pktbuf, b_data(&pktbuf));
+				pktbuf = b_make(b_head(&pktbuf), b_room(&pktbuf), 0, 0);
 			}
 
 			/* RFC 9000 14.1 Initial datagram size
@@ -750,7 +756,7 @@ int qc_prep_hpkts(struct quic_conn *qc, struct buffer *buf,
 			 * Ensure that no ack-eliciting packets are sent into too small datagrams
 			 */
 			if (qel == qc->iel && !LIST_ISEMPTY(frms)) {
-				if (end - pos < QUIC_INITIAL_PACKET_MINLEN) {
+				if (b_room(&pktbuf) < QUIC_INITIAL_PACKET_MINLEN) {
 					TRACE_PROTO("No more enough room to build an Initial packet",
 					            QUIC_EV_CONN_PHPKTS, qc);
 					break;
@@ -764,7 +770,7 @@ int qc_prep_hpkts(struct quic_conn *qc, struct buffer *buf,
 			}
 
 			pkt_type = quic_enc_level_pkt_type(qc, qel);
-			cur_pkt = qc_build_pkt(&pos, end, qel, tls_ctx, frms,
+			cur_pkt = qc_build_pkt(&pktbuf, qel, tls_ctx, frms,
 			                       qc, ver, dglen, pkt_type,
 			                       must_ack, padding, probe, cc, &err);
 			switch (err) {
@@ -791,6 +797,7 @@ int qc_prep_hpkts(struct quic_conn *qc, struct buffer *buf,
 			/* This is to please to GCC. We cannot have (err >= 0 && !cur_pkt) */
 			BUG_ON(!cur_pkt);
 
+			BUG_ON(cur_pkt->len != b_data(&pktbuf));
 			total += cur_pkt->len;
 			dglen += cur_pkt->len;
 
@@ -1267,23 +1274,6 @@ int send_retry(int fd, struct sockaddr_storage *addr,
 	return !ret;
 }
 
-/* Write a 32-bits integer to a buffer with <buf> as address.
- * Make <buf> point to the data after this 32-buts value if succeeded.
- * Note that these 32-bits integers are networkg bytes ordered.
- * Returns 0 if failed (not enough room in the buffer), 1 if succeeded.
- */
-static inline int quic_write_uint32(unsigned char **buf,
-                                    const unsigned char *end, uint32_t val)
-{
-	if (end - *buf < sizeof val)
-		return 0;
-
-	*(uint32_t *)*buf = htonl(val);
-	*buf += sizeof val;
-
-	return 1;
-}
-
 /* Return the maximum number of bytes we must use to completely fill a
  * buffer with <sz> as size for a data field of bytes prefixed by its QUIC
  * variable-length (may be 0).
@@ -1389,76 +1379,78 @@ static inline size_t quic_packet_number_length(int64_t pn,
 	return 1;
 }
 
-/* Encode <pn> packet number with <pn_len> as length in byte into a buffer with
- * <buf> as current copy address and <end> as pointer to one past the end of
- * this buffer. This is the responsibility of the caller to check there is
- * enough room in the buffer to copy <pn_len> bytes.
- * Never fails.
+/* Encode <pn> packet number with <pn_len> as length in byte into <pktbuf>
+ * buffer.
+ *
+ * Returns 1 on success else 0 if pktbuf room is too small.
  */
-static inline int quic_packet_number_encode(unsigned char **buf,
-                                            const unsigned char *end,
+static inline int quic_packet_number_encode(struct buffer *pktbuf,
                                             uint64_t pn, size_t pn_len)
 {
-	if (end - *buf < pn_len)
+	BUG_ON(b_space_wraps(pktbuf));
+
+	if (b_room(pktbuf) < pn_len)
 		return 0;
 
 	/* Encode the packet number. */
 	switch (pn_len) {
 	case 1:
-		**buf = pn;
+		b_putchr(pktbuf, pn & 0xff);
 		break;
 	case 2:
-		write_n16(*buf, pn);
+		write_n16(b_tail(pktbuf), pn);
+		b_add(pktbuf, 2);
 		break;
 	case 3:
-		(*buf)[0] = pn >> 16;
-		(*buf)[1] = pn >> 8;
-		(*buf)[2] = pn;
+		b_putchr(pktbuf, pn >> 16);
+		b_putchr(pktbuf, pn >> 8);
+		b_putchr(pktbuf, pn & 0xff);
 		break;
 	case 4:
-		write_n32(*buf, pn);
+		write_n32(b_tail(pktbuf), pn);
+		b_add(pktbuf, 4);
 		break;
 	}
-	*buf += pn_len;
 
 	return 1;
 }
 
-/* This function builds into a buffer at <pos> position a QUIC long packet header,
- * <end> being one byte past the end of this buffer.
- * Return 1 if enough room to build this header, 0 if not.
+/* This function encodes a QUIC long packet header into <pktbuf> buffer.
+ *
+ * Returns 1 if enough room to build this header, 0 if not.
  */
-static int quic_build_packet_long_header(unsigned char **pos, const unsigned char *end,
+static int quic_build_packet_long_header(struct buffer *pktbuf,
                                          int type, size_t pn_len,
                                          struct quic_conn *qc, const struct quic_version *ver)
 {
 	int ret = 0;
+	const uint32_t version = htonl(ver->num);
 
 	TRACE_ENTER(QUIC_EV_CONN_LPKT, qc);
 
-	if (end - *pos < sizeof ver->num + qc->dcid.len + qc->scid.len + 3) {
+	BUG_ON(b_space_wraps(pktbuf));
+
+	if (b_room(pktbuf) < sizeof ver->num + qc->dcid.len + qc->scid.len + 3) {
 		TRACE_DEVEL("not enough room", QUIC_EV_CONN_LPKT, qc);
 		goto leave;
 	}
 
 	type = quic_pkt_type(type, ver->num);
 	/* #0 byte flags */
-	*(*pos)++ = QUIC_PACKET_FIXED_BIT | QUIC_PACKET_LONG_HEADER_BIT |
-		(type << QUIC_PACKET_TYPE_SHIFT) | (pn_len - 1);
+	b_putchr(pktbuf, QUIC_PACKET_FIXED_BIT | QUIC_PACKET_LONG_HEADER_BIT |
+	                 (type << QUIC_PACKET_TYPE_SHIFT) | (pn_len - 1));
 	/* Version */
-	quic_write_uint32(pos, end, ver->num);
-	*(*pos)++ = qc->dcid.len;
+	b_putblk(pktbuf, (const char *)&version, sizeof(version));
+
 	/* Destination connection ID */
-	if (qc->dcid.len) {
-		memcpy(*pos, qc->dcid.data, qc->dcid.len);
-		*pos += qc->dcid.len;
-	}
+	b_putchr(pktbuf, qc->dcid.len);
+	if (qc->dcid.len)
+		b_putblk(pktbuf, (char *)qc->dcid.data, qc->dcid.len);
+
 	/* Source connection ID */
-	*(*pos)++ = qc->scid.len;
-	if (qc->scid.len) {
-		memcpy(*pos, qc->scid.data, qc->scid.len);
-		*pos += qc->scid.len;
-	}
+	b_putchr(pktbuf, qc->scid.len);
+	if (qc->scid.len)
+		b_putblk(pktbuf, (char *)qc->scid.data, qc->scid.len);
 
 	ret = 1;
  leave:
@@ -1470,7 +1462,7 @@ static int quic_build_packet_long_header(unsigned char **pos, const unsigned cha
  * <end> being one byte past the end of this buffer.
  * Return 1 if enough room to build this header, 0 if not.
  */
-static int quic_build_packet_short_header(unsigned char **pos, const unsigned char *end,
+static int quic_build_packet_short_header(struct buffer *pktbuf,
                                           size_t pn_len, struct quic_conn *qc,
                                           unsigned char tls_flags)
 {
@@ -1480,19 +1472,19 @@ static int quic_build_packet_short_header(unsigned char **pos, const unsigned ch
 
 	TRACE_ENTER(QUIC_EV_CONN_TXPKT, qc);
 
-	if (end - *pos < 1 + qc->dcid.len) {
+	BUG_ON(b_space_wraps(pktbuf));
+
+	if (b_room(pktbuf) < 1 + qc->dcid.len) {
 		TRACE_DEVEL("not enough room", QUIC_EV_CONN_LPKT, qc);
 		goto leave;
 	}
 
 	/* #0 byte flags */
-	*(*pos)++ = QUIC_PACKET_FIXED_BIT | spin_bit |
-		((tls_flags & QUIC_FL_TLS_KP_BIT_SET) ? QUIC_PACKET_KEY_PHASE_BIT : 0) | (pn_len - 1);
+	b_putchr(pktbuf, QUIC_PACKET_FIXED_BIT | spin_bit |
+	                 ((tls_flags & QUIC_FL_TLS_KP_BIT_SET) ? QUIC_PACKET_KEY_PHASE_BIT : 0) | (pn_len - 1));
 	/* Destination connection ID */
-	if (qc->dcid.len) {
-		memcpy(*pos, qc->dcid.data, qc->dcid.len);
-		*pos += qc->dcid.len;
-	}
+	if (qc->dcid.len)
+		b_putblk(pktbuf, (char *)qc->dcid.data, qc->dcid.len);
 
 	ret = 1;
  leave:
@@ -1886,7 +1878,7 @@ static inline uint64_t quic_compute_ack_delay_us(unsigned int time_received,
  *
  * Return 1 if succeeded (enough room to buile this packet), O if not.
  */
-static int qc_do_build_pkt(unsigned char *pos, const unsigned char *end,
+static int qc_do_build_pkt(struct buffer *pktbuf,
                            size_t dglen, struct quic_tx_packet *pkt,
                            int64_t pn, size_t *pn_len, unsigned char **buf_pn,
                            int must_ack, int padding, int cc, int probe,
@@ -1907,9 +1899,11 @@ static int qc_do_build_pkt(unsigned char *pos, const unsigned char *end,
 
 	TRACE_ENTER(QUIC_EV_CONN_TXPKT, qc);
 
+	BUG_ON(b_space_wraps(pktbuf) || b_data(pktbuf));
+
 	/* Length field value with CRYPTO frames if present. */
 	len_frms = 0;
-	beg = pos;
+	beg = (unsigned char *)b_tail(pktbuf);
 	/* When not probing, and no immediate close is required, reduce the size of this
 	 * buffer to respect the congestion controller window.
 	 * This size will be limited if we have ack-eliciting frames to send from <frms>.
@@ -1918,37 +1912,41 @@ static int qc_do_build_pkt(unsigned char *pos, const unsigned char *end,
 		size_t path_room;
 
 		path_room = quic_cc_path_prep_data(qc->path);
-		if (end - beg > path_room)
-			end = beg + path_room;
+		//if (end - beg > path_room)
+			//end = beg + path_room;
+		if (b_room(pktbuf) > path_room) {
+			BUG_ON(b_data(pktbuf) > path_room);
+			pktbuf->size = path_room;
+		}
 	}
 
 	/* Ensure there is enough room for the TLS encryption tag and a zero token
 	 * length field if any.
 	 */
-	if (end - pos < QUIC_TLS_TAG_LEN +
+	if (b_room(pktbuf) < QUIC_TLS_TAG_LEN +
 	    (pkt->type == QUIC_PACKET_TYPE_INITIAL ? 1 : 0))
 		goto no_room;
 
-	end -= QUIC_TLS_TAG_LEN;
+	pktbuf->size -= QUIC_TLS_TAG_LEN;
 	rx_largest_acked_pn = qel->pktns->rx.largest_acked_pn;
 	/* packet number length */
 	*pn_len = quic_packet_number_length(pn, rx_largest_acked_pn);
 	/* Build the header */
 	if ((pkt->type == QUIC_PACKET_TYPE_SHORT &&
-	    !quic_build_packet_short_header(&pos, end, *pn_len, qc, qel->tls_ctx.flags)) ||
+	    !quic_build_packet_short_header(pktbuf, *pn_len, qc, qel->tls_ctx.flags)) ||
 	    (pkt->type != QUIC_PACKET_TYPE_SHORT &&
-		!quic_build_packet_long_header(&pos, end, pkt->type, *pn_len, qc, ver)))
+		!quic_build_packet_long_header(pktbuf, pkt->type, *pn_len, qc, ver)))
 		goto no_room;
 
 	/* Encode the token length (0) for an Initial packet. */
 	if (pkt->type == QUIC_PACKET_TYPE_INITIAL) {
-		if (end <= pos)
+		if (!b_room(pktbuf))
 			goto no_room;
 
-		*pos++ = 0;
+		b_putchr(pktbuf, 0);
 	}
 
-	head_len = pos - beg;
+	head_len = (unsigned char *)b_tail(pktbuf) - beg;
 	/* Build an ACK frame if required. */
 	ack_frm_len = 0;
 	/* Do not ack and probe at the same time. */
@@ -1969,11 +1967,11 @@ static int qc_do_build_pkt(unsigned char *pos, const unsigned char *end,
 		 * This will be decided after having computed the ack-eliciting frames
 		 * to be added to this packet.
 		 */
-		if (end - pos <= 1 + *pn_len)
+		if (b_room(pktbuf) <= 1 + *pn_len)
 			goto no_room;
 
 		ack_frm_len = qc_frm_len(&ack_frm);
-		if (ack_frm_len > end - 1 - *pn_len - pos)
+		if (ack_frm_len > b_room(pktbuf) - 1 - *pn_len)
 			goto no_room;
 	}
 
@@ -1981,7 +1979,7 @@ static int qc_do_build_pkt(unsigned char *pos, const unsigned char *end,
 	len = ack_frm_len + *pn_len;
 	len_frms = 0;
 	if (!cc && !LIST_ISEMPTY(frms)) {
-		ssize_t room = end - pos;
+		const ssize_t room = b_room(pktbuf);
 
 		TRACE_PROTO("Avail. ack eliciting frames", QUIC_EV_CONN_FRMLIST, qc, frms);
 		/* Initialize the length of the frames built below to <len>.
@@ -1990,7 +1988,7 @@ static int qc_do_build_pkt(unsigned char *pos, const unsigned char *end,
 		 */
 		len_frms = len;
 		if (!qc_build_frms(&frm_list, frms,
-		                   end - pos, &len_frms, pos - beg, qel, qc)) {
+		                   b_room(pktbuf), &len_frms, (unsigned char *)b_tail(pktbuf) - beg, qel, qc)) {
 			TRACE_PROTO("Not enough room", QUIC_EV_CONN_TXPKT,
 			            qc, NULL, NULL, &room);
 			if (padding) {
@@ -2070,22 +2068,27 @@ static int qc_do_build_pkt(unsigned char *pos, const unsigned char *end,
 		}
 	}
 
-	if (pkt->type != QUIC_PACKET_TYPE_SHORT && !quic_enc_int(&pos, end, len))
+	//if (pkt->type != QUIC_PACKET_TYPE_SHORT && !quic_enc_int(&pos, end, len))
+	if (pkt->type != QUIC_PACKET_TYPE_SHORT && !b_quic_enc_int(pktbuf, len, 0))
 		goto no_room;
 
 	/* Packet number field address. */
-	*buf_pn = pos;
+	*buf_pn = (unsigned char *)b_tail(pktbuf);
 
 	/* Packet number encoding. */
-	if (!quic_packet_number_encode(&pos, end, pn, *pn_len))
+	if (!quic_packet_number_encode(pktbuf, pn, *pn_len))
 		goto no_room;
 
 	/* payload building (ack-eliciting or not frames) */
-	payload = pos;
+	payload = (unsigned char *)b_tail(pktbuf);
 	if (ack_frm_len) {
-		if (!qc_build_frm(&pos, end, &ack_frm, pkt, qc))
+		unsigned char *pos = (unsigned char *)b_tail(pktbuf);
+		unsigned char *orig = pos;
+
+		if (!qc_build_frm(&pos, (unsigned char *)b_wrap(pktbuf), &ack_frm, pkt, qc))
 			goto no_room;
 
+		b_add(pktbuf, pos - orig);
 		pkt->largest_acked_pn = quic_pktns_get_largest_acked_pn(qel->pktns);
 		pkt->flags |= QUIC_FL_TX_PACKET_ACK;
 	}
@@ -2094,8 +2097,11 @@ static int qc_do_build_pkt(unsigned char *pos, const unsigned char *end,
 	if (!LIST_ISEMPTY(&frm_list)) {
 		struct quic_frame *tmp_cf;
 		list_for_each_entry_safe(cf, tmp_cf, &frm_list, list) {
-			if (!qc_build_frm(&pos, end, cf, pkt, qc)) {
-				ssize_t room = end - pos;
+			unsigned char *pos = (unsigned char *)b_tail(pktbuf);
+			unsigned char *orig = pos;
+
+			if (!qc_build_frm(&pos, (unsigned char *)b_wrap(pktbuf), cf, pkt, qc)) {
+				const ssize_t room = b_room(pktbuf);
 				TRACE_PROTO("Not enough room", QUIC_EV_CONN_TXPKT,
 				            qc, NULL, NULL, &room);
 				/* Note that <cf> was added from <frms> to <frm_list> list by
@@ -2106,6 +2112,7 @@ static int qc_do_build_pkt(unsigned char *pos, const unsigned char *end,
 				continue;
 			}
 
+			b_add(pktbuf, pos - orig);
 			quic_tx_packet_refinc(pkt);
 			cf->pkt = pkt;
 		}
@@ -2113,28 +2120,42 @@ static int qc_do_build_pkt(unsigned char *pos, const unsigned char *end,
 
 	/* Build a PING frame if needed. */
 	if (add_ping_frm) {
+		unsigned char *pos = (unsigned char *)b_tail(pktbuf);
+		unsigned char *orig = pos;
+
 		frm.type = QUIC_FT_PING;
-		if (!qc_build_frm(&pos, end, &frm, pkt, qc))
+		if (!qc_build_frm(&pos, (unsigned char *)b_wrap(pktbuf), &frm, pkt, qc))
 			goto no_room;
+
+		b_add(pktbuf, pos - orig);
 	}
 
 	/* Build a CONNECTION_CLOSE frame if needed. */
 	if (cc) {
-		if (!qc_build_frm(&pos, end, &cc_frm, pkt, qc))
+		unsigned char *pos = (unsigned char *)b_tail(pktbuf);
+		unsigned char *orig = pos;
+
+		if (!qc_build_frm(&pos, (unsigned char *)b_wrap(pktbuf), &cc_frm, pkt, qc))
 			goto no_room;
 
+		b_add(pktbuf, pos - orig);
 		pkt->flags |= QUIC_FL_TX_PACKET_CC;
 	}
 
 	/* Build a PADDING frame if needed. */
 	if (padding_len) {
+		unsigned char *pos = (unsigned char *)b_tail(pktbuf);
+		unsigned char *orig = pos;
+
 		frm.type = QUIC_FT_PADDING;
 		frm.padding.len = padding_len;
-		if (!qc_build_frm(&pos, end, &frm, pkt, qc))
+		if (!qc_build_frm(&pos, (unsigned char *)b_wrap(pktbuf), &frm, pkt, qc))
 			goto no_room;
+
+		b_add(pktbuf, pos - orig);
 	}
 
-	if (pos == payload) {
+	if ((unsigned char *)b_tail(pktbuf) == payload) {
 		/* No payload was built because of congestion control */
 		TRACE_PROTO("limited by congestion control", QUIC_EV_CONN_TXPKT, qc);
 		goto no_room;
@@ -2147,7 +2168,9 @@ static int qc_do_build_pkt(unsigned char *pos, const unsigned char *end,
 	    qel->pktns->tx.pto_probe)
 		qel->pktns->tx.pto_probe--;
 
-	pkt->len = pos - beg;
+	pkt->len = b_full(pktbuf) ? b_data(pktbuf) : (unsigned char *)b_tail(pktbuf) - beg;
+	//pkt->len = b_data(pktbuf);
+	BUG_ON(!pkt->len);
 	LIST_SPLICE(&pkt->frms, &frm_list);
 
 	ret = 1;
@@ -2178,19 +2201,17 @@ static inline void quic_tx_packet_init(struct quic_tx_packet *pkt, int type)
 	pkt->refcnt = 0;
 }
 
-/* Build a packet into a buffer at <pos> position, <end> pointing to one byte past
- * the end of this buffer, with <pkt_type> as packet type for <qc> QUIC connection
- * at <qel> encryption level with <frms> list of prebuilt frames.
+/* Build a packet into <pktbuf> buffer with <pkt_type> as packet type for <qc>
+ * QUIC connection at <qel> encryption level with <frms> list of prebuilt
+ * frames.
  *
- * Return -3 if the packet could not be allocated, -2 if could not be encrypted for
- * any reason, -1 if there was not enough room to build a packet.
- * XXX NOTE XXX
- * If you provide provide qc_build_pkt() with a big enough buffer to build a packet as big as
- * possible (to fill an MTU), the unique reason why this function may fail is the congestion
- * control window limitation.
+ * Return -3 if the packet could not be allocated, -2 if could not be encrypted
+ * for any reason, -1 if there was not enough room to build a packet.
+ * XXX NOTE XXX If you provide provide qc_build_pkt() with a big enough buffer
+ * to build a packet as big as possible (to fill an MTU), the unique reason why
+ * this function may fail is the congestion control window limitation.
  */
-static struct quic_tx_packet *qc_build_pkt(unsigned char **pos,
-                                           const unsigned char *end,
+static struct quic_tx_packet *qc_build_pkt(struct buffer *pktbuf,
                                            struct quic_enc_level *qel,
                                            struct quic_tls_ctx *tls_ctx, struct list *frms,
                                            struct quic_conn *qc, const struct quic_version *ver,
@@ -2217,12 +2238,12 @@ static struct quic_tx_packet *qc_build_pkt(unsigned char **pos,
 	}
 
 	quic_tx_packet_init(pkt, pkt_type);
-	first_byte = *pos;
+	first_byte = (unsigned char *)b_tail(pktbuf);
 	pn_len = 0;
 	buf_pn = NULL;
 
 	pn = qel->pktns->tx.next_pn + 1;
-	if (!qc_do_build_pkt(*pos, end, dglen, pkt, pn, &pn_len, &buf_pn,
+	if (!qc_do_build_pkt(pktbuf, dglen, pkt, pn, &pn_len, &buf_pn,
 	                     must_ack, padding, cc, probe, qel, qc, ver, frms)) {
 		// trace already emitted by function above
 		*err = -1;
@@ -2242,6 +2263,8 @@ static struct quic_tx_packet *qc_build_pkt(unsigned char **pos,
 		goto err;
 	}
 
+	pktbuf->size += QUIC_TLS_TAG_LEN;
+	b_add(pktbuf, QUIC_TLS_TAG_LEN);
 	last_byte += QUIC_TLS_TAG_LEN;
 	pkt->len += QUIC_TLS_TAG_LEN;
 	quic_apply_header_protection(qc, first_byte, buf_pn, pn_len, tls_ctx, &encrypt_failure);
@@ -2261,7 +2284,7 @@ static struct quic_tx_packet *qc_build_pkt(unsigned char **pos,
 	}
 
 	/* Now that a correct packet is built, let us consume <*pos> buffer. */
-	*pos = last_byte;
+	//*pos = last_byte;
 	/* Attach the built packet to its tree. */
 	pkt->pn_node.key = pn;
 	/* Set the packet in fligth length for in flight packet only. */
