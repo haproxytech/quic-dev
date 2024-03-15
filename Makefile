@@ -188,7 +188,7 @@ REG_TEST_SCRIPT=./scripts/run-regtests.sh
 # to be sure we get the intended behavior.
 WARN_CFLAGS := -Wtype-limits -Wshift-negative-value -Wshift-overflow=2 \
                -Wduplicated-cond -Wnull-dereference
-SPEC_CFLAGS := -Wall -Wextra -Wundef -Wdeclaration-after-statement -Wfatal-errors
+SPEC_CFLAGS := -Wall -Wextra -Wundef -Wdeclaration-after-statement
 SPEC_CFLAGS += $(call cc-all-fast,$(WARN_CFLAGS))
 
 SPEC_CFLAGS += $(call cc-opt-alt,-fwrapv,-fno-strict-overflow)
@@ -379,7 +379,7 @@ ifeq ($(TARGET),solaris)
   set_target_defaults = $(call default_opts, \
     USE_POLL USE_TPROXY USE_LIBCRYPT USE_CRYPT_H USE_GETADDRINFO USE_THREAD \
     USE_RT USE_OBSOLETE_LINKER USE_EVPORTS USE_CLOSEFROM)
-  TARGET_CFLAGS  = -DFD_SETSIZE=65536 -D_REENTRANT -D_XOPEN_SOURCE=600 -D__EXTENSIONS__
+  TARGET_CFLAGS  = -DFD_SETSIZE=65536 -D_REENTRANT -D_XOPEN_SOURCE=500 -D__EXTENSIONS__
   TARGET_LDFLAGS = -lnsl -lsocket
 endif
 
