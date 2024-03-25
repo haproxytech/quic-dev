@@ -5902,11 +5902,24 @@ static int cli_parse_delete_server(char **args, char *payload, struct appctx *ap
 	 */
 	thread_isolate_full();
 
-	sv_name = ist(args[1]);
-	be_name = istsplit(&sv_name, '/');
-	if (!istlen(sv_name)) {
-		cli_err(appctx, "Require 'backend/server'.\n");
-		goto out;
+	if (args[1][0] == '@') {
+		srv = guid_find_srv(&(args[1][1]));
+		if (!srv) {
+			cli_err(appctx, "No such server.");
+			goto out;
+		}
+
+		sv_name = ist(srv->id);
+		be = srv->proxy;
+		be_name = ist(be->id);
+	}
+	else {
+		sv_name = ist(args[1]);
+		be_name = istsplit(&sv_name, '/');
+		if (!istlen(sv_name)) {
+			cli_err(appctx, "Require 'backend/server'.\n");
+			goto out;
+		}
 	}
 
 	ret = srv_check_for_deletion(ist0(be_name), ist0(sv_name), &be, &srv, &msg);
