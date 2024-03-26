@@ -593,7 +593,8 @@ struct task *quic_conn_app_io_cb(struct task *t, void *context, unsigned int sta
 	}
 
 	/* XXX TODO: how to limit the list frames to send */
-	if (!qc_send_app_pkts(qc, &qel->pktns->tx.frms, 0)) {
+	qel->tmp_send_frms = &qel->pktns->tx.frms;
+	if (!qc_send_pkts(qc, 0, qel, NULL)) {
 		TRACE_DEVEL("qc_send_app_pkts() failed", QUIC_EV_CONN_IO_CB, qc);
 		goto out;
 	}

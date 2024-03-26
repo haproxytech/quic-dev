@@ -36,7 +36,8 @@ struct buffer *qc_get_txb(struct quic_conn *qc);
 int qc_prep_hpkts(struct quic_conn *qc, struct buffer *buf,
                   struct qel_iter *qels, int old_data);
 int qc_send_ppkts(struct buffer *buf, struct ssl_sock_ctx *ctx);
-int qc_send_app_pkts(struct quic_conn *qc, struct list *frms, int old_data);
+int qc_send_pkts(struct quic_conn *qc, int old_data,
+                 struct quic_enc_level *qel1, struct quic_enc_level *qel2);
 int qc_dgrams_retransmit(struct quic_conn *qc);
 void qc_prep_hdshk_fast_retrans(struct quic_conn *qc,
                                 struct list *ifrms, struct list *hfrms);
