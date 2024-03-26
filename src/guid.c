@@ -2,6 +2,8 @@
 
 #include <import/ebistree.h>
 #include <haproxy/obj_type.h>
+#include <haproxy/server-t.h>
+#include <haproxy/tools.h>
 
 static struct eb_root guid_tree = EB_ROOT_UNIQUE;
 
@@ -14,6 +16,9 @@ int guid_insert(enum obj_type *objt, const char *uid)
 	struct guid_node *guid;
 
 	switch (obj_type(objt)) {
+	case OBJ_TYPE_SERVER:
+		guid = &__objt_server(objt)->guid;
+		break;
 	default:
 		ABORT_NOW();
 		return 0;
@@ -46,8 +51,31 @@ struct guid_node *guid_lookup(const char *uid)
 
 void guid_name(const struct guid_node *guid, char **msg)
 {
+	struct server *srv;
+
 	switch (obj_type(guid->obj_type)) {
+	case OBJ_TYPE_SERVER:
+		srv = __objt_server(guid->obj_type);
+		memprintf(msg, "server %s/%s", srv->proxy->id, srv->id);
+		break;
+
 	default:
 		break;
 	}
+}
+
+/* Retrieve a server instance with key <uid> into GUID tree.
+ *
+ * Returns server instance or NULL if not found.
+ */
+struct server *guid_find_srv(const char *uid)
+{
+	struct server *srv = NULL;
+	struct guid_node *guid;
+
+	guid = guid_lookup(uid);
+	if (guid)
+		srv = objt_server(guid->obj_type);
+
+	return srv;
 }

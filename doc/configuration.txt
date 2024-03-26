@@ -16869,6 +16869,10 @@ force-tlsv13
   the server. This option is also available on global statement
   "ssl-default-server-options". See also "ssl-min-ver" and ssl-max-ver".
 
+guid <value>
+  Set a global unique ID for the server. This must be unique accross all
+  haproxy configuration and every object types.
+
 id <value>
   May be used in the following contexts: tcp, http, log
 

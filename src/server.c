@@ -28,6 +28,7 @@
 #include <haproxy/dict-t.h>
 #include <haproxy/errors.h>
 #include <haproxy/global.h>
+#include <haproxy/guid.h>
 #include <haproxy/log.h>
 #include <haproxy/mailers.h>
 #include <haproxy/namespace.h>
@@ -915,6 +916,28 @@ static int srv_parse_error_limit(char **args, int *cur_arg,
 	if (newsrv->consecutive_errors_limit <= 0) {
 		memprintf(err, "%s has to be > 0.",
 		          args[*cur_arg]);
+		return ERR_ALERT | ERR_FATAL;
+	}
+
+	return 0;
+}
+
+/* Parse the "guid" keyword */
+static int srv_parse_guid(char **args, int *cur_arg,
+                        struct proxy *curproxy, struct server *newsrv, char **err)
+{
+	const char *guid;
+	char *dup;
+
+	if (!*args[*cur_arg + 1]) {
+		memprintf(err, "'%s' : expects an argument", args[*cur_arg]);
+		return ERR_ALERT | ERR_FATAL;
+	}
+
+	guid = args[*cur_arg + 1];
+	if (guid_insert(&newsrv->obj_type, guid)) {
+		guid_name(guid_lookup(guid), &dup);
+		memprintf(err, "'%s' : duplicate key (%s)", args[*cur_arg], dup);
 		return ERR_ALERT | ERR_FATAL;
 	}
 
@@ -2220,6 +2243,7 @@ static struct srv_kw_list srv_kws = { "ALL", { }, {
 	{ "disabled",             srv_parse_disabled,             0,  1,  1 }, /* Start the server in 'disabled' state */
 	{ "enabled",              srv_parse_enabled,              0,  1,  1 }, /* Start the server in 'enabled' state */
 	{ "error-limit",          srv_parse_error_limit,          1,  1,  1 }, /* Configure the consecutive count of check failures to consider a server on error */
+	{ "guid",                 srv_parse_guid,                 1,  0,  1 }, /* Set global unique ID of the server */
 	{ "ws",                   srv_parse_ws,                   1,  1,  1 }, /* websocket protocol */
 	{ "id",                   srv_parse_id,                   1,  0,  1 }, /* set id# of server */
 	{ "init-addr",            srv_parse_init_addr,            1,  1,  0 }, /* */
@@ -2884,6 +2908,8 @@ struct server *srv_drop(struct server *srv)
 	 */
 	if (HA_ATOMIC_SUB_FETCH(&srv->refcount, 1))
 		goto end;
+
+	guid_remove(&srv->guid);
 
 	/* make sure we are removed from our 'next->prev_deleted' list
 	 * This doesn't require full thread isolation as we're using mt lists
