@@ -29,6 +29,7 @@
 #include <haproxy/fd.h>
 #include <haproxy/filters.h>
 #include <haproxy/global.h>
+#include <haproxy/guid.h>
 #include <haproxy/http_ana.h>
 #include <haproxy/http_htx.h>
 #include <haproxy/http_ext.h>
@@ -250,6 +251,8 @@ void free_proxy(struct proxy *p)
 		LIST_DELETE(&cond->list);
 		free_acl_cond(cond);
 	}
+
+	guid_remove(&p->guid);
 
 	EXTRA_COUNTERS_FREE(p->extra_counters_fe);
 	EXTRA_COUNTERS_FREE(p->extra_counters_be);
@@ -1026,6 +1029,33 @@ static int proxy_parse_tcpka_intvl(char **args, int section, struct proxy *proxy
 	return retval;
 }
 #endif
+
+static int proxy_parse_guid(char **args, int section_type, struct proxy *curpx,
+                            const struct proxy *defpx, const char *file, int line,
+                            char **err)
+{
+	const char *guid;
+	char *dup;
+
+	if (curpx->cap & PR_CAP_DEF) {
+		ha_alert("parsing [%s:%d] : '%s' not allowed in 'defaults' section.\n", file, line, args[0]);
+		return -1;
+	}
+
+	if (!*args[1]) {
+		memprintf(err, "'%s' : expects an argument", args[0]);
+		return -1;
+	}
+
+	guid = args[1];
+	if (guid_insert(&curpx->obj_type, guid)) {
+		guid_name(guid_lookup(guid), &dup);
+		memprintf(err, "'%s' : duplicate key (%s)", args[0], dup);
+		return -1;
+	}
+
+	return 0;
+}
 
 /* This function inserts proxy <px> into the tree of known proxies (regular
  * ones or defaults depending on px->cap & PR_CAP_DEF). The proxy's name is
@@ -2638,6 +2668,7 @@ static struct cfg_kw_list cfg_kws = {ILH, {
 	{ CFG_LISTEN, "clitcpka-intvl", proxy_parse_tcpka_intvl },
 	{ CFG_LISTEN, "srvtcpka-intvl", proxy_parse_tcpka_intvl },
 #endif
+	{ CFG_LISTEN, "guid", proxy_parse_guid },
 	{ 0, NULL, NULL },
 }};
 

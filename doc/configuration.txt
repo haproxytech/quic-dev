@@ -4887,6 +4887,7 @@ error-log-format                          X          X         X         -
 force-persist                             -          -         X         X
 filter                                    -          X         X         X
 fullconn                                  X          -         X         X
+guid                                      -          X         X         X
 hash-type                                 X          -         X         X
 http-after-response                       X (!)      X         X         X
 http-check comment                        X          -         X         X
@@ -6647,6 +6648,10 @@ fullconn <conns>
         server     srv2   dyn2:80 minconn 100 maxconn 1000
 
   See also : "maxconn", "server"
+
+
+guid <str>
+  Specify a unique ID for this proxy
 
 
 hash-balance-factor <factor>
