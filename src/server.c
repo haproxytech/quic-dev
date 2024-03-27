@@ -3481,6 +3481,16 @@ static int _srv_parse_finalize(char **args, int cur_arg,
 		return ret;
 	}
 
+	/* A dynamic server is disabled on startup. It must not be counted as
+	 * an active backend entry.
+	 */
+	if (!srv_willbe_usable(srv)) {
+		if (srv->flags & SRV_F_BACKUP)
+			px->srv_bck++;
+		else
+			px->srv_act++;
+	}
+
 	list_for_each_entry(srv_tlv, &srv->pp_tlvs, list) {
 		LIST_INIT(&srv_tlv->fmt);
 		if (srv_tlv->fmt_string && unlikely(!parse_logformat_string(srv_tlv->fmt_string,
