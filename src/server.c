@@ -5711,6 +5711,9 @@ static int cli_parse_add_server(char **args, char *payload, struct appctx *appct
 	if (srv->addr_node.key)
 		ebis_insert(&be->used_server_addr, &srv->addr_node);
 
+	if (be->ck_opts & PR_CK_DYNAMIC)
+		srv_set_dyncookie(srv);
+
 	/* check if LSB bit (odd bit) is set for reuse_cnt */
 	if (srv_id_reuse_cnt & 1) {
 		/* cnt must be increased */
