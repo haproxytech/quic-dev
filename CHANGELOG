@@ -1,6 +1,31 @@
 ChangeLog :
 ===========
 
+2024/06/10 : 3.0.1
+    - BUG/MINOR: cfgparse: remove the correct option on httpcheck send-state warning
+    - BUG/MINOR: tcpcheck: report correct error in tcp-check rule parser
+    - BUG/MINOR: tools: fix possible null-deref in env_expand() on out-of-memory
+    - DOC: configuration: add an example for keywords from crt-store
+    - BUG/MINOR: hlua: use CertCache.set() from various hlua contexts
+    - BUG/MEDIUM: h1-htx: Don't state interim responses are bodyless
+    - MEDIUM: stconn: Be able to unblock zero-copy data forwarding from done_fastfwd
+    - BUG/MEDIUM: mux-quic: Unblock zero-copy forwarding if the txbuf can be released
+    - BUG/MINOR: quic: prevent crash on qc_kill_conn()
+    - CLEANUP: hlua: use hlua_pusherror() where relevant
+    - BUG/MINOR: hlua: don't use lua_pushfstring() when we don't expect LJMP
+    - BUG/MINOR: hlua: fix unsafe hlua_pusherror() usage
+    - BUG/MINOR: hlua: prevent LJMP in hlua_traceback()
+    - BUG/MINOR: hlua: fix leak in hlua_ckch_set() error path
+    - CLEANUP: hlua: simplify ambiguous lua_insert() usage in hlua_ctx_resume()
+    - BUG/MEDIUM: mux-quic: Don't unblock zero-copy fwding if blocked during nego
+    - BUG/MEDIUM: ssl: wrong priority whem limiting ECDSA ciphers in ECDSA+RSA configuration
+    - BUG/MEDIUM: ssl: bad auth selection with TLS1.2 and WolfSSL
+    - BUG/MINOR: quic: fix computed length of emitted STREAM frames
+    - BUG/MINOR: quic: ensure Tx buf is always purged
+    - BUG/MEDIUM: stconn/mux-h1: Fix suspect change causing timeouts
+    - BUG/MAJOR: mux-h1:  Properly copy chunked input data during zero-copy nego
+    - BUG/MINOR: mux-h1: Use the right variable to set NEGO_FF_FL_EXACT_SIZE flag
+
 2024/05/29 : 3.0.0
     - MINOR: sample: implement the uptime sample fetch
     - CI: scripts: fix build of vtest regarding option -C
