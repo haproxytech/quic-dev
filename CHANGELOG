@@ -1,6 +1,29 @@
 ChangeLog :
 ===========
 
+2024/06/14 : 3.0.2
+    - MINOR: log: fix "http-send-name-header" ignore warning message
+    - BUG/MINOR: proxy: fix server_id_hdr_name leak on deinit()
+    - BUG/MINOR: proxy: fix log_tag leak on deinit()
+    - BUG/MINOR: proxy: fix email-alert leak on deinit()
+    - BUG/MINOR: proxy: fix check_{command,path} leak on deinit()
+    - BUG/MINOR: proxy: fix dyncookie_key leak on deinit()
+    - BUG/MINOR: proxy: fix source interface and usesrc leaks on deinit()
+    - BUG/MINOR: proxy: fix header_unique_id leak on deinit()
+    - BUG/MEDIUM: log: fix lf_expr_postcheck() behavior with default section
+    - DOC: config: move "hash-key" from proxy to server options
+    - DOC: config: add missing section hint for "guid" proxy keyword
+    - DOC: config: add missing context hint for new server and proxy keywords
+    - BUG/MINOR: promex: Skip resolvers metrics when there is no resolver section
+    - MINOR: proxy: add proxy_free_common() helper function
+    - BUG/MEDIUM: proxy: fix UAF with {tcp,http}checks logformat expressions
+    - CLEANUP: log/proxy: fix comment in proxy_free_common()
+    - BUG/MAJOR: mux-h1: Prevent any UAF on H1 connection after draining a request
+    - BUG/MINOR: quic: fix padding of INITIAL packets
+    - DOC/MINOR: management: add missed -dR and -dv options
+    - DOC/MINOR: management: add -dZ option
+    - DOC: management: rename show stats domain cli "dns" to "resolvers"
+
 2024/06/10 : 3.0.1
     - BUG/MINOR: cfgparse: remove the correct option on httpcheck send-state warning
     - BUG/MINOR: tcpcheck: report correct error in tcp-check rule parser
