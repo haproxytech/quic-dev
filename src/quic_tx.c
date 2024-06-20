@@ -601,8 +601,6 @@ static int qc_prep_pkts(struct quic_conn *qc, struct buffer *buf,
 			                       probe, cc, &err);
 			switch (err) {
 				case -3:
-					if (first_pkt)
-						qc_txb_store(buf, dglen, first_pkt);
 					qc_purge_tx_buf(qc, buf);
 					goto leave;
 				case -2:
