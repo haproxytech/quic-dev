@@ -72,6 +72,11 @@ static int quic_conn_subscribe(struct connection *conn, void *xprt_ctx, int even
 	if (event_type & SUB_RETRY_SEND)
 		TRACE_DEVEL("subscribe(send)", QUIC_EV_CONN_XPRTSEND, qc);
 
+	if (qc_notify_send(qc)) {
+		TRACE_USER("cancel subscribing", QUIC_EV_CONN_XPRTSEND, qc);
+		return 1;
+	}
+
 	TRACE_LEAVE(QUIC_EV_CONN_SUB, qc);
 
 	return 0;

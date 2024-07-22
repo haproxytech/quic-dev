@@ -531,7 +531,7 @@ static inline void qc_select_tls_ver(struct quic_conn *qc,
  * (may be 0), or -1 if something wrong happened.
  */
 static int qc_prep_pkts(struct quic_conn *qc, struct buffer *buf,
-                         struct list *qels)
+                         struct list *qels, int *dgram_limit)
 {
 	int ret, cc, padding;
 	struct quic_tx_packet *first_pkt, *prv_pkt;
@@ -719,6 +719,11 @@ static int qc_prep_pkts(struct quic_conn *qc, struct buffer *buf,
 				 * most 64 datagrams are sent in a single call
 				 */
 				++gso_dgram_cnt;
+
+				if (dgram_limit && *dgram_limit && !--*dgram_limit) {
+					qc_txb_store(buf, wrlen, first_pkt);
+					goto out;
+				}
 			}
 			else {
 				/* Finalize current datagram if not all frames sent. */
@@ -728,6 +733,9 @@ static int qc_prep_pkts(struct quic_conn *qc, struct buffer *buf,
 				padding = 0;
 				prv_pkt = NULL;
 				gso_dgram_cnt = 0;
+
+				if (dgram_limit && *dgram_limit && !--*dgram_limit)
+					goto out;
 			}
 
 			/* qc_do_build_pkt() is responsible to decrement probe
@@ -766,6 +774,7 @@ int qc_send(struct quic_conn *qc, int old_data, struct list *send_list)
 {
 	struct quic_enc_level *qel, *tmp_qel;
 	int ret = 0, status = 0;
+	int dgram_limit = 5;
 	struct buffer *buf;
 
 	TRACE_ENTER(QUIC_EV_CONN_TXPKT, qc);
@@ -799,7 +808,7 @@ int qc_send(struct quic_conn *qc, int old_data, struct list *send_list)
 		BUG_ON_HOT(b_data(buf));
 		b_reset(buf);
 
-		ret = qc_prep_pkts(qc, buf, send_list);
+		ret = qc_prep_pkts(qc, buf, send_list, &dgram_limit);
 
 		if (b_data(buf) && !qc_send_ppkts(buf, qc->xprt_ctx)) {
 			if (qc->flags & QUIC_FL_CONN_TO_KILL)
@@ -817,13 +826,20 @@ int qc_send(struct quic_conn *qc, int old_data, struct list *send_list)
 			TRACE_DEVEL("draining connection", QUIC_EV_CONN_TXPKT, qc);
 			break;
 		}
+
+		if (!dgram_limit) {
+			TRACE_USER("artificial pacing", QUIC_EV_CONN_TXPKT, qc);
+			status = 2;
+			break;
+		}
 	}
 
 	qc_txb_release(qc);
 	if (ret < 0)
 		goto out;
 
-	status = 1;
+	if (!status)
+		status = 1;
 
  out:
 	if (old_data) {

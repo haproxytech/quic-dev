@@ -550,6 +550,7 @@ int quic_build_post_handshake_frames(struct quic_conn *qc)
 /* QUIC connection packet handler task (post handshake) */
 struct task *quic_conn_app_io_cb(struct task *t, void *context, unsigned int state)
 {
+	int status;
 	struct list send_list = LIST_HEAD_INIT(send_list);
 	struct quic_conn *qc = context;
 
@@ -596,10 +597,14 @@ struct task *quic_conn_app_io_cb(struct task *t, void *context, unsigned int sta
 	if (qel_need_sending(qc->ael, qc))
 		qel_register_send(&send_list, qc->ael, &qc->ael->pktns->tx.frms);
 
-	if (!qc_send(qc, 0, &send_list)) {
+	status = qc_send(qc, 0, &send_list);
+	if (!status) {
 		TRACE_DEVEL("qc_send() failed", QUIC_EV_CONN_IO_CB, qc);
 		goto out;
 	}
+
+	if (status == 2)
+		tasklet_wakeup(qc->wait_event.tasklet);
 
  out:
 	if ((qc->flags & QUIC_FL_CONN_CLOSING) && qc->mux_state != QC_MUX_READY) {
@@ -744,6 +749,7 @@ static struct quic_conn_closed *qc_new_cc_conn(struct quic_conn *qc)
 /* QUIC connection packet handler task. */
 struct task *quic_conn_io_cb(struct task *t, void *context, unsigned int state)
 {
+	int status;
 	struct quic_conn *qc = context;
 	struct list send_list = LIST_HEAD_INIT(send_list);
 	struct quic_enc_level *qel;
@@ -812,10 +818,14 @@ struct task *quic_conn_io_cb(struct task *t, void *context, unsigned int state)
 			qel_register_send(&send_list, qel, &qel->pktns->tx.frms);
 	}
 
-	if (!qc_send(qc, 0, &send_list)) {
+	status = qc_send(qc, 0, &send_list);
+	if (!status) {
 		TRACE_DEVEL("qc_send() failed", QUIC_EV_CONN_IO_CB, qc);
 		goto out;
 	}
+
+	if (status == 2)
+		tasklet_wakeup(qc->wait_event.tasklet);
 
  out:
 	/* Release the Handshake encryption level and packet number space if
