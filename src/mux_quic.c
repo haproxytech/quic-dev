@@ -1917,6 +1917,7 @@ static int qcc_subscribe_send(struct qcc *qcc)
  */
 static int qcc_send_frames(struct qcc *qcc, struct list *frms)
 {
+	int dgram_limit = 5;
 	TRACE_ENTER(QMUX_EV_QCC_SEND, qcc->conn);
 
 	if (LIST_ISEMPTY(frms)) {
@@ -1924,16 +1925,20 @@ static int qcc_send_frames(struct qcc *qcc, struct list *frms)
 		goto err;
 	}
 
-	if (!qc_send_mux(qcc->conn->handle.qc, frms)) {
+	if (!qc_send_mux(qcc->conn->handle.qc, frms, &dgram_limit)) {
 		TRACE_DEVEL("error on sending", QMUX_EV_QCC_SEND, qcc->conn);
 		qcc_subscribe_send(qcc);
 		goto err;
 	}
 
+	if (!dgram_limit) {
+		tasklet_wakeup(qcc->wait_event.tasklet);
+		goto err;
+	}
 	/* If there is frames left at this stage, transport layer is blocked.
 	 * Subscribe on it to retry later.
 	 */
-	if (!LIST_ISEMPTY(frms)) {
+	else if (!LIST_ISEMPTY(frms)) {
 		TRACE_DEVEL("remaining frames to send", QMUX_EV_QCC_SEND, qcc->conn);
 		qcc_subscribe_send(qcc);
 		goto err;

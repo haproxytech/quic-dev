@@ -597,7 +597,7 @@ struct task *quic_conn_app_io_cb(struct task *t, void *context, unsigned int sta
 	if (qel_need_sending(qc->ael, qc))
 		qel_register_send(&send_list, qc->ael, &qc->ael->pktns->tx.frms);
 
-	status = qc_send(qc, 0, &send_list);
+	status = qc_send(qc, 0, &send_list, NULL);
 	if (!status) {
 		TRACE_DEVEL("qc_send() failed", QUIC_EV_CONN_IO_CB, qc);
 		goto out;
@@ -818,7 +818,7 @@ struct task *quic_conn_io_cb(struct task *t, void *context, unsigned int state)
 			qel_register_send(&send_list, qel, &qel->pktns->tx.frms);
 	}
 
-	status = qc_send(qc, 0, &send_list);
+	status = qc_send(qc, 0, &send_list, NULL);
 	if (!status) {
 		TRACE_DEVEL("qc_send() failed", QUIC_EV_CONN_IO_CB, qc);
 		goto out;
