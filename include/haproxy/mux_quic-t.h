@@ -121,6 +121,11 @@ enum qcs_state {
 	QC_SS_CLO,      /* closed */
 } __attribute__((packed));
 
+struct qmux_ti {
+	uint32_t curr;
+	uint32_t tot;
+};
+
 struct qcs {
 	struct qcc *qcc;
 	struct sedesc *sd;
@@ -156,6 +161,12 @@ struct qcs {
 	uint64_t err; /* error code to transmit via RESET_STREAM */
 
 	int start; /* base timestamp for http-request timeout */
+
+	struct {
+		struct qmux_ti base;
+		struct qmux_ti buf;
+		struct qmux_ti fctl;
+	} timeinfo;
 };
 
 /* Used as qcc_app_ops.close callback argument. */

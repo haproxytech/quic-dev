@@ -11,6 +11,7 @@
 #include <haproxy/list.h>
 #include <haproxy/mux_quic-t.h>
 #include <haproxy/stconn.h>
+#include <haproxy/ticks.h>
 
 void qcc_set_error(struct qcc *qcc, int err, int app);
 int qcc_report_glitch(struct qcc *qcc, int inc);
@@ -117,6 +118,28 @@ static inline void qcs_wait_http_req(struct qcs *qcs)
 }
 
 void qcc_show_quic(struct qcc *qcc);
+
+static inline void qmux_ti_start(struct qmux_ti *timer)
+{
+	if (!timer->curr)
+		timer->curr = now_ms;
+}
+
+static inline void qmux_ti_update(struct qmux_ti *timer)
+{
+	if (timer->curr) {
+		timer->tot += now_ms - timer->curr;
+		timer->curr = 0;
+	}
+}
+
+static inline uint32_t qmux_ti_read(const struct qmux_ti *timer)
+{
+	uint32_t value = timer->tot;
+	if (timer->curr)
+		value += now_ms - timer->curr;
+	return value;
+}
 
 #endif /* USE_QUIC */
 

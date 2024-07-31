@@ -124,4 +124,9 @@ void qmux_dump_qcs_info(struct buffer *msg, const struct qcs *qcs)
 	chunk_appendf(msg, " .tx=%llu %llu/%llu", (ullong)qcs->tx.fc.off_soft,
 	                                          (ullong)qcs->tx.fc.off_real,
 	                                          (ullong)qcs->tx.fc.limit);
+
+	chunk_appendf(msg, " .ti=%ums/%us/%ums",
+	              qmux_ti_read(&qcs->timeinfo.base),
+	              qmux_ti_read(&qcs->timeinfo.buf),
+	              qmux_ti_read(&qcs->timeinfo.fctl));
 }
