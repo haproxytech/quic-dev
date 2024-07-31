@@ -105,7 +105,7 @@ INITCALL1(STG_REGISTER, trace_register_source, TRACE_SOURCE);
 
 void qmux_dump_qcc_info(struct buffer *msg, const struct qcc *qcc)
 {
-	chunk_appendf(msg, " : qcc=%p(F)", qcc);
+	chunk_appendf(msg, " qcc=%p(F)", qcc);
 	if (qcc->conn->handle.qc)
 		chunk_appendf(msg, " qc=%p", qcc->conn->handle.qc);
 	chunk_appendf(msg, " .sc=%llu .hreq=%llu .fl=%#08x", (ullong)qcc->nb_sc, (ullong)qcc->nb_hreq, qcc->flags);
