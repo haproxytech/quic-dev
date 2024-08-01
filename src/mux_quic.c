@@ -3231,6 +3231,9 @@ static int qmux_sctl(struct stconn *sc, enum mux_sctl_type mux_sctl, void *outpu
 		if (dbg_ctx->arg.debug_flags & MUX_SCTL_DBG_STR_L_CONN)
 			chunk_appendf(buf, " conn.flg=%#08x", qcs->qcc->conn->flags);
 
+		if (dbg_ctx->arg.debug_flags & MUX_SCTL_DBG_STR_L_XPRT)
+			qcs->qcc->conn->xprt->dump_info(buf, qcs->qcc->conn);
+
 		dbg_ctx->ret.buf = *buf;
 		return ret;
 

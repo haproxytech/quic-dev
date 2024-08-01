@@ -631,3 +631,9 @@ static void quic_trace(enum trace_level level, uint64_t mask, const struct trace
 	}
 
 }
+
+void quic_dump_qc_info(struct buffer *msg, const struct quic_conn *qc)
+{
+	chunk_appendf(msg, " qc.wnd=%llu/%llu", (ullong)qc->path->in_flight,
+	                                        (ullong)qc->path->cwnd);
+}
