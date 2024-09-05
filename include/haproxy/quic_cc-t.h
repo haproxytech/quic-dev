@@ -115,6 +115,7 @@ struct quic_cc_path {
 	uint64_t in_flight;
 	/* Number of in flight ack-eliciting packets. */
 	uint64_t ifae_pkts;
+	uint64_t delivery_rate; /* bytes per second */
 };
 
 struct quic_cc_algo {
