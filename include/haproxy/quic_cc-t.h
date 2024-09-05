@@ -36,6 +36,7 @@
 
 extern struct quic_cc_algo quic_cc_algo_nr;
 extern struct quic_cc_algo quic_cc_algo_cubic;
+extern struct quic_cc_algo quic_cc_algo_bbr;
 extern struct quic_cc_algo *default_quic_cc_algo;
 
 /* Fake algorithm with its fixed window */
@@ -81,6 +82,7 @@ struct quic_cc_event {
 enum quic_cc_algo_type {
 	QUIC_CC_ALGO_TP_NEWRENO,
 	QUIC_CC_ALGO_TP_CUBIC,
+	QUIC_CC_ALGO_TP_BBR,
 	QUIC_CC_ALGO_TP_NOCC,
 };
 
@@ -116,6 +118,7 @@ struct quic_cc_path {
 	/* Number of in flight ack-eliciting packets. */
 	uint64_t ifae_pkts;
 	uint64_t delivery_rate; /* bytes per second */
+	size_t send_quantum;
 };
 
 struct quic_cc_algo {

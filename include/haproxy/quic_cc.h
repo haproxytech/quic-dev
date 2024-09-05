@@ -95,6 +95,7 @@ static inline void quic_cc_path_init(struct quic_cc_path *path, int ipv4, unsign
 	path->ifae_pkts = 0;
 	quic_cc_init(&path->cc, algo, qc);
 	path->delivery_rate = 0;
+	path->send_quantum = path->mtu * 10;
 }
 
 /* Return the remaining <room> available on <path> QUIC path for prepared data
