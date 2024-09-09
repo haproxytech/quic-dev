@@ -913,12 +913,15 @@ int qc_dgrams_retransmit(struct quic_conn *qc)
 					goto leave;
 			}
 			else {
+				struct list empty_hlist = LIST_HEAD_INIT(empty_hlist);
 				/* No frame to send due to amplification limit
 				 * or allocation failure. A PING frame will be
 				 * emitted for probing.
 				 */
 				ipktns->tx.pto_probe = 1;
 				qel_register_send(&send_list, qc->iel, &ifrms);
+				if (qc->hel)
+					qel_register_send(&send_list, qc->hel, &empty_hlist);
 				sret = qc_send(qc, 0, &send_list);
 				qc_free_frm_list(qc, &ifrms);
 				qc_free_frm_list(qc, &hfrms);
