@@ -564,10 +564,12 @@ static void qmux_ctrl_send(struct qc_stream_desc *stream, uint64_t data, uint64_
 	BUG_ON(offset > qcs->tx.fc.off_real);
 
 	/* check if the STREAM frame has already been notified. It can happen
-	 * for retransmission. Special care must be taken to ensure an empty
-	 * STREAM frame with FIN set is not considered as retransmitted
+	 * for retransmission. The second part of the condition ensures that
+	 * either an empty FIN or a retransmitted STREAM frame with FIN added
+	 * is not considered as already handled.
 	 */
-	if (offset + data < qcs->tx.fc.off_real || (!data && !(qcs->flags & QC_SF_FIN_STREAM))) {
+	if (offset + data < qcs->tx.fc.off_real ||
+	    (offset + data == qcs->tx.fc.off_real && !(qcs->flags & QC_SF_FIN_STREAM))) {
 		TRACE_DEVEL("offset already notified", QMUX_EV_QCS_SEND, qcc->conn, qcs);
 		goto out;
 	}
