@@ -428,15 +428,6 @@ static int quic_cc_bbr_init(struct quic_cc *cc)
 	return 1;
 }
 
-static void bbr_handle_restart_from_idle(struct bbr *bbr)
-{
-}
-
-static void bbr_on_transmit(struct bbr *bbr)
-{
-	bbr_handle_restart_from_idle(bbr);
-}
-
 static void bbr_check_startup_high_loss()
 {
 }
@@ -1042,6 +1033,31 @@ static void bbr_update_on_loss(struct quic_cc *cc, struct quic_tx_packet *pkt,
 
 	bbr_handle_lost_packet(bbr, p, pkt, lost, ts);
 }
+
+static void bbr_handle_restart_from_idle(struct bbr *bbr, struct quic_cc_path *p)
+{
+	if (p->in_flight != 0 || !bbr->drs->app_limited)
+		return;
+
+	bbr->idle_restart = true;
+	bbr->extra_acked_interval_start = now_ms;
+
+	if (bbr_is_probing_bw(bbr)) {
+		bbr_set_pacing_rate_with_gain(bbr, p, 100);
+	} else if (bbr->state == BBR_ST_PROBE_RTT) {
+		bbr_check_probe_rtt_done(bbr, p, now_ms);
+	}
+}
+
+__attribute__((unused))
+static void bbr_on_transmit(struct quic_cc *cc)
+{
+	struct bbr *bbr = quic_cc_priv(cc);
+	struct quic_cc_path *p = container_of(cc, struct quic_cc_path, cc);
+
+	bbr_handle_restart_from_idle(bbr, p);
+}
+
 
 struct quic_cc_algo quic_cc_algo_bbr = {
 	.type        = QUIC_CC_ALGO_TP_BBR,
