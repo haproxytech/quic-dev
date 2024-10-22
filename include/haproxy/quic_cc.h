@@ -56,6 +56,9 @@ static inline void quic_cc_event_trace(struct buffer *buf, const struct quic_cc_
 {
 	chunk_appendf(buf, " event=");
 	switch (ev->type) {
+	case QUIC_CC_EVT_TX:
+		chunk_appendf(buf, "tx done");
+		break;
 	case QUIC_CC_EVT_ACK:
 		chunk_appendf(buf, "ack acked=%llu time_sent:%dms",
 		              (unsigned long long)ev->ack.acked, TICKS_TO_MS(tick_remain(ev->ack.time_sent, now_ms)));

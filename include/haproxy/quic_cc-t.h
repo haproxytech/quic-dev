@@ -31,6 +31,7 @@
 
 #include <haproxy/buf-t.h>
 #include <haproxy/quic_loss-t.h>
+#include <haproxy/quic_tx-t.h>
 
 #define QUIC_CC_INFINITE_SSTHESH ((uint32_t)-1)
 
@@ -56,6 +57,8 @@ enum quic_cc_algo_state_type {
 };
 
 enum quic_cc_event_type {
+	/* TX done */
+	QUIC_CC_EVT_TX,
 	/* ACK receipt. */
 	QUIC_CC_EVT_ACK,
 	/* Packet loss. */
@@ -70,7 +73,9 @@ struct quic_cc_event {
 		struct ack {
 			uint64_t acked;
 			uint64_t pn;
+			unsigned int bytes_lost;
 			unsigned int time_sent;
+			unsigned int rtt;
 		} ack;
 		struct loss {
 			unsigned int time_sent;
@@ -129,6 +134,9 @@ struct quic_cc_algo {
 	void (*state_trace)(struct buffer *buf, const struct quic_cc *cc);
 	void (*state_cli)(struct buffer *buf, const struct quic_cc_path *path);
 	void (*hystart_start_round)(struct quic_cc *cc, uint64_t pn);
+	void (*on_transmit)(struct quic_cc *cc);
+	void (*drs_on_transmit)(struct quic_cc *cc, struct quic_tx_packet *pkt);
+	struct quic_cc_drs *(*get_drs)(struct quic_cc *cc);
 };
 
 #endif /* USE_QUIC */

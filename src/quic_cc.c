@@ -40,7 +40,8 @@ void quic_cc_init(struct quic_cc *cc,
 /* Send <ev> event to <cc> congestion controller. */
 void quic_cc_event(struct quic_cc *cc, struct quic_cc_event *ev)
 {
-	cc->algo->event(cc, ev);
+	if (cc->algo->event)
+		cc->algo->event(cc, ev);
 }
 
 void quic_cc_state_trace(struct buffer *buf, const struct quic_cc *cc)
