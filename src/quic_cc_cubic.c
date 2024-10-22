@@ -481,6 +481,8 @@ static void quic_cc_cubic_ss_cb(struct quic_cc *cc, struct quic_cc_event *ev)
 	case QUIC_CC_EVT_ECN_CE:
 		/* TODO */
 		break;
+	default:
+		break;
 	}
 
  out:
@@ -517,6 +519,8 @@ static void quic_cc_cubic_ca_cb(struct quic_cc *cc, struct quic_cc_event *ev)
 		break;
 	case QUIC_CC_EVT_ECN_CE:
 		/* TODO */
+		break;
+	default:
 		break;
 	}
 
@@ -581,6 +585,8 @@ static void quic_cc_cubic_cs_cb(struct quic_cc *cc, struct quic_cc_event *ev)
 	case QUIC_CC_EVT_ECN_CE:
 		/* TODO */
 		break;
+	default:
+		break;
 	}
 
  out:
@@ -614,6 +620,8 @@ static void quic_cc_cubic_rp_cb(struct quic_cc *cc, struct quic_cc_event *ev)
 		break;
 	case QUIC_CC_EVT_ECN_CE:
 		/* TODO */
+		break;
+	default:
 		break;
 	}
 

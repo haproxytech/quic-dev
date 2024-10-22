@@ -101,6 +101,8 @@ static void quic_cc_nr_ss_cb(struct quic_cc *cc, struct quic_cc_event *ev)
 	case QUIC_CC_EVT_ECN_CE:
 		/* XXX TO DO XXX */
 		break;
+	default:
+		break;
 	}
 	TRACE_PROTO("CC reno", QUIC_EV_CONN_CC, cc->qc, NULL, cc);
 	TRACE_LEAVE(QUIC_EV_CONN_CC, cc->qc);
@@ -136,6 +138,8 @@ static void quic_cc_nr_ca_cb(struct quic_cc *cc, struct quic_cc_event *ev)
 
 	case QUIC_CC_EVT_ECN_CE:
 		/* XXX TO DO XXX */
+		break;
+	default:
 		break;
 	}
 
@@ -173,6 +177,8 @@ static void quic_cc_nr_rp_cb(struct quic_cc *cc, struct quic_cc_event *ev)
 		break;
 	case QUIC_CC_EVT_ECN_CE:
 		/* XXX TO DO XXX */
+		break;
+	default:
 		break;
 	}
 
