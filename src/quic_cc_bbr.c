@@ -234,7 +234,9 @@ static void bbr_save_cwnd(struct bbr *bbr, struct quic_cc_path *p)
 
 static void bbr_restore_cwnd(struct bbr *bbr, struct quic_cc_path *p)
 {
+	//BUG_ON(p->cwnd == 5008);
 	p->cwnd = MAX(p->cwnd, bbr->prior_cwnd);
+	//BUG_ON(p->cwnd == 5008);
 }
 
 /* <gain> must be provided in percents. */
@@ -243,6 +245,7 @@ static uint64_t bbr_bdp_multiple(struct bbr *bbr, struct quic_cc_path *p,
 {
 	uint64_t bdp;
 
+	fprintf(stderr, "%s min_rtt=%u bw=%llu\n", __func__, bbr->min_rtt, (ullong)bbr->bw);
 	if (bbr->min_rtt == UINT32_MAX)
 		return p->initial_wnd; /* no valid RTT samples yet */
 
@@ -308,13 +311,19 @@ static uint64_t bbr_probe_rtt_cwnd(struct bbr *bbr, struct quic_cc_path *p)
 	uint64_t probe_rtt_cwnd =
 		bbr_bdp_multiple(bbr, p, bbr->bw, BBR_PROBE_RTT_CWND_GAIN_MULT);
 
+	fprintf(stderr, "%s probe_rtt_cwnd=%llu bbr_min_pipe_cwnd()=%llu\n",
+	        __func__, (ull)probe_rtt_cwnd, (ull)bbr_min_pipe_cwnd(p));
+
     return MAX(probe_rtt_cwnd, bbr_min_pipe_cwnd(p));
 }
 
 static void bbr_bound_cwnd_for_probe_rtt(struct bbr *bbr, struct quic_cc_path *p)
 {
-	if (bbr->state == BBR_ST_PROBE_RTT)
-      p->cwnd = MIN(p->cwnd, bbr_probe_rtt_cwnd(bbr, p));
+	if (bbr->state == BBR_ST_PROBE_RTT) {
+		//BUG_ON(p->cwnd == 5008);
+		p->cwnd = MIN(p->cwnd, bbr_probe_rtt_cwnd(bbr, p));
+		//BUG_ON(p->cwnd == 5008);
+	}
 }
 
 /* Return a volume of data that tries to leave free headroom in the bottleneck
@@ -354,22 +363,28 @@ static void bbr_bound_cwnd_for_model(struct bbr *bbr, struct quic_cc_path *p)
     cap = MIN(cap, bbr->inflight_lo);
     cap = MAX(cap, bbr_min_pipe_cwnd(p));
     p->cwnd = MIN(p->cwnd, cap);
+	//BUG_ON(p->cwnd == 5008);
 }
 
 static void bbr_set_cwnd(struct bbr *bbr, struct quic_cc_path *p, uint32_t acked)
 {
 	bbr_update_max_inflight(bbr, p);
 	// bbr_modulate_cwnd_for_recovery() ??? (see ngtcp2).
-	if (bbr->full_bw_reached)
+	if (bbr->full_bw_reached) {
+		p->cwnd += acked;
 		p->cwnd = MIN(p->cwnd + acked, bbr->max_inflight);
-	else if (p->cwnd < bbr->max_inflight || bbr->drs->delivered < p->initial_wnd)
+	//BUG_ON(p->cwnd == 5008);
+	}
+	else if (p->cwnd < bbr->max_inflight || bbr->drs->delivered < p->initial_wnd) {
 		p->cwnd = p->cwnd + acked;
+	//BUG_ON(p->cwnd == 5008);
+	}
 	p->cwnd = MAX(p->cwnd, bbr_min_pipe_cwnd(p));
 	bbr_bound_cwnd_for_probe_rtt(bbr, p);
 	bbr_bound_cwnd_for_model(bbr, p);
 }
 
-static int quic_cc_bbr_init(struct quic_cc *cc)
+static int bbr_init(struct quic_cc *cc)
 {
 	struct bbr *bbr = quic_cc_priv(cc);
 
@@ -419,7 +434,7 @@ static int quic_cc_bbr_init(struct quic_cc *cc)
 	bbr->inflight_hi = UINT64_MAX;
 	bbr->bw_hi = UINT64_MAX;
 	bbr->cycle_count = 0;
-	bbr->probe_rtt_min_delay = TICK_ETERNITY;
+	bbr->probe_rtt_min_delay = UINT32_MAX;
 	bbr->probe_rtt_min_stamp = now_ms;
 	bbr->probe_rtt_expired = false;
 	bbr->in_loss_recovery = false;
@@ -681,10 +696,12 @@ static int bbr_is_time_to_probe_bw(struct bbr *bbr, struct quic_cc_path *p,
 static int bbr_is_time_to_cruise(struct bbr *bbr, struct quic_cc_path *p)
 {
 	if (p->in_flight > bbr_inflight_with_headroom(bbr, p))
-		return false; /* not enough headroom */
+		return 0; /* not enough headroom */
 
 	if (p->in_flight <= bbr_inflight(bbr, p, bbr->max_bw, 1))
-		return true; /* inflight <= estimated BDP */
+		return 1; /* inflight <= estimated BDP */
+
+	return 0;
 }
 
 /* Time to transition from UP to DOWN? */
@@ -748,6 +765,7 @@ static void bbr_update_min_rtt(struct bbr *bbr, uint32_t ack_rtt, uint32_t ts)
 {
 	int min_rtt_expired;
 
+	fprintf(stderr, "%s ack_rtt=%u ts=%u\n", __func__, ack_rtt, ts);
 	bbr->probe_rtt_expired =
 		tick_is_lt(tick_add(bbr->probe_rtt_min_stamp, BBR_PROBE_RTT_INTERVAL), ts);
 	if (ack_rtt != UINT32_MAX && (ack_rtt < bbr->probe_rtt_min_delay ||
@@ -767,7 +785,7 @@ static void bbr_update_min_rtt(struct bbr *bbr, uint32_t ack_rtt, uint32_t ts)
 static void bbr_check_probe_rtt_done(struct bbr *bbr, struct quic_cc_path *p,
                                      uint32_t ts)
 {
-	if (bbr->probe_rtt_done_stamp && tick_is_lt(bbr->probe_rtt_done_stamp, ts)) {
+	if (tick_isset(bbr->probe_rtt_done_stamp) && tick_is_lt(bbr->probe_rtt_done_stamp, ts)) {
 		/* schedule next ProbeRTT: */
 		bbr->probe_rtt_min_stamp = ts;
 		bbr_restore_cwnd(bbr, p);
@@ -804,6 +822,8 @@ static void bbr_handle_probe_rtt(struct bbr *bbr, struct quic_cc_path *p, uint32
 
 static void bbr_check_probe_rtt(struct bbr *bbr, struct quic_cc_path *p, uint32_t ts)
 {
+	fprintf(stderr, "%s %d %d %d\n", __func__, bbr->state != BBR_ST_PROBE_RTT,
+	        bbr->probe_rtt_expired, !bbr->idle_restart);
 	if (bbr->state != BBR_ST_PROBE_RTT &&
 	    bbr->probe_rtt_expired && !bbr->idle_restart) {
 		bbr_enter_probe_rtt(bbr);
@@ -824,6 +844,7 @@ static void bbr_update_max_bw(struct bbr *bbr, struct quic_cc_path *p,
 {
 	struct quic_cc_rs *rs = &bbr->drs->rs;
 
+	fprintf(stderr, "%s\n", __func__);
 	bbr_update_round(bbr, ack_packet_delivered);
 	if (p->delivery_rate >= bbr->max_bw || !rs->is_app_limited) {
 		wf_update(&bbr->max_bw_filter, p->delivery_rate, bbr->cycle_count);
@@ -919,7 +940,7 @@ static void bbr_check_full_bw_reached(struct bbr *bbr, struct quic_cc_path *p)
 	if (bbr->full_bw_now || rs->is_app_limited)
 		return; /* no need to check for a full pipe now */
 
-	if (p->delivery_rate >= bbr->full_bw * 1.25) {
+	if (p->delivery_rate * 100 >= bbr->full_bw * 125) {
 		bbr_reset_full_bw(bbr);       /* bw is still growing, so reset */
 		bbr->full_bw = p->delivery_rate; /* record new baseline bw */
 		return;
@@ -936,6 +957,7 @@ static void bbr_check_full_bw_reached(struct bbr *bbr, struct quic_cc_path *p)
 
 static void bbr_bound_bw_for_model(struct bbr *bbr)
 {
+	fprintf(stderr, "%s max_bw=%llu bw_lo=%llu\n", __func__, (ull)bbr->max_bw, (ull)bbr->bw_lo);
 	bbr->bw = MIN(bbr->max_bw, bbr->bw_lo);
 }
 
@@ -968,6 +990,13 @@ static void bbr_update_control_parameters(struct bbr *bbr,
 	bbr_set_cwnd(bbr, p, acked);
 }
 
+__attribute__((unused))
+static void bbr_handle_recovery(struct quic_cc *cc)
+{
+	/* XXX TODO XXX */
+}
+
+__attribute__((unused))
 static void bbr_update_on_ack(struct quic_cc *cc,
                               uint32_t acked, uint32_t ack_rtt,
                               uint32_t bytes_lost, uint32_t ts)
@@ -1025,6 +1054,7 @@ static void bbr_handle_lost_packet(struct bbr *bbr, struct quic_cc_path *p,
 	}
 }
 
+__attribute__((unused))
 static void bbr_update_on_loss(struct quic_cc *cc, struct quic_tx_packet *pkt,
                                uint32_t ts, uint32_t lost)
 {
@@ -1049,7 +1079,6 @@ static void bbr_handle_restart_from_idle(struct bbr *bbr, struct quic_cc_path *p
 	}
 }
 
-__attribute__((unused))
 static void bbr_on_transmit(struct quic_cc *cc)
 {
 	struct bbr *bbr = quic_cc_priv(cc);
@@ -1058,16 +1087,52 @@ static void bbr_on_transmit(struct quic_cc *cc)
 	bbr_handle_restart_from_idle(bbr, p);
 }
 
+#if 0
+static void bbr_event(struct quic_cc *cc, struct quic_cc_event *ev)
+{
+	switch (ev->type) {
+	case QUIC_CC_EVT_TX:
+		bbr_on_transmit(cc);
+		break;
+	case QUIC_CC_EVT_ACK:
+		bbr_handle_recovery(cc); /* XXX TODO XXX */
+		bbr_update_on_ack(cc, ev->ack.acked, ev->ack.rtt, ev->ack.bytes_lost, now_ms);
+		break;
+	case QUIC_CC_EVT_LOSS:
+		break;
+	default:
+		break;
+	}
+}
+#endif
+
+static void bbr_drs_on_transmit(struct quic_cc *cc, struct quic_tx_packet *pkt)
+{
+	struct bbr *bbr = quic_cc_priv(cc);
+	struct quic_cc_path *p = container_of(cc, struct quic_cc_path, cc);
+
+	quic_cc_drs_on_pkt_sent(p, pkt, bbr->drs);
+}
+
+struct quic_cc_drs *bbr_get_drs(struct quic_cc *cc)
+{
+	struct bbr *bbr = quic_cc_priv(cc);
+	return bbr->drs;
+}
 
 struct quic_cc_algo quic_cc_algo_bbr = {
 	.type        = QUIC_CC_ALGO_TP_BBR,
-	.init        = quic_cc_bbr_init,
+	.init        = bbr_init,
+	//.event       = bbr_event,
+	.get_drs     = bbr_get_drs,
+	.on_transmit = bbr_on_transmit,
+	.drs_on_transmit = bbr_drs_on_transmit,
 };
 
-void quic_cc_bbr_check(void)
+void bbr_check(void)
 {
 	struct quic_cc *cc;
 	BUG_ON(sizeof(struct bbr) > sizeof(cc->priv));
 }
 
-INITCALL0(STG_REGISTER, quic_cc_bbr_check);
+INITCALL0(STG_REGISTER, bbr_check);
