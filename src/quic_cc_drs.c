@@ -68,8 +68,45 @@ static inline int quic_cc_drs_is_newest_packet(struct quic_cc_drs *drs,
 		 pkt->rs.end_seq > drs->rs.last_end_seq);
 }
 
+/* Called from first part of GenerateRateSample():
+ * UpdateRateSample() implementation.
+ */
+void quic_cc_update_rate_sample(struct quic_cc_drs *drs,
+                                struct quic_tx_packet *pkt)
+{
+	struct quic_cc_rs *rs = &drs->rs;
+
+	drs->delivered += pkt->len;
+	drs->delivered_time = now_ms;
+	/* Update info using the newest packet. */
+	if (tick_isset(rs->prior_time) && !quic_cc_drs_is_newest_packet(drs, pkt))
+		return;
+
+	rs->prior_delivered  = pkt->rs.delivered;
+	rs->prior_time       = pkt->rs.delivered_time;
+	rs->is_app_limited   = pkt->rs.is_app_limited;
+	rs->send_elapsed     = pkt->time_sent - pkt->rs.first_sent_time;
+	rs->ack_elapsed      = drs->delivered_time - pkt->rs.delivered_time;
+	rs->last_end_seq     = pkt->rs.end_seq;
+	drs->first_sent_time = pkt->time_sent;
+}
+
+/* Second part of GenerateRateSample():
+ * 
+ *  4.5.2.3.3.  Upon receiving an ACK
+ *
+ * When an ACK arrives, the sender invokes GenerateRateSample() to fill
+ * in a rate sample.  For each packet that was newly SACKed or ACKed,
+ * UpdateRateSample() updates the rate sample based on a snapshot of
+ * connection delivery information from the time at which the packet was
+ * last transmitted.  UpdateRateSample() is invoked multiple times when
+ * a stretched ACK acknowledges multiple data packets.  In this case we
+ * use the information from the most recently sent packet, i.e., the
+ * packet with the highest "P.delivered" value.
+ */
+
 void quic_cc_drs_on_ack_recv(struct quic_cc_drs *drs, struct quic_cc_path *path,
-                            uint64_t pkt_delivered)
+                             uint64_t pkt_delivered)
 {
 	struct quic_cc_rs *rs = &drs->rs;
 	uint64_t rate;
@@ -103,24 +140,4 @@ void quic_cc_drs_on_ack_recv(struct quic_cc_drs *drs, struct quic_cc_path *path,
 		wf_update(&drs->wf, rate, drs->round_count);
 		path->delivery_rate = wf_get_best(&drs->wf);
 	}
-}
-
-void quic_cc_update_rate_sample(struct quic_cc_drs *drs,
-                                struct quic_tx_packet *pkt)
-{
-	struct quic_cc_rs *rs = &drs->rs;
-
-	drs->delivered += pkt->len;
-	drs->delivered_time = now_ms;
-	/* Update info using the newest packet. */
-	if (tick_isset(rs->prior_time) && !quic_cc_drs_is_newest_packet(drs, pkt))
-		return;
-
-	rs->prior_delivered  = pkt->rs.delivered;
-	rs->prior_time       = pkt->rs.delivered_time;
-	rs->is_app_limited   = pkt->rs.is_app_limited;
-	rs->send_elapsed     = pkt->time_sent - pkt->rs.first_sent_time;
-	rs->ack_elapsed      = drs->delivered_time - pkt->rs.delivered_time;
-	rs->last_end_seq     = pkt->rs.end_seq;
-	drs->first_sent_time = pkt->time_sent;
 }
