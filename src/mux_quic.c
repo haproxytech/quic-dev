@@ -2091,18 +2091,23 @@ static int qcc_send_frames(struct qcc *qcc, struct list *frms, int strm_content)
 	//int max_burst = strm_content ? global.tune.quic_frontend_max_tx_burst : 0;
 
 	struct quic_conn *qc = qcc->conn->handle.qc;
-	ullong ns_pkts = qc->path->loss.srtt * 1000000 / (qc->path->cwnd / 1200 + 1);
-	int max_burst = strm_content ? 4000000 / (ns_pkts + 1) + 1 : 0;
-	//int max_burst = 1;
+	/* Delay in ns between each datagrams : depends on congestion window and sRTT. */
+	const ullong ns_pkts = quic_pacing_ns_pkt(&qc->tx.pacer);
+	int max_dgrams = 0, dgram_cnt;
 
 	TRACE_ENTER(QMUX_EV_QCC_SEND, qcc->conn);
+
+	if (strm_content) {
+		max_dgrams = global.tune.quic_frontend_max_tx_burst * 1000000 / (ns_pkts + 1) + 1;
+	}
+	fprintf(stderr, "max_dgrams = %d\n", max_dgrams);
 
 	if (LIST_ISEMPTY(frms)) {
 		TRACE_DEVEL("leaving on no frame to send", QMUX_EV_QCC_SEND, qcc->conn);
 		return -1;
 	}
 
-	ret = qc_send_mux(qcc->conn->handle.qc, frms, &max_burst);
+	ret = qc_send_mux(qcc->conn->handle.qc, frms, max_dgrams, &dgram_cnt);
 	if (ret == QUIC_TX_ERR_FATAL) {
 		TRACE_DEVEL("error on sending", QMUX_EV_QCC_SEND, qcc->conn);
 		qcc_subscribe_send(qcc);
@@ -2120,8 +2125,10 @@ static int qcc_send_frames(struct qcc *qcc, struct list *frms, int strm_content)
 		goto err;
 	}
 
-	BUG_ON(ret == QUIC_TX_ERR_AGAIN && !max_burst);
-	qcc->tx.next = now_mono_time() + (qc->path->loss.srtt * 1000000 / (qc->path->cwnd / 1200 + 1)) * max_burst;
+	BUG_ON(ret == QUIC_TX_ERR_AGAIN && !max_dgrams);
+	//BUG_ON(!max_dgrams);
+	//qcc->tx.next = now_mono_time() + ns_pkts * max_dgrams;
+	qcc->tx.next = now_mono_time() + ns_pkts * dgram_cnt;
 	//qcc->tx.next = now_mono_time() + (MAX(qc->path->loss.srtt, 10) * 800000 / (qc->path->cwnd / 1200 + 1)) * max_burst;
 
 	TRACE_LEAVE(QMUX_EV_QCC_SEND, qcc->conn);
