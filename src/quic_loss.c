@@ -151,7 +151,7 @@ struct quic_pktns *quic_pto_pktns(struct quic_conn *qc,
  * Always succeeds.
  */
 void qc_packet_loss_lookup(struct quic_pktns *pktns, struct quic_conn *qc,
-                           struct list *lost_pkts)
+                           struct list *lost_pkts, unsigned int *bytes_lost)
 {
 	struct eb_root *pkts;
 	struct eb64_node *node;
@@ -216,6 +216,8 @@ void qc_packet_loss_lookup(struct quic_pktns *pktns, struct quic_conn *qc,
 			eb64_delete(&pkt->pn_node);
 			LIST_APPEND(lost_pkts, &pkt->list);
 			ql->nb_lost_pkt++;
+			if (bytes_lost)
+				*bytes_lost += pkt->len;
 		}
 		else {
 			if (tick_isset(pktns->tx.loss_time))
