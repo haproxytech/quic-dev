@@ -437,6 +437,7 @@ static void qc_notify_cc_of_newly_acked_pkts(struct quic_conn *qc,
 	TRACE_ENTER(QUIC_EV_CONN_PRSAFRM, qc);
 
 	list_for_each_entry_safe(pkt, tmp, newly_acked_pkts, list) {
+		fprintf(stderr, "newly acked packet #%llu\n", pkt->pn_node.key);
 		pkt->pktns->tx.in_flight -= pkt->in_flight_len;
 		p->prep_in_flight -= pkt->in_flight_len;
 		p->in_flight -= pkt->in_flight_len;
@@ -448,22 +449,24 @@ static void qc_notify_cc_of_newly_acked_pkts(struct quic_conn *qc,
 		 */
 		if (pkt->largest_acked_pn != -1)
 			qc_treat_ack_of_ack(qc, &pkt->pktns->rx.arngs, pkt->largest_acked_pn);
+		pkt_delivered = pkt->rs.delivered;
 		ev.ack.acked = pkt->in_flight_len;
 		ev.ack.time_sent = pkt->time_sent;
 		ev.ack.pn = pkt->pn_node.key;
 		ev.ack.bytes_lost = bytes_lost;
 		ev.ack.rtt = rtt;
+		/* Note that this event is not emitted for BBR. */
 		quic_cc_event(&p->cc, &ev);
+		if (drs)
+			quic_cc_drs_update_rate_sample(drs, pkt);
 		LIST_DEL_INIT(&pkt->list);
 		quic_tx_packet_refdec(pkt);
 	}
 
-#if 0
-	if (>path->cc->algo->on_ack_rcvd)
-		...
-#endif
 	if (drs)
 		quic_cc_drs_on_ack_recv(drs, p, pkt_delivered);
+	if (p->cc.algo->on_ack_rcvd)
+		p->cc.algo->on_ack_rcvd(&p->cc, pkt_delivered, rtt, bytes_lost, now_ms);
 
 	TRACE_LEAVE(QUIC_EV_CONN_PRSAFRM, qc);
 
