@@ -40,6 +40,7 @@ extern struct pool_head *pool_head_quic_cc_drs;
 void quic_cc_drs_init(struct quic_cc_drs *drs);
 void quic_cc_drs_on_pkt_sent(struct quic_cc_path *path,
                              struct quic_tx_packet *pkt, struct quic_cc_drs *drs);
-
+void quic_cc_drs_update_rate_sample(struct quic_cc_drs *drs,
+                                    struct quic_tx_packet *pkt);
 void quic_cc_drs_on_ack_recv(struct quic_cc_drs *drs, struct quic_cc_path *path,
                              uint64_t pkt_delivered);
