@@ -134,9 +134,11 @@ struct quic_cc_algo {
 	void (*state_trace)(struct buffer *buf, const struct quic_cc *cc);
 	void (*state_cli)(struct buffer *buf, const struct quic_cc_path *path);
 	void (*hystart_start_round)(struct quic_cc *cc, uint64_t pn);
+	struct quic_cc_drs *(*get_drs)(struct quic_cc *cc);
 	void (*on_transmit)(struct quic_cc *cc);
 	void (*drs_on_transmit)(struct quic_cc *cc, struct quic_tx_packet *pkt);
-	struct quic_cc_drs *(*get_drs)(struct quic_cc *cc);
+	void (*on_ack_rcvd)(struct quic_cc *cc, uint32_t acked, uint32_t ack_rtt,
+	                    uint32_t bytes_lost, uint32_t ts);
 };
 
 #endif /* USE_QUIC */
