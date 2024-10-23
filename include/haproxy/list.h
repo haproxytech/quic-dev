@@ -260,4 +260,39 @@ static __inline struct mt_list *list_to_mt_list(struct list *list)
 
 }
 
+/* Init a <ref> bref_ptr entry to track a target. <ref> is the pointer to the
+ * target pointer. <next_cb> is the callback to retrieve the next target entry.
+ */
+static __inline void bref_ptr_init(struct bref_ptr *ref, void *pptr, void *(*next_cb)(const void *target))
+{
+	MT_LIST_INIT(&ref->el);
+	ref->pptr = pptr;
+	ref->next_cb = next_cb;
+}
+
+/* Track a new <target> via <ref> which is registered into target <list>. */
+static __inline void bref_ptr_ref(struct bref_ptr *ref, void *target, struct mt_list *list)
+{
+	BUG_ON(*ref->pptr && *ref->pptr != target);
+	*ref->pptr = target;
+	MT_LIST_APPEND(list, &ref->el);
+}
+
+/* Stop tracking of a target via <ref>. */
+static __inline void bref_ptr_unref(struct bref_ptr *ref)
+{
+	*ref->pptr = NULL;
+	MT_LIST_DELETE(&ref->el);
+}
+
+/* Stop tracking of a target via <ref> and returns the next target entry.
+ * Useful in a for-loop to immediately track the next target.
+ */
+static __inline void *bref_ptr_unref_next(struct bref_ptr *ref)
+{
+	void *target = *ref->pptr;
+	bref_ptr_unref(ref);
+	return ref->next_cb(target);
+}
+
 #endif /* _HAPROXY_LIST_H */

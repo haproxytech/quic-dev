@@ -57,6 +57,16 @@ struct bref {
 	struct list *ref; /* pointer to the target's list entry */
 };
 
+/* Similar to bref. Used to list elements which currently tracks a target.
+ * Contrary to bref, when target is removed, each elements pointers are updated
+ * to the next entry or NULL if target was the last one.
+ */
+struct bref_ptr {
+	struct mt_list el; /* attach point into target list */
+	void **pptr;       /* pointer to element which points to target */
+	void *(*next_cb)(const void *target); /* callback to retrieve next target when current one is deleted */
+};
+
 /* a word list is a generic list with a pointer to a string in each element. */
 struct wordlist {
 	struct list list;
