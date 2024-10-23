@@ -927,6 +927,7 @@ static int cli_parse_show_stat(char **args, char *payload, struct appctx *appctx
 	ctx->scope_len = 0;
 	ctx->http_px = NULL; // not under http context
 	ctx->flags = STAT_F_SHNODE | STAT_F_SHDESC;
+	bref_ptr_init(&ctx->srv_ref, &ctx->obj2, srv_next);
 
 	if ((strm_li(appctx_strm(appctx))->bind_conf->level & ACCESS_LVL_MASK) >= ACCESS_LVL_OPER)
 		ctx->flags |= STAT_F_SHLGNDS;
@@ -1002,9 +1003,7 @@ static int cli_io_handler_dump_stat(struct appctx *appctx)
 static void cli_io_handler_release_stat(struct appctx *appctx)
 {
 	struct show_stat_ctx *ctx = appctx->svcctx;
-
-	if (ctx->px_st == STAT_PX_ST_SV)
-		srv_drop(ctx->obj2);
+	bref_ptr_unref(&ctx->srv_ref);
 }
 
 static int cli_io_handler_dump_json_schema(struct appctx *appctx)

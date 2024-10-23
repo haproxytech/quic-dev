@@ -2988,6 +2988,7 @@ struct server *new_server(struct proxy *proxy)
 	MT_LIST_INIT(&srv->sess_conns);
 
 	guid_init(&srv->guid);
+	MT_LIST_INIT(&srv->bref_ptr_list);
 
 	srv->extra_counters = NULL;
 #ifdef USE_OPENSSL
@@ -3004,6 +3005,11 @@ struct server *new_server(struct proxy *proxy)
 void srv_take(struct server *srv)
 {
 	HA_ATOMIC_INC(&srv->refcount);
+}
+
+void *srv_next(const void *srv)
+{
+	return ((struct server *)srv)->next;
 }
 
 /* deallocate common server parameters (may be used by default-servers) */
@@ -6065,17 +6071,20 @@ leave:
 	return ret;
 }
 
+extern struct appctx *g_appctx;
+
 /* Parse a "del server" command
  * Returns 0 if the server has been successfully initialized, 1 on failure.
  */
 static int cli_parse_delete_server(char **args, char *payload, struct appctx *appctx, void *private)
 {
 	struct proxy *be;
-	struct server *srv;
+	struct server *srv, *next;
 	struct server *prev_del;
 	struct ist be_name, sv_name;
 	struct mt_list back;
 	struct sess_priv_conns *sess_conns = NULL;
+	struct bref_ptr *srv_ref;
 	const char *msg;
 	int ret, i;
 
@@ -6176,6 +6185,17 @@ static int cli_parse_delete_server(char **args, char *payload, struct appctx *ap
 		check_purge(&srv->check);
 	if (srv->agent.state & CHK_ST_CONFIGURED)
 		check_purge(&srv->agent);
+
+	next = srv_next(srv);
+	while (!MT_LIST_ISEMPTY(&srv->bref_ptr_list)) {
+		srv_ref = MT_LIST_NEXT(&srv->bref_ptr_list, struct bref_ptr *, el);
+		bref_ptr_unref(srv_ref);
+
+		if (next) {
+			BUG_ON(next->flags & SRV_F_DELETED);
+			bref_ptr_ref(srv_ref, next, &next->bref_ptr_list);
+		}
+	}
 
 	/* detach the server from the proxy linked list
 	 * The proxy servers list is currently not protected by a lock, so this

@@ -578,6 +578,7 @@ struct show_stat_ctx {
 	int st_code;		/* the status code returned by an action */
 	struct buffer chunk;    /* temporary buffer which holds a single-line output */
 	enum stat_state state;  /* phase of output production */
+	struct bref_ptr srv_ref;
 };
 
 extern THREAD_LOCAL void *trash_counters;

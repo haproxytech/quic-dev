@@ -1445,19 +1445,11 @@ more:
 	case STAT_PX_ST_SV:
 		/* check for dump resumption */
 		if (px_st == STAT_PX_ST_SV) {
-			struct server *cur = ctx->obj2;
-
-			/* re-entrant dump */
-			BUG_ON(!cur);
-			if (cur->flags & SRV_F_DELETED) {
-				/* the server could have been marked as deleted
-				 * between two dumping attempts, skip it.
-				 */
-				cur = cur->next;
-			}
-			srv_drop(ctx->obj2); /* drop old srv taken on last dumping attempt */
-			ctx->obj2 = cur; /* could be NULL */
-			/* back to normal */
+			/* Re-entrant dump. If server has been deleted and was
+			 * the last in the backend, obj2 will be NULL.
+			 */
+			if (ctx->obj2)
+				bref_ptr_unref(&ctx->srv_ref);
 		}
 
 		/* obj2 points to servers list as initialized above.
@@ -1466,18 +1458,18 @@ more:
 		 * Temporarily increment its refcount to prevent its
 		 * anticipated cleaning. Call srv_drop() to release it.
 		 */
-		for (; ctx->obj2 != NULL;
-		       ctx->obj2 = srv_drop(sv)) {
+		for (; ctx->obj2;
+		       ctx->obj2 = bref_ptr_unref_next(&ctx->srv_ref)) {
 
 			sv = ctx->obj2;
-			srv_take(sv);
+			bref_ptr_ref(&ctx->srv_ref, sv, &sv->bref_ptr_list);
 
 			if (stats_is_full(appctx, buf, htx))
 				goto full;
 
 			if (ctx->flags & STAT_F_BOUND) {
 				if (!(ctx->type & (1 << STATS_TYPE_SV))) {
-					srv_drop(sv);
+					bref_ptr_unref(&ctx->srv_ref);
 					break;
 				}
 

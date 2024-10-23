@@ -71,6 +71,7 @@ int srv_init_addr(void);
 struct server *cli_find_server(struct appctx *appctx, char *arg);
 struct server *new_server(struct proxy *proxy);
 void srv_take(struct server *srv);
+void *srv_next(const void *srv);
 struct server *srv_drop(struct server *srv);
 void srv_free_params(struct server *srv);
 int srv_init_per_thr(struct server *srv);

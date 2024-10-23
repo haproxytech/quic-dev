@@ -33,7 +33,7 @@
 #include <haproxy/proxy.h>
 #include <haproxy/regex.h>
 #include <haproxy/sc_strm.h>
-#include <haproxy/server-t.h>
+#include <haproxy/server.h>
 #include <haproxy/stats.h>
 #include <haproxy/stats-html.h>
 #include <haproxy/stconn.h>
@@ -3928,6 +3928,7 @@ static int http_handle_stats(struct stream *s, struct channel *req, struct proxy
 	ctx->flags |= STAT_F_FMT_HTML; /* assume HTML mode by default */
 	if ((msg->flags & HTTP_MSGF_VER_11) && (txn->meth != HTTP_METH_HEAD))
 		ctx->flags |= STAT_F_CHUNKED;
+	bref_ptr_init(&ctx->srv_ref, &ctx->obj2, srv_next);
 
 	htx = htxbuf(&req->buf);
 	sl = http_get_stline(htx);

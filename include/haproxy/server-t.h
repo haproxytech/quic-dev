@@ -487,6 +487,8 @@ struct server {
 
 	struct guid_node guid;			/* GUID global tree node */
 
+	struct mt_list bref_ptr_list;
+
 	/* warning, these structs are huge, keep them at the bottom */
 	struct conn_src conn_src;               /* connection source settings */
 	struct sockaddr_storage addr;           /* the address to connect to, doesn't include the port */
