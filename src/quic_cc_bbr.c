@@ -203,6 +203,7 @@ static void bbr_init_pacing_rate(struct bbr *bbr)
 
 static void bbr_enter_startup(struct bbr *bbr)
 {
+	fprintf(stderr, "-->entering STARTUP\n");
 	bbr->state = BBR_ST_STARTUP;
 	bbr->pacing_gain = BBR_STARTUP_PACING_GAIN_MULT;
 	bbr->cwnd_gain = BBR_DEFAULT_CWND_GAIN_MULT;
@@ -210,6 +211,7 @@ static void bbr_enter_startup(struct bbr *bbr)
 
 static void bbr_enter_drain(struct bbr *bbr)
 {
+	fprintf(stderr, "-->entering DRAIN\n");
     bbr->state = BBR_ST_DRAIN;
     bbr->pacing_gain = BBR_DRAIN_PACING_GAIN_MULT;    /* pace slowly */
     bbr->cwnd_gain = BBR_DEFAULT_CWND_GAIN_MULT;
@@ -217,6 +219,7 @@ static void bbr_enter_drain(struct bbr *bbr)
 
 static void bbr_enter_probe_rtt(struct bbr *bbr)
 {
+	fprintf(stderr, "-->entering PROBE\n");
 	bbr->state = BBR_ST_PROBE_RTT;
 	bbr->pacing_gain = 100;
 	bbr->cwnd_gain = BBR_PROBE_RTT_CWND_GAIN_MULT;
@@ -495,6 +498,7 @@ static void bbr_raise_inflight_hi_slope(struct bbr *bbr, struct quic_cc_path *p)
 
 static void bbr_start_probe_bw_down(struct bbr *bbr, uint32_t ts)
 {
+	fprintf(stderr, "-->entering PROBE_BW_DOWN\n");
 	bbr_reset_congestion_signals(bbr);
 	bbr->probe_up_cnt = UINT64_MAX;
 	bbr_pick_probe_wait(bbr);
@@ -508,6 +512,7 @@ static void bbr_start_probe_bw_down(struct bbr *bbr, uint32_t ts)
 
 static void bbr_start_probe_bw_cruise(struct bbr *bbr)
 {
+	fprintf(stderr, "-->entering PROBE_BW_CRUISE\n");
 	bbr->state = BBR_ST_PROBE_BW_CRUISE;
 	bbr->pacing_gain = 100;
 	bbr->cwnd_gain = 200;
@@ -515,6 +520,7 @@ static void bbr_start_probe_bw_cruise(struct bbr *bbr)
 
 static void bbr_start_probe_bw_refill(struct bbr *bbr)
 {
+	fprintf(stderr, "-->entering PROBE_BW_REFILL\n");
 	bbr_reset_lower_bounds(bbr);
 	bbr->bw_probe_up_rounds = 0;
 	bbr->bw_probe_up_acks = 0;
@@ -528,6 +534,7 @@ static void bbr_start_probe_bw_refill(struct bbr *bbr)
 static void bbr_start_probe_bw_up(struct bbr *bbr, struct quic_cc_path *p,
                                   uint32_t ts)
 {
+	fprintf(stderr, "-->entering PROBE_BW_UP\n");
 	bbr->ack_phase = BBR_ACK_PHASE_ACKS_PROBE_STARTING;
 	bbr_start_round(bbr);
 	bbr->cycle_stamp = ts;
@@ -761,21 +768,21 @@ static void bbr_update_probe_bw_cycle_phase(struct bbr *bbr, struct quic_cc_path
 	}
 }
 
-static void bbr_update_min_rtt(struct bbr *bbr, uint32_t ack_rtt, uint32_t ts)
+static void bbr_update_min_rtt(struct bbr *bbr, uint32_t ack_rtt)
 {
 	int min_rtt_expired;
 
-	fprintf(stderr, "%s ack_rtt=%u ts=%u\n", __func__, ack_rtt, ts);
+	fprintf(stderr, "%s ack_rtt=%u now_ms=%u\n", __func__, ack_rtt, now_ms);
 	bbr->probe_rtt_expired =
-		tick_is_lt(tick_add(bbr->probe_rtt_min_stamp, BBR_PROBE_RTT_INTERVAL), ts);
+		tick_is_lt(tick_add(bbr->probe_rtt_min_stamp, BBR_PROBE_RTT_INTERVAL), now_ms);
 	if (ack_rtt != UINT32_MAX && (ack_rtt < bbr->probe_rtt_min_delay ||
 	                              bbr->probe_rtt_expired)) {
 		bbr->probe_rtt_min_delay = ack_rtt;
-		bbr->probe_rtt_min_stamp = ts;
+		bbr->probe_rtt_min_stamp = now_ms;
 	}
 
 	min_rtt_expired =
-		tick_is_lt(tick_add(bbr->min_rtt_stamp, BBR_MIN_RTT_FILTERLEN), ts);
+		tick_is_lt(tick_add(bbr->min_rtt_stamp, BBR_MIN_RTT_FILTERLEN), now_ms);
 	if (bbr->probe_rtt_min_delay < bbr->min_rtt || min_rtt_expired) {
 		bbr->min_rtt       = bbr->probe_rtt_min_delay;
 		bbr->min_rtt_stamp = bbr->probe_rtt_min_stamp;
@@ -975,7 +982,7 @@ static void bbr_update_model_and_state(struct bbr *bbr,
 	bbr_check_startup_done(bbr);
 	bbr_check_drain_done(bbr, p, ts);
 	bbr_update_probe_bw_cycle_phase(bbr, p, acked, ts);
-	bbr_update_min_rtt(bbr, ack_rtt, ts);
+	bbr_update_min_rtt(bbr, ack_rtt);
 	bbr_check_probe_rtt(bbr, p, ts);
 	bbr_advance_latest_delivery_signals(bbr, p);
 	bbr_bound_bw_for_model(bbr);
@@ -1126,6 +1133,7 @@ struct quic_cc_algo quic_cc_algo_bbr = {
 	//.event       = bbr_event,
 	.get_drs     = bbr_get_drs,
 	.on_transmit = bbr_on_transmit,
+	.on_ack_rcvd = bbr_update_on_ack,
 	.drs_on_transmit = bbr_drs_on_transmit,
 };
 
