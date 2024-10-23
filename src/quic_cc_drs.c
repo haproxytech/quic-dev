@@ -63,18 +63,33 @@ void quic_cc_drs_on_pkt_sent(struct quic_cc_path *path,
 static inline int quic_cc_drs_is_newest_packet(struct quic_cc_drs *drs,
                                                struct quic_tx_packet *pkt)
 {
-	return pkt->time_sent > drs->first_sent_time ||
+	return tick_is_lt(drs->first_sent_time, pkt->time_sent) ||
 		(pkt->time_sent == drs->first_sent_time &&
 		 pkt->rs.end_seq > drs->rs.last_end_seq);
 }
 
-/* Called from first part of GenerateRateSample():
- * UpdateRateSample() implementation.
+/* RFC https://datatracker.ietf.org/doc/draft-ietf-ccwg-bbr/
+ * 4.5.2.3.3.  Upon receiving an ACK
+ *
+ * When an ACK arrives, the sender invokes GenerateRateSample() to fill
+ * in a rate sample.  For each packet that was newly SACKed or ACKed,
+ * UpdateRateSample() updates the rate sample based on a snapshot of
+ * connection delivery information from the time at which the packet was
+ * last transmitted.  UpdateRateSample() is invoked multiple times when
+ * a stretched ACK acknowledges multiple data packets.  In this case we
+ * use the information from the most recently sent packet, i.e., the
+ * packet with the highest "P.delivered" value.
+ *
+ * haproxy implementation: quic_cc_drs_update_rate_sample() matches with
+ * RFC UpdateRateSample() called from first part of GenerateRateSample().
  */
-void quic_cc_update_rate_sample(struct quic_cc_drs *drs,
-                                struct quic_tx_packet *pkt)
+void quic_cc_drs_update_rate_sample(struct quic_cc_drs *drs,
+                                    struct quic_tx_packet *pkt)
 {
 	struct quic_cc_rs *rs = &drs->rs;
+
+	if (!tick_isset(pkt->rs.delivered_time))
+		return;
 
 	drs->delivered += pkt->len;
 	drs->delivered_time = now_ms;
@@ -89,28 +104,26 @@ void quic_cc_update_rate_sample(struct quic_cc_drs *drs,
 	rs->ack_elapsed      = drs->delivered_time - pkt->rs.delivered_time;
 	rs->last_end_seq     = pkt->rs.end_seq;
 	drs->first_sent_time = pkt->time_sent;
+	/* Mark the packet as delivered once it's SACKed to
+     * avoid being used again when it's cumulatively acked.
+     */
+	pkt->rs.delivered_time = TICK_ETERNITY;
 }
 
-/* Second part of GenerateRateSample():
- * 
- *  4.5.2.3.3.  Upon receiving an ACK
+/* RFC https://datatracker.ietf.org/doc/draft-ietf-ccwg-bbr/
+ * 4.5.2.3.3.  Upon receiving an ACK
  *
- * When an ACK arrives, the sender invokes GenerateRateSample() to fill
- * in a rate sample.  For each packet that was newly SACKed or ACKed,
- * UpdateRateSample() updates the rate sample based on a snapshot of
- * connection delivery information from the time at which the packet was
- * last transmitted.  UpdateRateSample() is invoked multiple times when
- * a stretched ACK acknowledges multiple data packets.  In this case we
- * use the information from the most recently sent packet, i.e., the
- * packet with the highest "P.delivered" value.
+ * haproxy implementation: second part of GenerateRateSample(). Follows the
+ * first one above.
  */
-
 void quic_cc_drs_on_ack_recv(struct quic_cc_drs *drs, struct quic_cc_path *path,
                              uint64_t pkt_delivered)
 {
 	struct quic_cc_rs *rs = &drs->rs;
 	uint64_t rate;
 
+	fprintf(stderr, "%s tick_isset(rs->prior_time)? %d\n",
+	        __func__, tick_isset(rs->prior_time));
 	if (drs->app_limited && drs->delivered > drs->app_limited)
 		drs->app_limited = 0;
 
@@ -119,9 +132,11 @@ void quic_cc_drs_on_ack_recv(struct quic_cc_drs *drs, struct quic_cc_path *path,
 		++drs->round_count;
 	}
 
-	if (tick_isset(rs->prior_time))
+	if (!tick_isset(rs->prior_time))
 		return;
 
+	fprintf(stderr, "%s send_elapsed=%u ack_elapsed=%u\n",
+	        __func__, rs->send_elapsed, rs->ack_elapsed);
 	rs->interval = MAX(rs->send_elapsed, rs->ack_elapsed);
 
 	rs->delivered = drs->delivered - rs->prior_delivered;
@@ -139,5 +154,6 @@ void quic_cc_drs_on_ack_recv(struct quic_cc_drs *drs, struct quic_cc_path *path,
 	if (rate >= wf_get_best(&drs->wf) || !drs->app_limited) {
 		wf_update(&drs->wf, rate, drs->round_count);
 		path->delivery_rate = wf_get_best(&drs->wf);
+		fprintf(stderr, "delivery_rate=%llu\n", (ullong)path->delivery_rate);
 	}
 }
