@@ -41,6 +41,10 @@
 #include <haproxy/tools.h>
 #include <haproxy/mailers.h>
 
+#include <haproxy/trace.h>
+extern struct trace_source trace_check;
+#define TRACE_SOURCE    &trace_check
+
 /* Contains the class reference of the concat object. */
 static int class_concat_ref;
 static int class_queue_ref;
@@ -1175,6 +1179,7 @@ int hlua_server_gc(lua_State *L)
 {
 	struct server *srv = hlua_checkudata(L, 1, class_server_ref);
 
+	TRACE_PRINTF(TRACE_LEVEL_ERROR, 1, 0, 0, 0, 0, "srv_drop %p", srv);
 	srv_drop(srv); /* srv_drop allows NULL srv */
 	return 0;
 }
@@ -1810,6 +1815,7 @@ int hlua_fcn_new_server(lua_State *L, struct server *srv)
 	lua_rawseti(L, -2, 0);
 
 	/* userdata is affected: increment server refcount */
+	if (fdtab) TRACE_PRINTF(TRACE_LEVEL_ERROR, 1, 0, 0, 0, 0, "srv_take %p", srv);
 	srv_take(srv);
 
 	/* set public methods */

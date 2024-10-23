@@ -55,6 +55,9 @@
 #include <haproxy/time.h>
 #include <haproxy/tools.h>
 
+#include <haproxy/trace.h>
+extern struct trace_source trace_check;
+#define TRACE_SOURCE    &trace_check
 
 int listeners;	/* # of proxy listeners, set by cfgparse */
 struct proxy *proxies_list  = NULL;	/* list of all existing proxies */
@@ -353,6 +356,7 @@ void free_proxy(struct proxy *p)
 	while (s) {
 		list_for_each_entry(srvdf, &server_deinit_list, list)
 			srvdf->fct(s);
+		TRACE_PRINTF(TRACE_LEVEL_ERROR, 1, 0, 0, 0, 0, "srv_drop %p", s);
 		s = srv_drop(s);
 	}/* end while(s) */
 

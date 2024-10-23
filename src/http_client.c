@@ -39,6 +39,10 @@
 
 #include <string.h>
 
+#include <haproxy/trace.h>
+extern struct trace_source trace_check;
+#define TRACE_SOURCE &trace_check
+
 static struct proxy *httpclient_proxy;
 
 #ifdef USE_OPENSSL
@@ -1295,6 +1299,7 @@ struct proxy *httpclient_create_proxy(const char *id)
 				goto err;
 			} else {
 				ha_free(&srv_ssl->ssl_ctx.ca_file);
+				TRACE_PRINTF(TRACE_LEVEL_ERROR, 1, 0, 0, 0, 0, "srv_drop %p", srv_ssl);
 				srv_drop(srv_ssl);
 				srv_ssl = NULL;
 			}
@@ -1329,8 +1334,10 @@ err:
 	if (err_code & ERR_CODE) {
 		ha_alert("httpclient: cannot initialize: %s\n", errmsg);
 		free(errmsg);
+		TRACE_PRINTF(TRACE_LEVEL_ERROR, 1, 0, 0, 0, 0, "srv_drop %p", srv_raw);
 		srv_drop(srv_raw);
 #ifdef USE_OPENSSL
+		TRACE_PRINTF(TRACE_LEVEL_ERROR, 1, 0, 0, 0, 0, "srv_drop %p", srv_ssl);
 		srv_drop(srv_ssl);
 #endif
 		free_proxy(px);

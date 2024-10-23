@@ -39,6 +39,10 @@
 #include <haproxy/time.h>
 #include <haproxy/tools.h>
 
+#include <haproxy/trace.h>
+extern struct trace_source trace_check;
+#define TRACE_SOURCE    &trace_check
+
 struct list sink_list = LIST_HEAD_INIT(sink_list);
 
 /* sink proxies list */
@@ -1258,6 +1262,7 @@ struct sink *sink_new_from_logger(struct logger *logger)
 
 	return sink;
  error:
+	TRACE_PRINTF(TRACE_LEVEL_ERROR, 1, 0, 0, 0, 0, "srv_drop %p", srv);
 	srv_drop(srv);
 
  error_final:

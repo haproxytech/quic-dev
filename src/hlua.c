@@ -69,6 +69,10 @@
 #include <haproxy/check.h>
 #include <haproxy/mailers.h>
 
+#include <haproxy/trace.h>
+extern struct trace_source trace_check;
+#define TRACE_SOURCE &trace_check
+
 /* Global LUA flags */
 
 enum hlua_log_opt {
@@ -14368,9 +14372,11 @@ static void hlua_deinit()
 			lua_close(hlua_states[thr]);
 	}
 
+	TRACE_PRINTF(TRACE_LEVEL_ERROR, 1, 0, 0, 0, 0, "srv_drop %p", socket_tcp);
 	srv_drop(socket_tcp);
 
 #ifdef USE_OPENSSL
+	TRACE_PRINTF(TRACE_LEVEL_ERROR, 1, 0, 0, 0, 0, "srv_drop %p", socket_ssl);
 	srv_drop(socket_ssl);
 #endif
 

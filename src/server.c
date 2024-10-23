@@ -50,6 +50,9 @@
 #include <haproxy/xxhash.h>
 #include <haproxy/event_hdl.h>
 
+#include <haproxy/trace.h>
+extern struct trace_source trace_check;
+#define TRACE_SOURCE &trace_check
 
 static void srv_update_status(struct server *s, int type, int cause);
 static int srv_apply_lastaddr(struct server *srv, int *err_code);
@@ -2957,6 +2960,7 @@ struct server *new_server(struct proxy *proxy)
 	if (!srv)
 		return NULL;
 
+	if (fdtab) TRACE_PRINTF(TRACE_LEVEL_ERROR, 1, 0, 0, 0, 0, "srv_take %p", srv);
 	srv_take(srv);
 
 	srv->obj_type = OBJ_TYPE_SERVER;
@@ -3069,6 +3073,7 @@ struct server *srv_drop(struct server *srv)
 	if (HA_ATOMIC_SUB_FETCH(&srv->refcount, 1))
 		goto end;
 
+	TRACE_PRINTF(TRACE_LEVEL_ERROR, 1, 0, 0, 0, 0, "srv_drop::done %p", srv);
 	/* This BUG_ON() is invalid for now as server released on deinit will
 	 * trigger it as they are not properly removed from their tree.
 	 */
@@ -5983,10 +5988,12 @@ out:
 
 		if (srv->check.state & CHK_ST_CONFIGURED) {
 			free_check(&srv->check);
+			TRACE_PRINTF(TRACE_LEVEL_ERROR, 1, 0, 0, 0, 0, "srv_drop %p", srv);
 			srv_drop(srv);
 		}
 		if (srv->agent.state & CHK_ST_CONFIGURED) {
 			free_check(&srv->agent);
+			TRACE_PRINTF(TRACE_LEVEL_ERROR, 1, 0, 0, 0, 0, "srv_drop %p", srv);
 			srv_drop(srv);
 		}
 
@@ -5999,8 +6006,10 @@ out:
 	if (!usermsgs_empty())
 		cli_umsgerr(appctx);
 
-	if (srv)
+	if (srv) {
+		TRACE_PRINTF(TRACE_LEVEL_ERROR, 1, 0, 0, 0, 0, "srv_drop %p", srv);
 		srv_drop(srv);
+	}
 
 	return 1;
 }
@@ -6246,6 +6255,7 @@ static int cli_parse_delete_server(char **args, char *payload, struct appctx *ap
 	thread_release();
 
 	ha_notice("Server deleted.\n");
+	TRACE_PRINTF(TRACE_LEVEL_ERROR, 1, 0, 0, 0, 0, "srv_drop %p", srv);
 	srv_drop(srv);
 
 	cli_msg(appctx, LOG_INFO, "Server deleted.\n");

@@ -43,6 +43,10 @@
 
 #include <promex/promex.h>
 
+#include <haproxy/trace.h>
+extern struct trace_source trace_check;
+#define TRACE_SOURCE &trace_check
+
 /* Prometheus exporter applet states (appctx->st0) */
 enum {
         PROMEX_ST_INIT = 0,  /* initialized */
@@ -1515,9 +1519,12 @@ static int promex_dump_srv_metrics(struct appctx *appctx, struct htx *htx)
 	}
 
 	/* Decrement server refcount if it was saved through ctx.p[1]. */
+	TRACE_PRINTF(TRACE_LEVEL_ERROR, 1, 0, 0, 0, 0, "srv_drop %p", ctx->p[1]);
 	srv_drop(ctx->p[1]);
-	if (sv)
+	if (sv) {
+		if (fdtab) TRACE_PRINTF(TRACE_LEVEL_ERROR, 1, 0, 0, 0, 0, "srv_take %p", sv);
 		srv_take(sv);
+	}
 
 	/* Save pointers (0=current proxy, 1=current server, 2=current stats module) of the current context */
 	ctx->p[0] = px;
@@ -2064,6 +2071,7 @@ static void promex_appctx_release(struct appctx *appctx)
 
 	if (appctx->st1 == PROMEX_DUMPER_SRV) {
 		struct server *srv = objt_server(ctx->p[1]);
+		TRACE_PRINTF(TRACE_LEVEL_ERROR, 1, 0, 0, 0, 0, "srv_drop %p", srv);
 		srv_drop(srv);
 	}
 

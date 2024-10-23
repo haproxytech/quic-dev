@@ -1479,8 +1479,10 @@ struct task *process_chk_conn(struct task *t, void *context, unsigned int state)
 	 */
 	if (unlikely(check->state & CHK_ST_PURGE)) {
 		free_check(check);
-		if (check->server)
+		if (check->server) {
+			TRACE_PRINTF(TRACE_LEVEL_ERROR, 1, 0, 0, 0, 0, "srv_drop %p", check->server);
 			srv_drop(check->server);
+		}
 
 		t = NULL;
 	}
@@ -1887,6 +1889,7 @@ int init_srv_check(struct server *srv)
 		goto out;
 	}
 	srv->check.state |= CHK_ST_CONFIGURED | CHK_ST_ENABLED | CHK_ST_SLEEPING;
+	if (fdtab) TRACE_PRINTF(TRACE_LEVEL_ERROR, 1, 0, 0, 0, 0, "srv_take %p", srv);
 	srv_take(srv);
 
 	/* Only increment maxsock for servers from the configuration. Dynamic
@@ -1950,6 +1953,7 @@ int init_srv_agent_check(struct server *srv)
 		srv->agent.inter = srv->check.inter;
 
 	srv->agent.state |= CHK_ST_CONFIGURED | CHK_ST_ENABLED | CHK_ST_SLEEPING | CHK_ST_AGENT;
+	if (fdtab) TRACE_PRINTF(TRACE_LEVEL_ERROR, 1, 0, 0, 0, 0, "srv_take %p", srv);
 	srv_take(srv);
 
 	/* Only increment maxsock for servers from the configuration. Dynamic
@@ -1968,6 +1972,7 @@ static void deinit_srv_check(struct server *srv)
 	if (srv->check.state & CHK_ST_CONFIGURED) {
 		free_check(&srv->check);
 		/* it is safe to drop now since the main server reference is still held by the proxy */
+		TRACE_PRINTF(TRACE_LEVEL_ERROR, 1, 0, 0, 0, 0, "srv_drop %p", srv);
 		srv_drop(srv);
 	}
 	srv->check.state &= ~CHK_ST_CONFIGURED & ~CHK_ST_ENABLED;
@@ -1980,6 +1985,7 @@ static void deinit_srv_agent_check(struct server *srv)
 	if (srv->agent.state & CHK_ST_CONFIGURED) {
 		free_check(&srv->agent);
 		/* it is safe to drop now since the main server reference is still held by the proxy */
+		TRACE_PRINTF(TRACE_LEVEL_ERROR, 1, 0, 0, 0, 0, "srv_drop %p", srv);
 		srv_drop(srv);
 	}
 

@@ -45,6 +45,10 @@
 #include <haproxy/systemd.h>
 #endif
 
+#include <haproxy/trace.h>
+extern struct trace_source trace_check;
+#define TRACE_SOURCE &trace_check
+
 static int exitcode = -1;
 int max_reloads = INT_MAX; /* max number of reloads a worker can have until they are killed */
 struct mworker_proc *proc_self = NULL; /* process structure of current process */
@@ -372,8 +376,10 @@ restart_wait:
 			}
 
 			/* Drop server */
-			if (child->srv)
+			if (child->srv) {
+				TRACE_PRINTF(TRACE_LEVEL_ERROR, 1, 0, 0, 0, 0, "srv_drop %p", child->srv);
 				srv_drop(child->srv);
+			}
 
 			/* Delete fd from poller fdtab, which will close it */
 			fd_delete(child->ipc_fd[0]);
@@ -578,6 +584,7 @@ void mworker_cleanup_proc()
 				close(child->ipc_fd[1]);
 			if (child->srv) {
 				/* only exists if we created a master CLI listener */
+				TRACE_PRINTF(TRACE_LEVEL_ERROR, 1, 0, 0, 0, 0, "srv_drop %p", child->srv);
 				srv_drop(child->srv);
 			}
 			LIST_DELETE(&child->list);
