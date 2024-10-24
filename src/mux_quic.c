@@ -2085,36 +2085,23 @@ static int qcc_subscribe_send(struct qcc *qcc)
  *
  * Returns 0 if all data sent with success else non-zero.
  */
-static int qcc_send_frames(struct qcc *qcc, struct list *frms, int strm_content)
+static int qcc_send_frames(struct qcc *qcc, struct list *frms, int stream)
 {
 	enum quic_tx_err ret;
-	//int max_burst = strm_content ? global.tune.quic_frontend_max_tx_burst : 0;
-
-	struct quic_conn *qc = qcc->conn->handle.qc;
-	/* Delay in ns between each datagrams : depends on congestion window and sRTT. */
-	const ullong ns_pkts = quic_pacing_ns_pkt(&qc->tx.pacer);
-	int max_dgrams = 0, dgram_cnt;
 
 	TRACE_ENTER(QMUX_EV_QCC_SEND, qcc->conn);
-
-	if (strm_content) {
-		max_dgrams = global.tune.quic_frontend_max_tx_burst * 1000000 / (ns_pkts + 1) + 1;
-	}
-	fprintf(stderr, "max_dgrams = %d\n", max_dgrams);
 
 	if (LIST_ISEMPTY(frms)) {
 		TRACE_DEVEL("leaving on no frame to send", QMUX_EV_QCC_SEND, qcc->conn);
 		return -1;
 	}
 
-	ret = qc_send_mux(qcc->conn->handle.qc, frms, max_dgrams, &dgram_cnt);
+	ret = qc_send_mux(qcc->conn->handle.qc, frms, stream);
 	if (ret == QUIC_TX_ERR_FATAL) {
 		TRACE_DEVEL("error on sending", QMUX_EV_QCC_SEND, qcc->conn);
 		qcc_subscribe_send(qcc);
 		goto err;
 	}
-
-	//BUG_ON(ret == QUIC_TX_ERR_AGAIN && !max_burst);
 
 	/* If there is frames left at this stage, transport layer is blocked.
 	 * Subscribe on it to retry later.
@@ -2124,12 +2111,6 @@ static int qcc_send_frames(struct qcc *qcc, struct list *frms, int strm_content)
 		qcc_subscribe_send(qcc);
 		goto err;
 	}
-
-	BUG_ON(ret == QUIC_TX_ERR_AGAIN && !max_dgrams);
-	//BUG_ON(!max_dgrams);
-	//qcc->tx.next = now_mono_time() + ns_pkts * max_dgrams;
-	qcc->tx.next = now_mono_time() + ns_pkts * dgram_cnt;
-	//qcc->tx.next = now_mono_time() + (MAX(qc->path->loss.srtt, 10) * 800000 / (qc->path->cwnd / 1200 + 1)) * max_burst;
 
 	TRACE_LEAVE(QMUX_EV_QCC_SEND, qcc->conn);
 	return ret == QUIC_TX_ERR_AGAIN ? 1 : 0;
@@ -2793,8 +2774,9 @@ static void qcc_release(struct qcc *qcc)
 	TRACE_LEAVE(QMUX_EV_QCC_END);
 }
 
-static int qcc_purge_sending(struct qcc *qcc)
+static void qcc_purge_sending(struct qcc *qcc)
 {
+#if 0
 	int ret;
 
 	if (qcc->tx.next > now_mono_time()) {
@@ -2811,8 +2793,25 @@ static int qcc_purge_sending(struct qcc *qcc)
 		qcc_wakeup_pacing(qcc);
 		return 1;
 	}
+#endif
 
-	return 0;
+	struct quic_conn *qc = qcc->conn->handle.qc;
+	enum quic_tx_err ret;
+
+	fprintf(stderr, "PACING...\n");
+	ret = quic_pacing_send(&qc->tx.pacer, qc);
+	if (ret == QUIC_TX_ERR_AGAIN) {
+		BUG_ON(LIST_ISEMPTY(&qc->tx.pacer.frms));
+		qcc_wakeup_pacing(qcc);
+	}
+	else if (ret == QUIC_TX_ERR_FATAL) {
+		TRACE_DEVEL("error on sending", QMUX_EV_QCC_SEND, qcc->conn);
+		HA_ATOMIC_AND(&qcc->wait_event.tasklet->state, ~TASK_F_USR1);
+		qcc_subscribe_send(qcc);
+	}
+	else {
+		//HA_ATOMIC_AND(&qcc->wait_event.tasklet->state, ~TASK_F_USR1);
+	}
 }
 
 struct task *qcc_io_cb(struct task *t, void *ctx, unsigned int status)

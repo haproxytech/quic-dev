@@ -199,7 +199,8 @@ static int qc_may_build_pkt(struct quic_conn *qc, struct list *frms,
 		 (force_ack || nb_aepkts_since_last_ack >= QUIC_MAX_RX_AEPKTS_SINCE_LAST_ACK));
 
 	TRACE_PRINTF(TRACE_LEVEL_DEVELOPER, QUIC_EV_CONN_PHPKTS, qc, 0, 0, 0,
-	             "has_sec=%d cc=%d probe=%d must_ack=%d frms=%d prep_in_fligh=%llu cwnd=%llu",
+	             "%c has_sec=%d cc=%d probe=%d must_ack=%d frms=%d prep_in_fligh=%llu cwnd=%llu",
+	             quic_enc_level_char_from_qel(qel, qc),
 	             quic_tls_has_tx_sec(qel), cc, probe, *must_ack, LIST_ISEMPTY(frms),
 	             (ullong)qc->path->prep_in_flight, (ullong)qc->path->cwnd);
 
@@ -470,11 +471,11 @@ int qc_purge_txbuf(struct quic_conn *qc, struct buffer *buf)
  *
  * Returns the result from qc_send() function.
  */
-enum quic_tx_err qc_send_mux(struct quic_conn *qc, struct list *frms,
-                             int max_dgram, int *dgram_cnt)
+enum quic_tx_err qc_send_mux(struct quic_conn *qc, struct list *frms, int pacing)
 {
 	struct list send_list = LIST_HEAD_INIT(send_list);
 	enum quic_tx_err ret = QUIC_TX_ERR_NONE;
+	int max_dgram = 0, sent;
 
 	TRACE_ENTER(QUIC_EV_CONN_TXPKT, qc);
 	BUG_ON(qc->mux_state != QC_MUX_READY); /* Only MUX can uses this function so it must be ready. */
@@ -493,13 +494,23 @@ enum quic_tx_err qc_send_mux(struct quic_conn *qc, struct list *frms,
 		qc_send(qc, 0, &send_list, 0);
 	}
 
+	if (pacing) {
+		const ullong ns_pkts = quic_pacing_ns_pkt(&qc->tx.pacer);
+		max_dgram = global.tune.quic_frontend_max_tx_burst * 1000000 / (ns_pkts + 1) + 1;
+	}
+
 	TRACE_STATE("preparing data (from MUX)", QUIC_EV_CONN_TXPKT, qc);
 	qel_register_send(&send_list, qc->ael, frms);
-	*dgram_cnt = qc_send(qc, 0, &send_list, max_dgram);
-	if (*dgram_cnt <= 0)
+	sent = qc_send(qc, 0, &send_list, max_dgram);
+	if (sent <= 0) {
 		ret = QUIC_TX_ERR_FATAL;
-	else if (max_dgram && max_dgram == *dgram_cnt)
+	}
+	else if (max_dgram && max_dgram == sent && !LIST_ISEMPTY(frms)) {
+		BUG_ON(LIST_ISEMPTY(frms));
+		quic_pacing_set_frm_list(&qc->tx.pacer, frms, sent);
+		BUG_ON(LIST_ISEMPTY(&qc->tx.pacer.frms));
 		ret = QUIC_TX_ERR_AGAIN;
+	}
 
 	TRACE_LEAVE(QUIC_EV_CONN_TXPKT, qc);
 	return ret;
@@ -653,10 +664,12 @@ static int qc_prep_pkts(struct quic_conn *qc, struct buffer *buf,
 				switch (err) {
 				case QC_BUILD_PKT_ERR_ALLOC:
 					qc_purge_tx_buf(qc, buf);
+					ABORT_NOW();
 					break;
 
 				case QC_BUILD_PKT_ERR_ENCRYPT:
 					// trace already emitted by function above
+					ABORT_NOW();
 					break;
 
 				case QC_BUILD_PKT_ERR_BUFROOM:
@@ -676,8 +689,10 @@ static int qc_prep_pkts(struct quic_conn *qc, struct buffer *buf,
 					break;
 				}
 
-				if (err == QC_BUILD_PKT_ERR_ALLOC || err == QC_BUILD_PKT_ERR_ENCRYPT)
+				if (err == QC_BUILD_PKT_ERR_ALLOC || err == QC_BUILD_PKT_ERR_ENCRYPT) {
+					ABORT_NOW();
 					goto leave;
+				}
 				first_pkt = NULL;
 				goto out;
 			}
@@ -786,13 +801,14 @@ static int qc_prep_pkts(struct quic_conn *qc, struct buffer *buf,
  * specified via quic_enc_level <send_list> through their send_frms member. Set
  * <old_data> when reemitted duplicated data.
  *
- * Returns the number of sent datagrams on success. On error a negative error
- * code is returned.
+ * Returns the number of sent datagrams on success. It means either that all
+ * input frames were sent or emission is interrupted due to pacing. Else a
+ * negative error code is returned.
  */
-int qc_send(struct quic_conn *qc, int old_data, struct list *send_list, int max_pkts)
+int qc_send(struct quic_conn *qc, int old_data, struct list *send_list, int pacing)
 {
 	struct quic_enc_level *qel, *tmp_qel;
-	int ret = -1;
+	int prep_pkts = 0, ret = -1;
 	struct buffer *buf;
 
 	TRACE_ENTER(QUIC_EV_CONN_TXPKT, qc);
@@ -826,20 +842,23 @@ int qc_send(struct quic_conn *qc, int old_data, struct list *send_list, int max_
 		BUG_ON_HOT(b_data(buf));
 		b_reset(buf);
 
-		ret = qc_prep_pkts(qc, buf, send_list, max_pkts);
+		prep_pkts = qc_prep_pkts(qc, buf, send_list, pacing);
 
 		if (b_data(buf) && !qc_send_ppkts(buf, qc->xprt_ctx)) {
+			ABORT_NOW();
+			ret = -1;
 			if (qc->flags & QUIC_FL_CONN_TO_KILL)
 				qc_txb_release(qc);
 			goto out;
 		}
 
-		if (ret <= 0) {
+		if (prep_pkts <= 0) {
 			TRACE_DEVEL("stopping on qc_prep_pkts() return", QUIC_EV_CONN_TXPKT, qc);
 			break;
 		}
 
-		if (max_pkts && ret == max_pkts) {
+		ret += prep_pkts;
+		if (pacing && ret == pacing && !LIST_ISEMPTY(send_list)) {
 			TRACE_DEVEL("stopping for artificial pacing", QUIC_EV_CONN_TXPKT, qc);
 			break;
 		}
