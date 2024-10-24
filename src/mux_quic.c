@@ -19,6 +19,7 @@
 #include <haproxy/quic_enc.h>
 #include <haproxy/quic_fctl.h>
 #include <haproxy/quic_frame.h>
+#include <haproxy/quic_pacing.h>
 #include <haproxy/quic_sock.h>
 #include <haproxy/quic_stream.h>
 #include <haproxy/quic_tp-t.h>
