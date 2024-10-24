@@ -1225,6 +1225,7 @@ struct quic_conn *qc_new_conn(const struct quic_version *qv, int ipv4,
 	qc->path = &qc->paths[0];
 	quic_cc_path_init(qc->path, ipv4, server ? l->bind_conf->max_cwnd : 0,
 	                  cc_algo ? cc_algo : default_quic_cc_algo, qc);
+	quic_pacing_init(&qc->tx.pacer, qc->path);
 
 	memcpy(&qc->local_addr, local_addr, sizeof(qc->local_addr));
 	memcpy(&qc->peer_addr, peer_addr, sizeof qc->peer_addr);

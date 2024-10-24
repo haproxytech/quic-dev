@@ -38,6 +38,7 @@
 #include <haproxy/quic_cc-t.h>
 #include <haproxy/quic_loss-t.h>
 #include <haproxy/quic_openssl_compat-t.h>
+#include <haproxy/quic_pacing-t.h>
 #include <haproxy/quic_stats-t.h>
 #include <haproxy/quic_tls-t.h>
 #include <haproxy/quic_tp-t.h>
@@ -373,6 +374,7 @@ struct quic_conn {
 		char *cc_buf_area;
 		/* Length of the "connection close" datagram. */
 		size_t cc_dgram_len;
+		struct quic_pacer pacer;
 	} tx;
 	struct {
 		/* Transport parameters the peer will receive */

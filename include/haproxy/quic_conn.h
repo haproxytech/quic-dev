@@ -45,6 +45,7 @@
 #include <haproxy/quic_enc.h>
 #include <haproxy/quic_frame.h>
 #include <haproxy/quic_loss.h>
+#include <haproxy/quic_pacing.h>
 #include <haproxy/quic_rx.h>
 #include <haproxy/mux_quic.h>
 
@@ -156,6 +157,11 @@ static inline void quic_free_ncbuf(struct ncbuf *ncbuf)
 	offer_buffers(NULL, 1);
 
 	*ncbuf = NCBUF_NULL;
+}
+
+static inline struct quic_pacer *quic_conn_pacer(struct quic_conn *qc)
+{
+	return &qc->tx.pacer;
 }
 
 void chunk_frm_appendf(struct buffer *buf, const struct quic_frame *frm);
