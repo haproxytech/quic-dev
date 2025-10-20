@@ -1311,7 +1311,7 @@ static int quic_crypto_data_cpy(struct quic_conn *qc, struct quic_enc_level *qel
 				goto leave;
 			}
 
-			frm->crypto.offset = cf_offset;
+			frm->crypto.offset_node.key = cf_offset;
 			frm->crypto.len = cf_len;
 			frm->crypto.qel = qel;
 			LIST_APPEND(&qel->pktns->tx.frms, &frm->list);
@@ -3023,7 +3023,7 @@ static enum quic_rx_ret_frm qc_handle_crypto_frm(struct quic_conn *qc,
 	enum quic_rx_ret_frm ret = QUIC_RX_RET_FRM_DONE;
 	/* XXX TO DO: <cfdebug> is used only for the traces. */
 	struct quic_rx_crypto_frm cfdebug = {
-		.offset_node.key = crypto_frm->offset,
+		.offset_node.key = crypto_frm->offset_node.key,
 		.len = crypto_frm->len,
 	};
 	struct quic_cstream *cstream = qel->cstream;
@@ -3037,10 +3037,10 @@ static enum quic_rx_ret_frm qc_handle_crypto_frm(struct quic_conn *qc,
 		goto done;
 	}
 
-	if (unlikely(crypto_frm->offset < cstream->rx.offset)) {
+	if (unlikely(crypto_frm->offset_node.key < cstream->rx.offset)) {
 		size_t diff;
 
-		if (crypto_frm->offset + crypto_frm->len <= cstream->rx.offset) {
+		if (crypto_frm->offset_node.key + crypto_frm->len <= cstream->rx.offset) {
 			/* Nothing to do */
 			TRACE_PROTO("Already received CRYPTO data",
 				    QUIC_EV_CONN_RXPKT, qc, pkt, &cfdebug);
@@ -3051,13 +3051,13 @@ static enum quic_rx_ret_frm qc_handle_crypto_frm(struct quic_conn *qc,
 		TRACE_PROTO("Partially already received CRYPTO data",
 		            QUIC_EV_CONN_RXPKT, qc, pkt, &cfdebug);
 
-		diff = cstream->rx.offset - crypto_frm->offset;
+		diff = cstream->rx.offset - crypto_frm->offset_node.key;
 		crypto_frm->len -= diff;
 		crypto_frm->data += diff;
-		crypto_frm->offset = cstream->rx.offset;
+		crypto_frm->offset_node.key = cstream->rx.offset;
 	}
 
-	if (crypto_frm->offset == cstream->rx.offset && ncb_is_empty(ncbuf)) {
+	if (crypto_frm->offset_node.key == cstream->rx.offset && ncb_is_empty(ncbuf)) {
 		if (!qc_provide_cdata(qel, qc->xprt_ctx, crypto_frm->data, crypto_frm->len,
 		                      pkt, &cfdebug)) {
 			// trace already emitted by function above
@@ -3076,7 +3076,7 @@ static enum quic_rx_ret_frm qc_handle_crypto_frm(struct quic_conn *qc,
 	}
 
 	/* crypto_frm->offset > cstream-trx.offset */
-	off_rel = crypto_frm->offset - cstream->rx.offset;
+	off_rel = crypto_frm->offset_node.key - cstream->rx.offset;
 
 	/* RFC 9000 7.5. Cryptographic Message Buffering
 	 *
@@ -3326,7 +3326,7 @@ static int qc_parse_pkt_frms(struct quic_conn *qc, struct quic_rx_packet *pkt,
 			break;
 		}
 		case QUIC_FT_CRYPTO:
-			frm->crypto.offset_node.key = frm->crypto.offset;
+			frm->crypto.offset_node.key = frm->crypto.offset_node.key;
 			eb64_insert(&cf_frms_tree, &frm->crypto.offset_node);
 			frm = NULL;
 			break;
@@ -7908,7 +7908,7 @@ static inline int qc_build_frms(struct list *outlist, struct list *inlist,
 			TRACE_DEVEL("          New CRYPTO frame build (room, len)",
 			            QUIC_EV_CONN_BCFRMS, qc, &room, len);
 			/* Compute the length of this CRYPTO frame header */
-			hlen = 1 + quic_int_getsize(cf->crypto.offset);
+			hlen = 1 + quic_int_getsize(cf->crypto.offset_node.key);
 			/* Compute the data length of this CRYPTO frame. */
 			dlen = max_stream_data_size(room, hlen, cf->crypto.len);
 			TRACE_DEVEL(" CRYPTO data length (hlen, crypto.len, dlen)",
@@ -7940,7 +7940,7 @@ static inline int qc_build_frms(struct list *outlist, struct list *inlist,
 				}
 
 				new_cf->crypto.len = dlen;
-				new_cf->crypto.offset = cf->crypto.offset;
+				new_cf->crypto.offset_node.key = cf->crypto.offset_node.key;
 				new_cf->crypto.qel = qel;
 				TRACE_DEVEL("split frame", QUIC_EV_CONN_PRSAFRM, qc, new_cf);
 				if (cf->origin) {
@@ -7955,7 +7955,7 @@ static inline int qc_build_frms(struct list *outlist, struct list *inlist,
 				LIST_APPEND(outlist, &new_cf->list);
 				/* Consume <dlen> bytes of the current frame. */
 				cf->crypto.len -= dlen;
-				cf->crypto.offset += dlen;
+				cf->crypto.offset_node.key += dlen;
 			}
 			break;
 

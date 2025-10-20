@@ -142,7 +142,6 @@ struct qf_stop_sending {
 };
 
 struct qf_crypto {
-	uint64_t offset;
 	struct eb64_node offset_node;
 	uint64_t len;
 	const struct quic_enc_level *qel;

@@ -111,7 +111,7 @@ void chunk_frm_appendf(struct buffer *buf, const struct quic_frame *frm)
 	{
 		const struct qf_crypto *crypto_frm = &frm->crypto;
 		chunk_appendf(buf, " cfoff=%llu cflen=%llu",
-		              (ull)crypto_frm->offset, (ull)crypto_frm->len);
+		              (ull)crypto_frm->offset_node.key, (ull)crypto_frm->len);
 		break;
 	}
 	case QUIC_FT_RESET_STREAM:
@@ -426,12 +426,12 @@ static int quic_build_crypto_frame(unsigned char **pos, const unsigned char *end
 	const struct quic_enc_level *qel = crypto_frm->qel;
 	size_t offset, len;
 
-	if (!quic_enc_int(pos, end, crypto_frm->offset) ||
+	if (!quic_enc_int(pos, end, crypto_frm->offset_node.key) ||
 	    !quic_enc_int(pos, end, crypto_frm->len) || end - *pos < crypto_frm->len)
 		return 0;
 
 	len = crypto_frm->len;
-	offset = crypto_frm->offset;
+	offset = crypto_frm->offset_node.key;
 	while (len) {
 		int idx;
 		size_t to_copy;
@@ -459,7 +459,7 @@ static int quic_parse_crypto_frame(struct quic_frame *frm, struct quic_conn *qc,
 {
 	struct qf_crypto *crypto_frm = &frm->crypto;
 
-	if (!quic_dec_int(&crypto_frm->offset, pos, end) ||
+	if (!quic_dec_int((uint64_t *)&crypto_frm->offset_node.key, pos, end) ||
 	    !quic_dec_int(&crypto_frm->len, pos, end) || end - *pos < crypto_frm->len)
 		return 0;
 
