@@ -3249,7 +3249,7 @@ static int qc_parse_pkt_frms(struct quic_conn *qc, struct quic_rx_packet *pkt,
 	struct quic_frame *frm = NULL;
 	const unsigned char *pos, *end;
 	enum quic_rx_ret_frm ret;
-	int fast_retrans = 0;
+	int fast_retrans = 0, cf_err = 0;
 
 	TRACE_ENTER(QUIC_EV_CONN_PRSHPKT, qc);
 	/* Skip the AAD */
@@ -3514,9 +3514,8 @@ static int qc_parse_pkt_frms(struct quic_conn *qc, struct quic_rx_packet *pkt,
 
 		case QUIC_RX_RET_FRM_AGAIN:
 			TRACE_STATE("AGAIN encountered", QUIC_EV_CONN_PRSHPKT, qc);
-			/* avoid freeing without eb_delete() */
-			frm = NULL;
-			goto err;
+			cf_err = 1;
+			break;
 
 		case QUIC_RX_RET_FRM_DONE:
 			TRACE_PROTO("frame handled", QUIC_EV_CONN_PRSAFRM, qc, frm);
@@ -3533,6 +3532,9 @@ static int qc_parse_pkt_frms(struct quic_conn *qc, struct quic_rx_packet *pkt,
 		eb64_delete(&frm->crypto.offset_node);
 		qc_frm_free(&frm);
 	}
+
+	if (cf_err)
+		goto err;
 
 	/* Error should be returned if some frames cannot be parsed. */
 	BUG_ON(!eb_is_empty(&cf_frms_tree));
