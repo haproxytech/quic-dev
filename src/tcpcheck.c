@@ -1284,6 +1284,7 @@ enum tcpcheck_eval_ret tcpcheck_eval_connect(struct check *check, struct tcpchec
 	struct buffer *auto_sni = NULL;
 	int status, port;
 	int check_type;
+	int64_t hash;
 #ifdef USE_OPENSSL
 	struct ist sni = IST_NULL;
 #endif
@@ -1334,7 +1335,6 @@ enum tcpcheck_eval_ret tcpcheck_eval_connect(struct check *check, struct tcpchec
 	    !srv_is_transparent(s)) {
 		struct ist pool_conn_name = IST_NULL;
 		struct sockaddr_storage *dst, dst_tmp;
-		int64_t hash;
 		int conn_err;
 
 		TRACE_DEVEL("trying connection reuse for check", CHK_EV_TCPCHK_CONN, check);
@@ -1516,7 +1516,14 @@ enum tcpcheck_eval_ret tcpcheck_eval_connect(struct check *check, struct tcpchec
 	if (status != SF_ERR_NONE)
 		goto fail_check;
 
-	conn_set_private(conn);
+	if (check_type == TCPCHK_RULES_HTTP_CHK && check->reuse_pool &&
+	    !tcpcheck_use_nondefault_connect(check, connect) &&
+	    !srv_is_transparent(s)) {
+		conn->hash_node.key = hash;
+	} else {
+		conn_set_private(conn);
+	}
+
 	conn->ctx = check->sc;
 
 #ifdef USE_OPENSSL
