@@ -1784,7 +1784,7 @@ static ssize_t h3_rcv_buf(struct qcs *qcs, struct buffer *b, int fin)
 		/* FIN received, ensure body length is conform to any content-length header. */
 		if ((h3s->flags & H3_SF_HAVE_CLEN) && h3_check_body_size(qcs, 1)) {
 			qcc_abort_stream_read(qcs);
-			qcc_reset_stream(qcs, h3s->err, 0);
+			qcc_reset_stream(qcs, h3s->err, se_tevt_type_proto_err);
 			goto done;
 		}
 
@@ -1970,7 +1970,7 @@ static ssize_t h3_rcv_buf(struct qcs *qcs, struct buffer *b, int fin)
 	/* Interrupt decoding on stream/connection error detected. */
 	if (h3s->err) {
 		qcc_abort_stream_read(qcs);
-		qcc_reset_stream(qcs, h3s->err, 0);
+		qcc_reset_stream(qcs, h3s->err, h3s->err == H3_ERR_REQUEST_REJECTED ? 0 : se_tevt_type_proto_err);
 		total = b_data(b);
 		goto done;
 	}
