@@ -1667,7 +1667,7 @@ static void _qcc_send_stream(struct qcs *qcs, int urg)
 }
 
 /* Prepare for the emission of RESET_STREAM on <qcs> with error code <err>. */
-void qcc_reset_stream(struct qcs *qcs, int err)
+void qcc_reset_stream(struct qcs *qcs, int err, int term_evt)
 {
 	struct qcc *qcc = qcs->qcc;
 	const uint64_t diff = qcs_prep_bytes(qcs);
@@ -1701,6 +1701,8 @@ void qcc_reset_stream(struct qcs *qcs, int err)
 	/* Report send error to stream-endpoint layer. */
 	if (qcs_sc(qcs)) {
 		se_fl_set_error(qcs->sd);
+		if (term_evt)
+			se_report_term_evt(qcs->sd, term_evt);
 		qcs_alert(qcs);
 	}
 
@@ -2350,9 +2352,11 @@ int qcc_recv_stop_sending(struct qcc *qcc, uint64_t id, uint64_t err)
 		/* Manually set EOS if FIN already reached as futures RESET_STREAM will be ignored in this case. */
 		if (qcs_sc(qcs) && se_fl_test(qcs->sd, SE_FL_EOI)) {
 			se_fl_set(qcs->sd, SE_FL_EOS);
+			se_report_term_evt(qcs->sd, (qcc->flags & QC_CF_ERR_CONN ? se_tevt_type_rcv_err : se_tevt_type_eos));
 			qcs_alert(qcs);
 		}
 
+		se_report_term_evt(qcs->sd, se_tevt_type_rst_rcvd);
 		/* If not defined yet, set abort info for the sedesc */
 		if (!qcs->sd->abort_info.info) {
 			qcs->sd->abort_info.info = (SE_ABRT_SRC_MUX_QUIC << SE_ABRT_SRC_SHIFT);
@@ -2374,7 +2378,7 @@ int qcc_recv_stop_sending(struct qcc *qcc, uint64_t id, uint64_t err)
 	 * the RESET_STREAM frame it sends, but it can use any application error
 	 * code.
 	 */
-	qcc_reset_stream(qcs, err);
+	qcc_reset_stream(qcs, err, 0);
 
 	if (qcc_may_expire(qcc) && !qcc->nb_hreq)
 		qcc_refresh_timeout(qcc);
@@ -3444,6 +3448,15 @@ static void qcc_app_shutdown(struct qcc *qcc)
 	TRACE_LEAVE(QMUX_EV_QCC_END, qcc->conn);
 }
 
+static inline void qcc_report_term_evt(struct qcc *qcc, enum muxc_term_event_type type)
+{
+	enum term_event_loc loc = tevt_loc_muxc;
+
+	if (qcc->flags & QC_CF_IS_BACK)
+		loc += 8;
+	qcc->term_evts_log = tevt_report_event(qcc->term_evts_log, loc, type);
+}
+
 /* Free all resources allocated for <qcc> connection. */
 static void qcc_release(struct qcc *qcc)
 {
@@ -3485,10 +3498,13 @@ static void qcc_release(struct qcc *qcc)
 	}
 
 	tasklet_free(qcc->wait_event.tasklet);
-	if (conn && qcc->wait_event.events) {
-		conn->xprt->unsubscribe(conn, conn->xprt_ctx,
-		                        qcc->wait_event.events,
-		                        &qcc->wait_event);
+	if (conn) {
+		qcc_report_term_evt(qcc, muxc_tevt_type_shutw);
+		if (qcc->wait_event.events) {
+			conn->xprt->unsubscribe(conn, conn->xprt_ctx,
+			                        qcc->wait_event.events,
+			                        &qcc->wait_event);
+		}
 	}
 
 	while (!LIST_ISEMPTY(&qcc->lfctl.frms)) {
@@ -3757,6 +3773,7 @@ static int qmux_init(struct connection *conn, struct proxy *prx,
 	qcc->flags = conn_is_back(conn) ? QC_CF_IS_BACK : 0;
 	qcc->app_st = QCC_APP_ST_NULL;
 	qcc->glitches = 0;
+	qcc->term_evts_log = 0;
 	qcc->err = quic_err_transport(QC_ERR_NO_ERROR);
 
 	if (conn_is_quic(conn)) {
@@ -4224,6 +4241,10 @@ static size_t qmux_strm_rcv_buf(struct stconn *sc, struct buffer *buf,
 			if (!se_fl_test(qcs->sd, SE_FL_EOI)) {
 				TRACE_STATE("report error on stream aborted", QMUX_EV_STRM_RECV, qcc->conn, qcs);
 				se_fl_set(qcs->sd, SE_FL_ERROR);
+				se_report_term_evt(qcs->sd, (qcc->flags & QC_CF_ERR_CONN ? se_tevt_type_truncated_rcv_err : se_tevt_type_truncated_eos));
+			}
+			else {
+				se_report_term_evt(qcs->sd, (qcc->flags & QC_CF_ERR_CONN ? se_tevt_type_rcv_err : se_tevt_type_eos));
 			}
 		}
 
@@ -4553,7 +4574,7 @@ static void qmux_strm_shut(struct stconn *sc, unsigned int mode, struct se_abort
 		}
 		else {
 			/* RESET_STREAM necessary. */
-			qcc_reset_stream(qcs, 0);
+			qcc_reset_stream(qcs, 0, 0);
 		}
 
 		tasklet_wakeup(qcc->wait_event.tasklet);
@@ -4586,6 +4607,9 @@ static int qmux_ctl(struct connection *conn, enum mux_ctl_type mux_ctl, void *ou
 	case MUX_CTL_GET_MAXSTRM:
 		return qcc->lfctl.ms_bidi_init;
 
+	case MUX_CTL_TEVTS:
+		return qcc->term_evts_log;
+
 	default:
 		return -1;
 	}
@@ -4617,8 +4641,9 @@ static int qmux_sctl(struct stconn *sc, enum mux_sctl_type mux_sctl, void *outpu
 			qmux_dump_qcc_info(buf, qcc);
 
 		if (dbg_ctx->arg.debug_flags & MUX_SCTL_DBG_STR_L_CONN) {
-			chunk_appendf(buf, " conn.flg=%#08x conn.err_code=%u",
-			              conn->flags, conn->err_code);
+			chunk_appendf(buf, " conn.flg=%#08x conn.err_code=%u conn.evts=%s",
+			              conn->flags, conn->err_code,
+			              tevt_evts2str(conn->term_evts_log));
 		}
 
 		if (dbg_ctx->arg.debug_flags & MUX_SCTL_DBG_STR_L_XPRT)
@@ -4626,6 +4651,9 @@ static int qmux_sctl(struct stconn *sc, enum mux_sctl_type mux_sctl, void *outpu
 
 		dbg_ctx->ret.buf = *buf;
 		return ret;
+
+	case MUX_SCTL_TEVTS:
+		return qcs->sd->term_evts_log;
 
 	default:
 		return -1;
