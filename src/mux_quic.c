@@ -286,8 +286,8 @@ static forceinline void qcc_rm_hreq(struct qcc *qcc)
 
 static inline int qcc_is_dead(const struct qcc *qcc)
 {
-	/* Maintain connection if stream endpoints are still active. */
-	if (qcc->nb_sc)
+	/* Maintain connection if there is still request streams active. */
+	if (qcc->nb_hreq)
 		return 0;
 
 	/* Connection considered dead if either :
@@ -299,8 +299,8 @@ static inline int qcc_is_dead(const struct qcc *qcc)
 	 */
 	if (qcc->flags & (QC_CF_ERR_CONN|QC_CF_ERRL_DONE) ||
 	    !qcc->task ||
-	    (!conn_is_back(qcc->conn) && !qcc->nb_hreq && qcc->app_st == QCC_APP_ST_SHUT) ||
-	    (conn_is_back(qcc->conn) && !qcc->nb_hreq && (qcc->flags & QC_CF_CONN_SHUT))) {
+	    (!conn_is_back(qcc->conn) && qcc->app_st == QCC_APP_ST_SHUT) ||
+	    (conn_is_back(qcc->conn) && (qcc->flags & QC_CF_CONN_SHUT))) {
 		return 1;
 	}
 
@@ -1019,13 +1019,7 @@ int qcs_attach_sc(struct qcs *qcs, struct buffer *buf, char fin)
 		return -1;
 	}
 
-	/* QC_SF_HREQ_RECV must be set once for a stream. Else, nb_hreq counter
-	 * will be incorrect for the connection.
-	 */
-	BUG_ON_HOT(qcs->flags & QC_SF_HREQ_RECV);
-	qcs->flags |= QC_SF_HREQ_RECV;
 	++qcc->nb_sc;
-	++qcc->nb_hreq;
 	++qcc->tot_sc;
 
 	/* TODO duplicated from mux_h2 */

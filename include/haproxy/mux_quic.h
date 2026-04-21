@@ -116,6 +116,13 @@ static inline void qcs_wait_http_req(struct qcs *qcs)
 	 * restriction is needed here.
 	 */
 	LIST_APPEND(&qcc->opening_list, &qcs->el_opening);
+
+	/* QC_SF_HREQ_RECV must be set once for a stream. Else, nb_hreq counter
+	 * will be incorrect for the connection.
+	 */
+	BUG_ON_HOT(qcs->flags & QC_SF_HREQ_RECV);
+	qcs->flags |= QC_SF_HREQ_RECV;
+	++qcc->nb_hreq;
 }
 
 void qcc_show_quic(struct qcc *qcc);
