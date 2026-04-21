@@ -537,8 +537,10 @@ static int _h3_handle_hdr(struct qcs *qcs, const struct http_hdr *hdr)
 	const char *ctl;
 	int i;
 
-	if (isteq(name, ist("")))
-		return 1;
+	if (isteq(name, ist(""))) {
+		TRACE_ERROR("empty header name", H3_EV_RX_FRAME|H3_EV_RX_HDR, qcs->qcc->conn, qcs);
+		goto err;
+	}
 
 	if (istmatch(name, ist(":"))) {
 		TRACE_ERROR("pseudo-header field after fields", H3_EV_RX_FRAME|H3_EV_RX_HDR, qcs->qcc->conn, qcs);
@@ -814,6 +816,7 @@ static ssize_t h3_req_headers_to_htx(struct qcs *qcs, const struct buffer *buf,
 		}
 	}
 	else {
+		TRACE_ERROR("CONNECT method not yet implemented", H3_EV_RX_FRAME|H3_EV_RX_HDR, qcs->qcc->conn, qcs);
 		h3s->err = H3_ERR_REQUEST_REJECTED;
 		len = -1;
 		goto out;
@@ -902,6 +905,7 @@ static ssize_t h3_req_headers_to_htx(struct qcs *qcs, const struct buffer *buf,
 
 	sl = htx_add_stline(htx, HTX_BLK_REQ_SL, flags, meth, uri, ist("HTTP/3.0"));
 	if (!sl) {
+		TRACE_ERROR("rejected HTX status-line", H3_EV_RX_FRAME|H3_EV_RX_HDR, qcs->qcc->conn, qcs);
 		len = -1;
 		goto out;
 	}
@@ -913,6 +917,7 @@ static ssize_t h3_req_headers_to_htx(struct qcs *qcs, const struct buffer *buf,
 
 	if (isttest(authority)) {
 		if (!htx_add_header(htx, ist("host"), authority)) {
+			TRACE_ERROR("rejected HTX host header", H3_EV_RX_FRAME|H3_EV_RX_HDR, qcs->qcc->conn, qcs);
 			len = -1;
 			goto out;
 		}
@@ -1015,6 +1020,7 @@ static ssize_t h3_req_headers_to_htx(struct qcs *qcs, const struct buffer *buf,
 		}
 
 		if (!htx_add_header(htx, list[hdr_idx].n, _h3_trim_header(list[hdr_idx].v))) {
+			TRACE_ERROR("HTX header rejected", H3_EV_RX_FRAME|H3_EV_RX_HDR, qcs->qcc->conn, qcs);
 			len = -1;
 			goto out;
 		}
@@ -1038,6 +1044,7 @@ static ssize_t h3_req_headers_to_htx(struct qcs *qcs, const struct buffer *buf,
 
 	if (cookie >= 0) {
 		if (http_cookie_merge(htx, list, cookie)) {
+			TRACE_ERROR("cannot merge cookies", H3_EV_RX_FRAME|H3_EV_RX_HDR, qcs->qcc->conn, qcs);
 			len = -1;
 			goto out;
 		}
@@ -1045,11 +1052,13 @@ static ssize_t h3_req_headers_to_htx(struct qcs *qcs, const struct buffer *buf,
 
 	/* Check the number of blocks against "tune.http.maxhdr" value before adding EOH block */
 	if (htx_nbblks(htx) > global.tune.max_http_hdr) {
+		TRACE_ERROR("too many headers", H3_EV_RX_FRAME|H3_EV_RX_HDR, qcs->qcc->conn, qcs);
 		len = -1;
 		goto out;
 	}
 
 	if (!htx_add_endof(htx, HTX_BLK_EOH)) {
+		TRACE_ERROR("cannot add HTX EOF", H3_EV_RX_FRAME|H3_EV_RX_HDR, qcs->qcc->conn, qcs);
 		len = -1;
 		goto out;
 	}
@@ -1061,6 +1070,7 @@ static ssize_t h3_req_headers_to_htx(struct qcs *qcs, const struct buffer *buf,
 	htx = NULL;
 
 	if (qcs_attach_sc(qcs, &htx_buf, fin)) {
+		TRACE_ERROR("cannot instantiate upper stream layer", H3_EV_RX_FRAME|H3_EV_RX_HDR, qcs->qcc->conn, qcs);
 		len = -1;
 		goto out;
 	}
