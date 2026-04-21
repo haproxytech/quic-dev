@@ -3083,6 +3083,33 @@ static int h3_close(struct qcs *qcs, enum qcc_app_ops_close_side side)
 	return 0;
 }
 
+static void h3_lclose(struct qcs *qcs, enum qcc_app_ops_lclose_mode mode)
+{
+	TRACE_ENTER(H3_EV_H3S_END, qcs->qcc->conn, qcs);
+
+	switch (mode) {
+	case QCC_APP_OPS_LCLO_MODE_NORMAL:
+		/* Close stream with FIN. This can only be performed if at
+		 * least HEADERS frame was emitted, or else some clients close
+		 * the connection with H3_FRAME_UNEXPECTED.
+		 */
+		if (qcs->tx.fc.off_soft) {
+			qcs->flags |= QC_SF_FIN_STREAM;
+			qcc_send_stream(qcs, 0, 0);
+		}
+		else {
+			qcc_reset_stream(qcs, 0, 0);
+		}
+		break;
+
+	default:
+		qcc_reset_stream(qcs, 0, 0);
+		break;
+	}
+
+	TRACE_LEAVE(H3_EV_H3S_END, qcs->qcc->conn, qcs);
+}
+
 /* Allocates HTTP/3 stream context relative to <qcs>. If the operation cannot
  * be performed, an error is returned and <qcs> context is unchanged.
  *
@@ -3487,6 +3514,7 @@ const struct qcc_app_ops h3_ops = {
 	.nego_ff     = h3_nego_ff,
 	.done_ff     = h3_done_ff,
 	.close       = h3_close,
+	.lclose      = h3_lclose,
 	.detach      = h3_detach,
 	.shutdown    = h3_shutdown,
 	.inc_err_cnt = h3_stats_inc_err_cnt,

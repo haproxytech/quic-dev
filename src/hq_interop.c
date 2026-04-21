@@ -323,6 +323,20 @@ static int hq_interop_attach(struct qcs *qcs, void *conn_ctx)
 	return 0;
 }
 
+static void hq_interop_lclose(struct qcs *qcs, enum qcc_app_ops_lclose_mode mode)
+{
+	switch (mode) {
+	case QCC_APP_OPS_LCLO_MODE_NORMAL:
+		qcs->flags |= QC_SF_FIN_STREAM;
+		qcc_send_stream(qcs, 0, 0);
+		break;
+
+	default:
+		qcc_reset_stream(qcs, 0, 0);
+		break;
+	}
+}
+
 const struct qcc_app_ops hq_interop_ops = {
 	.alpn       = "hq-interop",
 
@@ -331,4 +345,5 @@ const struct qcc_app_ops hq_interop_ops = {
 	.nego_ff    = hq_interop_nego_ff,
 	.done_ff    = hq_interop_done_ff,
 	.attach     = hq_interop_attach,
+	.lclose     = hq_interop_lclose,
 };

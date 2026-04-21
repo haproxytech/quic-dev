@@ -214,6 +214,12 @@ enum qcc_app_ops_close_side {
 	QCC_APP_OPS_CLOSE_SIDE_WR /* Write channel closed (STOP_SENDING received). */
 };
 
+enum qcc_app_ops_lclose_mode {
+	QCC_APP_OPS_LCLO_MODE_NORMAL,
+	QCC_APP_OPS_LCLO_MODE_ABORT,
+	QCC_APP_OPS_LCLO_MODE_KILL_CONN,
+};
+
 /* QUIC application layer operations */
 struct qcc_app_ops {
 	const char *alpn;
@@ -238,6 +244,7 @@ struct qcc_app_ops {
 
 	/* Notify about <qcs> stream closure. */
 	int (*close)(struct qcs *qcs, enum qcc_app_ops_close_side side);
+	void (*lclose)(struct qcs *qcs, enum qcc_app_ops_lclose_mode mode);
 	/* Free <qcs> stream app context. */
 	void (*detach)(struct qcs *qcs);
 

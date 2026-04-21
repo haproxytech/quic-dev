@@ -4558,25 +4558,12 @@ static void qmux_strm_shut(struct stconn *sc, unsigned int mode, struct se_abort
 	/* Early closure reported if QC_SF_FIN_STREAM not yet set. */
 	if (!qcs_is_close_local(qcs) &&
 	    !(qcs->flags & (QC_SF_FIN_STREAM|QC_SF_TO_RESET))) {
-
-		/* Close stream with FIN if length unknown and some data are
-		 * ready to be/already transmitted.
-		 * TODO select closure method on app proto layer
-		 */
-		if (qcs->flags & QC_SF_UNKNOWN_PL_LENGTH &&
-		    qcs->tx.fc.off_soft) {
-			if (!(qcc->flags & (QC_CF_ERR_CONN|QC_CF_ERRL))) {
-				TRACE_STATE("set FIN STREAM",
-				            QMUX_EV_STRM_SHUT, qcc->conn, qcs);
-				qcs->flags |= QC_SF_FIN_STREAM;
-				qcc_send_stream(qcs, 0, 0);
-			}
-		}
-		else {
-			/* RESET_STREAM necessary. */
-			qcc_reset_stream(qcs, 0, 0);
-		}
-
+		if ((qcs->flags & QC_SF_UNKNOWN_PL_LENGTH))
+			qcc->app_ops->lclose(qcs, QCC_APP_OPS_LCLO_MODE_NORMAL);
+		else if (se_fl_test(qcs->sd, SE_FL_KILL_CONN))
+			qcc->app_ops->lclose(qcs, QCC_APP_OPS_LCLO_MODE_KILL_CONN);
+		else
+			qcc->app_ops->lclose(qcs, QCC_APP_OPS_LCLO_MODE_ABORT);
 		tasklet_wakeup(qcc->wait_event.tasklet);
 	}
 
