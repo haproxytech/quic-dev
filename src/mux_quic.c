@@ -252,6 +252,12 @@ static forceinline void qcc_reset_idle_start(struct qcc *qcc)
 	qcc->idle_start = now_ms;
 }
 
+/* Return true if the mux timeout should be armed. */
+static inline int qcc_may_expire(struct qcc *qcc)
+{
+	return !qcc->nb_sc;
+}
+
 /* Decrement <qcc> sc. */
 static forceinline void qcc_rm_sc(struct qcc *qcc)
 {
@@ -261,7 +267,7 @@ static forceinline void qcc_rm_sc(struct qcc *qcc)
 	/* Reset qcc idle start for http-keep-alive timeout. Timeout will be
 	 * refreshed after this on stream detach.
 	 */
-	if (!qcc->nb_sc && !qcc->nb_hreq)
+	if (!conn_is_back(qcc->conn) && qcc_may_expire(qcc) && !qcc->nb_hreq)
 		qcc_reset_idle_start(qcc);
 }
 
@@ -274,7 +280,7 @@ static forceinline void qcc_rm_hreq(struct qcc *qcc)
 	/* Reset qcc idle start for http-keep-alive timeout. Timeout will be
 	 * refreshed after this on I/O handler.
 	 */
-	if (!qcc->nb_sc && !qcc->nb_hreq)
+	if (!conn_is_back(qcc->conn) && qcc_may_expire(qcc) && !qcc->nb_hreq)
 		qcc_reset_idle_start(qcc);
 }
 
@@ -299,12 +305,6 @@ static inline int qcc_is_dead(const struct qcc *qcc)
 	}
 
 	return 0;
-}
-
-/* Return true if the mux timeout should be armed. */
-static inline int qcc_may_expire(struct qcc *qcc)
-{
-	return !qcc->nb_sc;
 }
 
 /* Refresh the timeout on <qcc> if needed depending on its state. */
@@ -2139,7 +2139,7 @@ int qcc_recv_max_stream_data(struct qcc *qcc, uint64_t id, uint64_t max)
 		}
 	}
 
-	if (qcc_may_expire(qcc) && !qcc->nb_hreq)
+	if (!conn_is_back(qcc->conn) && qcc_may_expire(qcc) && !qcc->nb_hreq)
 		qcc_refresh_timeout(qcc);
 
 	TRACE_LEAVE(QMUX_EV_QCC_RECV, qcc->conn);
@@ -2380,7 +2380,7 @@ int qcc_recv_stop_sending(struct qcc *qcc, uint64_t id, uint64_t err)
 	 */
 	qcc_reset_stream(qcs, err, 0);
 
-	if (qcc_may_expire(qcc) && !qcc->nb_hreq)
+	if (!conn_is_back(qcc->conn) && qcc_may_expire(qcc) && !qcc->nb_hreq)
 		qcc_refresh_timeout(qcc);
 
  out:
