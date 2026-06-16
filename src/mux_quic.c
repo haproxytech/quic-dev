@@ -3671,6 +3671,7 @@ static void qcc_release(struct qcc *qcc)
 		offer_buffers(NULL, 2);
 	}
 
+	TRACE_USER("freeing QUIC connection", QMUX_EV_QCC_END, conn);
 	pool_free(pool_head_qcc, qcc);
 
 	if (conn) {
@@ -4139,6 +4140,7 @@ static int qcm_init(struct connection *conn, struct proxy *prx,
 		qcc->tot_sc++;
 	}
 
+	TRACE_USER("new QUIC connection", QMUX_EV_QCC_NEW, conn);
 	TRACE_LEAVE(QMUX_EV_QCC_NEW, conn);
 	return 0;
 
