@@ -130,8 +130,14 @@ static ssize_t hq_interop_rcv_buf_res(struct qcs *qcs, struct buffer *b, int fin
 		                    ist("HTTP/1.0"), ist("200"), ist(""));
 		BUG_ON(!sl);
 		sl->info.res.status = 200;
-		if (fin && !to_copy)
+		if (fin && !to_copy) {
 			sl->flags |= HTX_SL_F_BODYLESS;
+		}
+		else if (to_copy) {
+			sl->flags |= HTX_SL_F_XFER_LEN|HTX_SL_F_CHNK;
+			htx_add_header(htx, ist("transfer-encoding"), ist("chunked"));
+		}
+
 		htx_add_endof(htx, HTX_BLK_EOH);
 	}
 
